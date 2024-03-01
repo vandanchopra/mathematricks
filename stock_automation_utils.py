@@ -46,8 +46,8 @@ class StockAutomationUtils:
             except Exception as e:
                 print(f'Error loading data for {symbol}: {e}')
         return stock_data
-    
-    def load_and_update_stock_data(self, pickle_file='stock_symbols.pkl', data_folder='data', throttle_secs=1):
+        
+    def update_stock_data(self, pickle_file='stock_symbols.pkl', data_folder='data', throttle_secs=1):
         # Check if the pickle file exists
         if not os.path.exists(pickle_file):
             print(f"No pickle file found at {pickle_file}. Please make sure the file exists.")
@@ -60,35 +60,43 @@ class StockAutomationUtils:
         with open(pickle_file, 'rb') as file:
             stock_symbols = pickle.load(file)
 
-        for symbol in tqdm(stock_symbols, desc="Processing stock symbols"):
-            time.sleep(throttle_secs)
-            csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
+        with tqdm(total=len(stock_symbols)) as pbar:
+            for symbol in stock_symbols:
+                pbar.set_description(f"Downloading data for {symbol}: ")
+                csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
 
-            # If CSV file does not exist, download all available data
-            if not os.path.exists(csv_file_path):
-                print(f"Downloading data for {symbol}...")
-                data = yf.download(symbol, period="max")
-                if not data.empty:
-                    data.to_csv(csv_file_path)
-                    print(f"Data for {symbol} saved to {csv_file_path}.")
+                # If CSV file does not exist, download all available data
+                if not os.path.exists(csv_file_path):
+                
+                    data = yf.download(symbol, period="max")
+                    time.sleep(throttle_secs)
+                    
+                    if not data.empty:
+                        data.to_csv(csv_file_path)
+                        print(f"Data for {symbol} saved to {csv_file_path}.")
+                    else:
+                        print(f"No data found for {symbol}.")
+
+                # If CSV file exists, update the data
                 else:
-                    print(f"No data found for {symbol}.")
-
-            # If CSV file exists, update the data
-            else:
-                print(f"Updating data for {symbol}...")
-                existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
-                last_date = existing_data.index.max()
-                print(f"Data for {symbol} was only available till {last_date}. Updating till today now...")
-
-                # Download data from the day after the last date in the CSV until today
-                new_data = yf.download(symbol, start=last_date + pd.Timedelta(days=1))
-                if not new_data.empty:
-                    updated_data = pd.concat([existing_data, new_data])
-                    updated_data.to_csv(csv_file_path)
-                    print(f"Data for {symbol} updated in {csv_file_path}.")
-                else:
-                    print(f"No new data available for {symbol}.")
+                    print(f"Updating data for {symbol}...")
+                    existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
+                    last_date = existing_data.index.max()
+                    # pbar.set_postfix(f"Data for {symbol} was only available till {last_date}. Updating...")
+                    if datetime.now().date() == last_date + pd.Timedelta(days=1):
+                        pass
+                    else:
+                        # Download data from the day after the last date in the CSV until today
+                        new_data = yf.download(symbol, start=last_date + pd.Timedelta(days=1))
+                        time.sleep(throttle_secs)
+                        
+                        if not new_data.empty:
+                            updated_data = pd.concat([existing_data, new_data])
+                            updated_data.to_csv(csv_file_path)
+                            print(f"Data for {symbol} updated in {csv_file_path}.")
+                        else:
+                            print(f"No new data available for {symbol}.")
+                pbar.update(1)
 
     def get_data_for_interval(self, symbols, symbols_df, start_date, end_date):
         pruned_data = {}

@@ -1,5 +1,6 @@
 import numpy as np
 from datetime import timedelta
+import pandas as pd
 
 class BaseStrategy:
     def __init__(self):
@@ -25,6 +26,35 @@ class BaseStrategy:
 
     def set_params(self, config):
         raise NotImplementedError
+    
+    def create_analysis_array_symbol_efficient(self, df, start_date_dt, days_ago_list):
+        # Convert 'Date' column to datetime type
+        df['Date'] = pd.to_datetime(df['Date'])
+
+        # Filter the dataframe to include only the data needed
+        df_pruned = df.iloc[-days_ago_list[-1]:] if len(df) >= days_ago_list[-1] else df
+
+        # Ensure we have data to process
+        if not df_pruned.empty:
+            # Calculate the target dates for all 'days_ago' at once
+            target_dates = start_date_dt - np.array(days_ago_list) * timedelta(days=1)
+
+            # Find the closest date indices for all target dates
+            closest_date_indices = (df_pruned['Date'] - target_dates[:, np.newaxis]).abs().idxmin()
+
+            # Get the prices and dates for the closest date indices
+            prices = df_pruned.loc[closest_date_indices, 'Adj Close'].tolist()
+            dates = df_pruned.loc[closest_date_indices, 'Date'].tolist()
+
+            # Generate the data index
+            data_index = ['{}d_ago_price'.format(days_ago) for days_ago in days_ago_list]
+
+            # Convert the list of prices into a numpy array
+            analysis_array = np.array(prices)
+
+            return analysis_array, dates, data_index
+        else:
+            return None, None, None
     
     def create_analysis_array_symbol(self, df, start_date_dt, days_ago_list):
         # Filter the dataframe to include only the data needed
@@ -107,5 +137,3 @@ class BaseStrategy:
         long_symbols = np.random.choice(symbols_array, long_count)
 
         return long_symbols, short_symbols, symbols_array, data_array, data_index
-
-    
