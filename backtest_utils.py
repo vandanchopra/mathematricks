@@ -50,21 +50,24 @@ class TradingSimulator:
             return np.array(buy_price)
         def get_sell_price(trading_symbols_interval, trading_data_interval, stoploss):
             sell_price = []
+            stoploss_hit_bool = []
             for count, symbol in enumerate(trading_symbols_interval):
                 if trading_data_interval[symbol]['Adj Close'].min() < stoploss[count]:
                     sell_price.append(stoploss[count])
                     # print({'sell':symbol, 'sell_price':stoploss[count]})
+                    stoploss_hit_bool.append(True)
                 else:
                     sell_price.append(trading_data_interval[symbol]['Adj Close'].iloc[-1])
                     # print({'sell':symbol, 'sell_price':trading_data_interval[symbol]['Adj Close'].iloc[0]})
-            return np.array(sell_price)
+                    stoploss_hit_bool.append(False)
+            return np.array(sell_price), stoploss_hit_bool
         position_size = calculate_position_size(portfolio_value, trading_symbols_interval)
         buy_price = get_buy_price(trading_symbols_interval, trading_data_interval)
         qty = np.array(position_size/buy_price, dtype=int)
         stoploss = buy_price*(1-risk_pct)
-        sell_price = get_sell_price(trading_symbols_interval, trading_data_interval, stoploss)
+        sell_price, stoploss_hit_bool = get_sell_price(trading_symbols_interval, trading_data_interval, stoploss)
         profit = (sell_price - buy_price)*qty
-        trading_simulation_array = np.array([trading_symbols_interval, buy_price, qty, stoploss, sell_price, profit])
+        trading_simulation_array = np.array([trading_symbols_interval, buy_price, qty, stoploss, sell_price, stoploss_hit_bool, profit])
         profit_interval = np.sum(profit)
         # create a pandas dataframe with trading_symbols_interval as index, and buy_price, qty, stoploss, sell_price, profit as columns
         # trading_simulation_array = pd.DataFrame(trading_simulation_array.T, columns=['Symbol', 'Buy Price', 'Qty', 'Stoploss', 'Sell Price', 'Profit'])
@@ -131,6 +134,9 @@ class TradingSimulator:
                 
                 pbar.update(1)
                 
-        test = {'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt, 'end_date_dt':end_date_dt, 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool}, 
-                'rebalance_periods':rebalance_periods, 'backtest_runs': backtest_runs, 'backtest_profits': backtest_profits, 'strategy_name':self.strategy.get_name()}
+        test = {'strategy_name':self.strategy.get_name(), 
+                'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt, 'end_date_dt':end_date_dt, 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool}, 
+                'rebalance_periods':rebalance_periods, 
+                'backtest_runs': backtest_runs, 
+                'backtest_profits': backtest_profits}
         return test
