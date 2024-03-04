@@ -19,7 +19,7 @@ class BacktestAnalyzer:
         self.short_count = short_count
         self.portfolio_starting_value = portfolio_starting_value
         self.risk_pct = risk_pct
-        self.reinvest_profits_bool = reinvest_profits_bools
+        self.reinvest_profits_bool = reinvest_profits_bool
 
     def get_backtest_filename(self):
         pickle_filename = f'backtests/{self.strategy.get_name()}_{"_".join(self.symbols)}_{"_".join([str(x) for x in [self.start_date_dt, self.end_date_dt, self.rebalance_frequency, self.long_count, self.short_count, self.portfolio_starting_value, self.risk_pct, self.reinvest_profits_bool]])}.pkl'
