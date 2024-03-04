@@ -231,16 +231,25 @@ class BacktestAnalyzer:
 
 
 def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyzer):
-    backtest1_analysis = pd.DataFrame(backtest1.analyze_backtest()).T
-    backtest2_analysis = pd.DataFrame(backtest2.analyze_backtest()).T
+    backtest1_analysis = backtest1.analyze_backtest()
+    backtest2_analysis = backtest2.analyze_backtest()
 
     # Compare the two backtests
-    comparison = pd.concat([backtest1_analysis, backtest2_analysis], axis=1)
     comparison_columns = [backtest1.get_backtest_filename_without_path()[:-4].split('_'), backtest2.get_backtest_filename_without_path()[:-4].split('_')]
     # Compare comparison_columns and leave only the different columns
     comparison_columns = [list(set(comparison_columns[0]) - set(comparison_columns[1])), list(set(comparison_columns[1]) - set(comparison_columns[0]))]
     comparison_columns = ['_'.join(comparison_columns[0]), '_'.join(comparison_columns[1])]
-    comparison.columns = comparison_columns
 
+    total_comparison = pd.concat([pd.DataFrame(backtest1_analysis['total']).T, pd.DataFrame(backtest2_analysis['total']).T], axis=1)
+    long_comparison = pd.concat([pd.DataFrame(backtest1_analysis['long']).T, pd.DataFrame(backtest2_analysis['long']).T], axis=1)
+    short_comparison = pd.concat([pd.DataFrame(backtest1_analysis['short']).T, pd.DataFrame(backtest2_analysis['short']).T], axis=1)
 
-    return comparison
+    total_comparison.columns = comparison_columns
+    long_comparison.columns = comparison_columns
+    short_comparison.columns = comparison_columns
+
+    total_comparison.sort_values(by='test_score', ascending=False, inplace=True)
+    total_comparison.sort_values(by='test_score', ascending=False, inplace=True)
+    total_comparison.sort_values(by='test_score', ascending=False, inplace=True)
+
+    return total_comparison, long_comparison, short_comparison
