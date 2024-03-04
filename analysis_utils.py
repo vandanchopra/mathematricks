@@ -249,7 +249,7 @@ def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyz
     short_comparison.columns = comparison_columns
 
     total_comparison.sort_values(by='test_score', ascending=False, inplace=True)
-    total_comparison.sort_values(by='test_score', ascending=False, inplace=True)
-    total_comparison.sort_values(by='test_score', ascending=False, inplace=True)
+    long_comparison.sort_values(by='test_score', ascending=False, inplace=True)
+    short_comparison.sort_values(by='test_score', ascending=False, inplace=True)
 
     return total_comparison, long_comparison, short_comparison
