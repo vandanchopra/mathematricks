@@ -139,4 +139,9 @@ class TradingSimulator:
                 'rebalance_periods':rebalance_periods, 
                 'backtest_runs': backtest_runs, 
                 'backtest_profits': backtest_profits}
+
+        pickle_filename = f'backtests/{test["strategy_name"]}_{"_".join(test["inputs"]["symbols"])}_{"_".join([str(x) for x in list(test["inputs"].values())[1:]])}.pkl'
+        pickle.dump(test, open(pickle_filename, 'wb'))
+        print(f'Backtest results saved to {pickle_filename}')
+
         return test
