@@ -32,8 +32,8 @@ class BacktestAnalyzer:
     def analyze_backtest(self):
         test_filename = self.get_backtest_filename()
         test = pickle.load(open(test_filename, 'rb'))
-        long_profits = [sum(compress(x['profit'], [(y > 0) for y in x['trading_symbols_multiplier_array']])) for x in test['backtest_runs']]
-        short_profits = [sum(compress(x['profit'], [(y < 0) for y in x['trading_symbols_multiplier_array']])) for x in test['backtest_runs']]
+        long_profits = [sum(compress(x[-1], [(y > 0) for y in x[1]])) for x in test['backtest_runs']]
+        short_profits = [sum(compress(x[-1], [(y < 0) for y in x[1]])) for x in test['backtest_runs']]
 
         backtest_profits = test['backtest_profits']
         benchmark_returns = self.get_benchmark_returns(test['rebalance_periods'][0][0], test['rebalance_periods'][-1][1],
