@@ -31,7 +31,7 @@ class TradingSimulator:
 
         return rebalance_dates
 
-    def trading_simulation(self, portfolio_value, trading_symbols_interval, trading_data_interval, risk_pct):
+    def trading_simulation(self, portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct):
         def calculate_position_size(portfolio_value, trading_symbols_interval):
             position_size = (np.array(range(len(trading_symbols_interval))) + 1)
             position_size = portfolio_value/position_size
@@ -42,32 +42,50 @@ class TradingSimulator:
             position_size = position_size * portfolio_value
             
             return position_size
-        def get_buy_price(trading_symbols_interval, trading_data_interval):
-            buy_price = []
+        def get_entry_price(trading_symbols_interval, trading_data_interval):
+            entry_price = []
             for symbol in trading_symbols_interval:
-                buy_price.append(trading_data_interval[symbol]['Adj Close'].iloc[0])
+                entry_price.append(trading_data_interval[symbol]['Adj Close'].iloc[0])
                 # print({'buy':symbol, 'buy_price':trading_data_interval[symbol]['Adj Close'].iloc[0]})
-            return np.array(buy_price)
-        def get_sell_price(trading_symbols_interval, trading_data_interval, stoploss):
-            sell_price = []
+            return np.array(entry_price)
+        def get_exit_price(long_symbols, short_symbols, trading_data_interval, stoploss):
+            exit_price = []
             stoploss_hit_bool = []
+            trading_symbols_interval = list(long_symbols) + list(short_symbols)
             for count, symbol in enumerate(trading_symbols_interval):
-                if trading_data_interval[symbol]['Adj Close'].min() < stoploss[count]:
-                    sell_price.append(stoploss[count])
+                if (symbol in long_symbols and trading_data_interval[symbol]['Adj Close'].min() < stoploss[count])\
+                        or (symbol in short_symbols and trading_data_interval[symbol]['Adj Close'].max() > stoploss[count]):
+                    exit_price.append(stoploss[count])
                     # print({'sell':symbol, 'sell_price':stoploss[count]})
                     stoploss_hit_bool.append(True)
                 else:
-                    sell_price.append(trading_data_interval[symbol]['Adj Close'].iloc[-1])
+                    exit_price.append(trading_data_interval[symbol]['Adj Close'].iloc[-1])
                     # print({'sell':symbol, 'sell_price':trading_data_interval[symbol]['Adj Close'].iloc[0]})
                     stoploss_hit_bool.append(False)
-            return np.array(sell_price), stoploss_hit_bool
+            return np.array(exit_price), stoploss_hit_bool
+
+        trading_symbols_interval = list(long_symbols) + list(short_symbols)
+        trading_symbols_multiplier_array = np.array([1]*len(long_symbols) + [-1]*len(short_symbols))
+
         position_size = calculate_position_size(portfolio_value, trading_symbols_interval)
-        buy_price = get_buy_price(trading_symbols_interval, trading_data_interval)
-        qty = np.array(position_size/buy_price, dtype=int)
-        stoploss = buy_price*(1-risk_pct)
-        sell_price, stoploss_hit_bool = get_sell_price(trading_symbols_interval, trading_data_interval, stoploss)
-        profit = (sell_price - buy_price)*qty
-        trading_simulation_array = np.array([trading_symbols_interval, buy_price, qty, stoploss, sell_price, stoploss_hit_bool, profit])
+        position_size *= trading_symbols_multiplier_array     # Short positions are negative
+
+        entry_price = get_entry_price(trading_symbols_interval, trading_data_interval)
+        qty = np.array(position_size/entry_price, dtype=int)
+
+        stoploss = np.array(entry_price * (1 - risk_pct * trading_symbols_multiplier_array))
+        exit_price, stoploss_hit_bool = get_exit_price(long_symbols, short_symbols, trading_data_interval, stoploss)
+
+        profit = (exit_price - entry_price)*qty     # qty is negative for short positions
+
+        trading_simulation_array = np.array([trading_symbols_interval,
+                                             trading_symbols_multiplier_array,
+                                             entry_price,
+                                             qty,
+                                             stoploss,
+                                             exit_price,
+                                             stoploss_hit_bool,
+                                             profit])
         profit_interval = np.sum(profit)
         # create a pandas dataframe with trading_symbols_interval as index, and buy_price, qty, stoploss, sell_price, profit as columns
         # trading_simulation_array = pd.DataFrame(trading_simulation_array.T, columns=['Symbol', 'Buy Price', 'Qty', 'Stoploss', 'Sell Price', 'Profit'])
@@ -124,7 +142,7 @@ class TradingSimulator:
                 # Get the trading data for the interval
                 trading_data_interval = self.SAU.get_data_for_interval(trading_symbols_interval, full_stock_data, start_date_interval, end_date_interval)
                 # Run the trades
-                trading_simulation_array, profit_interval = self.trading_simulation(portfolio_value, trading_symbols_interval, trading_data_interval, risk_pct)
+                trading_simulation_array, profit_interval = self.trading_simulation(portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct)
                 backtest_runs.append(trading_simulation_array)
                 backtest_profits.append(profit_interval)
                 pbar.set_description(f"Running backtest: {start_date_interval.date()} - {end_date_interval.date()}")
