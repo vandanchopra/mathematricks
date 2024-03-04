@@ -135,7 +135,7 @@ class TradingSimulator:
                 pbar.update(1)
                 
         test = {'strategy_name':self.strategy.get_name(), 
-                'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt, 'end_date_dt':end_date_dt, 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool}, 
+                'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt.date(), 'end_date_dt':end_date_dt.date(), 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool},
                 'rebalance_periods':rebalance_periods, 
                 'backtest_runs': backtest_runs, 
                 'backtest_profits': backtest_profits}
