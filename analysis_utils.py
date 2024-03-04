@@ -32,17 +32,17 @@ class BacktestAnalyzer:
     def analyze_backtest(self):
         test_filename = self.get_backtest_filename()
         test = pickle.load(open(test_filename, 'rb'))
-        long_profits = [sum(compress(x[-1], [(y > 0) for y in x[1]])) for x in test['backtest_runs']]
-        short_profits = [sum(compress(x[-1], [(y < 0) for y in x[1]])) for x in test['backtest_runs']]
+        long_profits = [list(compress(x[-1], [y > 0 for y in np.float64(x[1])])) for x in test['backtest_runs']]
+        long_profits = [sum(np.float64(x)) for x in long_profits]
+        short_profits = [list(compress(x[-1], [y < 0 for y in np.float64(x[1])])) for x in test['backtest_runs']]
+        short_profits = [sum(np.float64(x)) for x in short_profits]
 
         backtest_profits = test['backtest_profits']
-        benchmark_returns = self.get_benchmark_returns(test['rebalance_periods'][0][0], test['rebalance_periods'][-1][1],
-                                                       test['rebalance_periods'],
-                                                       test['inputs']['portfolio_starting_value'])
+        benchmark_returns = test['benchmark_returns']
         benchmark_returns = benchmark_returns[:len(backtest_profits)]
-        up_bets = np.sum([(x['profit'] > 0).count() for x in test['backtest_runs']])
-        down_bets = np.sum([(x['profit'] < 0).count() for x in test['backtest_runs']])
-        total_bets = [x.count() for x in test['backtest_runs']]
+        up_bets = np.sum([(np.float64(x[-1]) > 0).sum() for x in test['backtest_runs']])
+        down_bets = np.sum([(np.float64(x[-1]) < 0).sum() for x in test['backtest_runs']])
+        total_bets = [np.float64(x[-1]).sum() for x in test['backtest_runs']]
 
         # Calculate the CAGR
         cagr = (backtest_profits[-1] / backtest_profits[0]) ** (1 / len(backtest_profits)) - 1
@@ -61,8 +61,8 @@ class BacktestAnalyzer:
         sharpe_ratio = np.mean(backtest_profits) / np.std(backtest_profits)
         benchmark_sharpe_ratio = np.mean(benchmark_returns) / np.std(benchmark_returns)
         # Calculate the Sortino Ratio
-        sortino_ratio = np.mean(backtest_profits) / np.std(backtest_profits[backtest_profits < 0])
-        benchmark_sortino_ratio = np.mean(benchmark_returns) / np.std(benchmark_returns[benchmark_returns < 0])
+        sortino_ratio = np.mean(backtest_profits) / np.std([x for x in backtest_profits if x < 0])
+        benchmark_sortino_ratio = np.mean(benchmark_returns) / np.std(x for x in benchmark_returns if x < 0)
         # Calculate the Profit to Drawdown Ratio
         profit_to_drawdown_ratio = np.sum(backtest_profits) / max_drawdown
         benchmark_profit_to_drawdown_ratio = np.sum(benchmark_returns) / max_benchmark_drawdown
@@ -89,8 +89,8 @@ class BacktestAnalyzer:
         pct_profitable_bets = up_bets / total_bets
         pct_negative_bets = down_bets / total_bets
         # Calculate median gain/average loss
-        median_gain = np.median(backtest_profits[backtest_profits > 0])
-        average_loss = np.mean(backtest_profits[backtest_profits < 0])
+        median_gain = np.median([x for x in backtest_profits if x > 0])
+        average_loss = np.mean([x for x in backtest_profits if x < 0])
         median_gain_to_average_loss = median_gain / average_loss
 
         # Same metrics as above for longs and shorts
@@ -102,15 +102,15 @@ class BacktestAnalyzer:
         long_beta = np.cov(long_profits, benchmark_returns) / np.var(benchmark_returns)
         long_alpha = np.mean(long_profits) - long_beta * np.mean(benchmark_returns)
         long_sharpe_ratio = np.mean(long_profits) / np.std(long_profits)
-        long_sortino_ratio = np.mean(long_profits) / np.std(long_profits[long_profits < 0])
+        long_sortino_ratio = np.mean(long_profits) / np.std([x for x in long_profits if x < 0])
         long_total_return = np.sum(long_profits)
-        long_positive_returns = sum(long_profits > 0)
-        long_negative_returns = sum(long_profits < 0)
+        long_positive_returns = sum([x for x in long_profits if x > 0])
+        long_negative_returns = sum([x for x in long_profits if x < 0])
         long_pct_positive_returns = long_positive_returns / len(long_profits)
         long_pct_negative_returns = long_negative_returns / len(long_profits)
         long_pct_profitable_bets = np.sum([(x > 0).count() for x in long_profits]) / [x.count() for x in long_profits]
-        long_median_gain = np.median(long_profits[long_profits > 0])
-        long_average_loss = np.mean(long_profits[long_profits < 0])
+        long_median_gain = np.median([x for x in long_profits if x > 0])
+        long_average_loss = np.mean([x for x in long_profits if x < 0])
         long_median_gain_to_average_loss = long_median_gain / long_average_loss
 
         short_cagr = (np.sum(short_profits) / short_profits[0]) ** (1 / len(short_profits)) - 1
@@ -121,15 +121,15 @@ class BacktestAnalyzer:
         short_beta = np.cov(short_profits, benchmark_returns) / np.var(benchmark_returns)
         short_alpha = np.mean(short_profits) - short_beta * np.mean(benchmark_returns)
         short_sharpe_ratio = np.mean(short_profits) / np.std(short_profits)
-        short_sortino_ratio = np.mean(short_profits) / np.std(short_profits[short_profits < 0])
+        short_sortino_ratio = np.mean(short_profits) / np.std([x for x in short_profits if x < 0])
         short_total_return = np.sum(short_profits)
-        short_positive_returns = sum(short_profits > 0)
-        short_negative_returns = sum(short_profits < 0)
+        short_positive_returns = sum([x for x in short_profits if x > 0])
+        short_negative_returns = sum([x for x in short_profits if x < 0])
         short_pct_positive_returns = short_positive_returns / len(short_profits)
         short_pct_negative_returns = short_negative_returns / len(short_profits)
         short_pct_profitable_bets = np.sum([(x > 0).count() for x in short_profits]) / [x.count() for x in short_profits]
-        short_median_gain = np.median(short_profits[short_profits > 0])
-        short_average_loss = np.mean(short_profits[short_profits < 0])
+        short_median_gain = np.median([x for x in short_profits if x > 0])
+        short_average_loss = np.mean([x for x in short_profits if x < 0])
         short_median_gain_to_average_loss = short_median_gain / short_average_loss
 
         test_score = lambda: np.random.random(1)[0]  # np.sum([y.values() for y in x])

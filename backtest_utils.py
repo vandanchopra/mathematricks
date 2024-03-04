@@ -138,7 +138,9 @@ class TradingSimulator:
                 'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt.date(), 'end_date_dt':end_date_dt.date(), 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool},
                 'rebalance_periods':rebalance_periods, 
                 'backtest_runs': backtest_runs, 
-                'backtest_profits': backtest_profits}
+                'backtest_profits': backtest_profits,
+                'benchmark_returns': self.get_benchmark_returns(start_date_dt, end_date_dt, rebalance_periods, portfolio_starting_value)
+                }
 
         pickle_filename = f'backtests/{test["strategy_name"]}_{"_".join(test["inputs"]["symbols"])}_{"_".join([str(x) for x in list(test["inputs"].values())[1:]])}.pkl'
         pickle.dump(test, open(pickle_filename, 'wb'))
