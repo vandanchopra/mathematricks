@@ -6,6 +6,7 @@ import yfinance as yf
 from datetime import date, datetime, timedelta
 import time
 from tqdm import tqdm
+from itertools import compress
 
 class StockAutomationUtils:
     def __init__(self):
@@ -60,6 +61,9 @@ class StockAutomationUtils:
         with open(pickle_file, 'rb') as file:
             stock_symbols = pickle.load(file)
 
+        # Remove any non-string symbols
+        stock_symbols = list(compress(stock_symbols, [type(x) == str for x in stock_symbols]))
+
         with tqdm(total=len(stock_symbols)) as pbar:
             for symbol in stock_symbols:
                 pbar.set_description(f"Downloading data for {symbol}: ")
@@ -83,7 +87,7 @@ class StockAutomationUtils:
                     existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
                     last_date = existing_data.index.max()
                     # pbar.set_postfix(f"Data for {symbol} was only available till {last_date}. Updating...")
-                    if datetime.now().date() == last_date + pd.offsets.BDay():
+                    if datetime.now().date() <= last_date + pd.offsets.BDay():
                         pass
                     else:
                         # Download data from the day after the last date in the CSV until today
