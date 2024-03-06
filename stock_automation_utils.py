@@ -80,6 +80,19 @@ class StockAutomationUtils:
                         print(f"Data for {symbol} saved to {csv_file_path}.")
                     else:
                         print(f"No data found for {symbol}.")
+                elif pd.read_csv(csv_file_path, index_col='Date', parse_dates=True).empty:
+                    print(f"CSV file for {symbol} is empty. Deleting...")
+                    os.remove(csv_file_path)
+                    print(f"CSV file for {symbol} deleted.")
+
+                    data = yf.download(symbol, period="max")
+
+                    if not data.empty:
+                        time.sleep(throttle_secs)
+                        data.to_csv(csv_file_path)
+                        print(f"Data for {symbol} saved to {csv_file_path}.")
+                    else:
+                        print(f"No data found for {symbol}.")
 
                 # If CSV file exists, update the data
                 else:
