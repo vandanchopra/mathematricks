@@ -6,6 +6,7 @@ import yfinance as yf
 from datetime import date, datetime, timedelta
 import time
 from tqdm import tqdm
+from itertools import compress
 
 class StockAutomationUtils:
     def __init__(self):
@@ -60,6 +61,9 @@ class StockAutomationUtils:
         with open(pickle_file, 'rb') as file:
             stock_symbols = pickle.load(file)
 
+        # Remove any non-string symbols
+        stock_symbols = list(compress(stock_symbols, [type(x) == str for x in stock_symbols]))
+
         with tqdm(total=len(stock_symbols)) as pbar:
             for symbol in stock_symbols:
                 pbar.set_description(f"Downloading data for {symbol}: ")
@@ -69,9 +73,9 @@ class StockAutomationUtils:
                 if not os.path.exists(csv_file_path):
                 
                     data = yf.download(symbol, period="max")
-                    time.sleep(throttle_secs)
                     
                     if not data.empty:
+                        time.sleep(throttle_secs)
                         data.to_csv(csv_file_path)
                         print(f"Data for {symbol} saved to {csv_file_path}.")
                     else:
@@ -83,19 +87,47 @@ class StockAutomationUtils:
                     existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
                     last_date = existing_data.index.max()
                     # pbar.set_postfix(f"Data for {symbol} was only available till {last_date}. Updating...")
-                    if datetime.now().date() == last_date + pd.Timedelta(days=1):
+                    if datetime.now().date() <= last_date + pd.offsets.BDay():
                         pass
                     else:
                         # Download data from the day after the last date in the CSV until today
-                        new_data = yf.download(symbol, start=last_date + pd.Timedelta(days=1))
-                        time.sleep(throttle_secs)
-                        
+                        new_data = yf.download(symbol, start=last_date + pd.offsets.BDay())
+
                         if not new_data.empty:
+                            time.sleep(throttle_secs)
                             updated_data = pd.concat([existing_data, new_data])
-                            updated_data.to_csv(csv_file_path)
+                            updated_data.iloc[:-1].to_csv(csv_file_path)
                             print(f"Data for {symbol} updated in {csv_file_path}.")
                         else:
                             print(f"No new data available for {symbol}.")
+
+                    # ############################################################
+                    # # Alternative solution, does not take weekends into account:
+                    #
+                    # # Send an API request to download new data regardless of today's date
+                    # new_data = yf.download(symbol, start=last_date)
+                    #
+                    # # Should always pass this and never get to else, but just for safety:
+                    # if not data.empty:
+                    #     time.sleep(throttle_secs)
+                    #
+                    #     # Check to see if last_date is today's date,
+                    #     # which means multiple downloads in the same day,
+                    #     # so we need to drop the last date's row from existing data
+                    #     if last_date == datetime.now().date():
+                    #         existing_data = existing_data.drop(last_date)
+                    #     else:
+                    #         # last_date is not today's date, therefore we need to drop
+                    #         # it from new data, to avoid changing data we already may have
+                    #         # used to make trading decisions
+                    #         new_data = new_data.drop(last_date)
+                    #
+                    #     # Concatenate the two dataframes
+                    #     updated_data = pd.concat([existing_data, new_data])
+                    #     updated_data.to_csv(csv_file_path)
+                    #     print(f"Data for {symbol} updated in {csv_file_path}.")
+                    # else:   # Should never get here as we are downloading data regardless of today's date
+                    #     print(f"No new data available for {symbol}.")
                 pbar.update(1)
 
     def get_data_for_interval(self, symbols, symbols_df, start_date, end_date):

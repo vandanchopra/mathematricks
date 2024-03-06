@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import pickle
+from os import listdir
 import numpy as np
 from stock_automation_utils import StockAutomationUtils
 from strategy_vault import StrategyVault
@@ -31,7 +32,7 @@ class TradingSimulator:
 
         return rebalance_dates
 
-    def trading_simulation(self, portfolio_value, trading_symbols_interval, trading_data_interval, risk_pct):
+    def trading_simulation(self, portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct, leverage_multiplier):
         def calculate_position_size(portfolio_value, trading_symbols_interval):
             position_size = (np.array(range(len(trading_symbols_interval))) + 1)
             position_size = portfolio_value/position_size
@@ -42,32 +43,51 @@ class TradingSimulator:
             position_size = position_size * portfolio_value
             
             return position_size
-        def get_buy_price(trading_symbols_interval, trading_data_interval):
-            buy_price = []
+        def get_entry_price(trading_symbols_interval, trading_data_interval):
+            entry_price = []
             for symbol in trading_symbols_interval:
-                buy_price.append(trading_data_interval[symbol]['Adj Close'].iloc[0])
+                entry_price.append(trading_data_interval[symbol]['Adj Close'].iloc[0])
                 # print({'buy':symbol, 'buy_price':trading_data_interval[symbol]['Adj Close'].iloc[0]})
-            return np.array(buy_price)
-        def get_sell_price(trading_symbols_interval, trading_data_interval, stoploss):
-            sell_price = []
+            return np.array(entry_price)
+        def get_exit_price(long_symbols, short_symbols, trading_data_interval, stoploss):
+            exit_price = []
             stoploss_hit_bool = []
+            trading_symbols_interval = list(long_symbols) + list(short_symbols)
             for count, symbol in enumerate(trading_symbols_interval):
-                if trading_data_interval[symbol]['Adj Close'].min() < stoploss[count]:
-                    sell_price.append(stoploss[count])
+                if (symbol in long_symbols and trading_data_interval[symbol]['Adj Close'].min() < stoploss[count])\
+                        or (symbol in short_symbols and trading_data_interval[symbol]['Adj Close'].max() > stoploss[count]):
+                    exit_price.append(stoploss[count])
                     # print({'sell':symbol, 'sell_price':stoploss[count]})
                     stoploss_hit_bool.append(True)
                 else:
-                    sell_price.append(trading_data_interval[symbol]['Adj Close'].iloc[-1])
+                    exit_price.append(trading_data_interval[symbol]['Adj Close'].iloc[-1])
                     # print({'sell':symbol, 'sell_price':trading_data_interval[symbol]['Adj Close'].iloc[0]})
                     stoploss_hit_bool.append(False)
-            return np.array(sell_price), stoploss_hit_bool
+            return np.array(exit_price), stoploss_hit_bool
+
+        trading_symbols_interval = list(long_symbols) + list(short_symbols)
+        trading_symbols_multiplier_array = np.array([1]*len(long_symbols) + [-1]*len(short_symbols))
+
         position_size = calculate_position_size(portfolio_value, trading_symbols_interval)
-        buy_price = get_buy_price(trading_symbols_interval, trading_data_interval)
-        qty = np.array(position_size/buy_price, dtype=int)
-        stoploss = buy_price*(1-risk_pct)
-        sell_price, stoploss_hit_bool = get_sell_price(trading_symbols_interval, trading_data_interval, stoploss)
-        profit = (sell_price - buy_price)*qty
-        trading_simulation_array = np.array([trading_symbols_interval, buy_price, qty, stoploss, sell_price, stoploss_hit_bool, profit])
+        position_size *= trading_symbols_multiplier_array     # Short positions are negative
+
+        entry_price = get_entry_price(trading_symbols_interval, trading_data_interval)
+        qty = np.array(position_size*leverage_multiplier/entry_price, dtype=int)
+
+        stoploss = np.array(entry_price * (1 - risk_pct * trading_symbols_multiplier_array))
+        exit_price, stoploss_hit_bool = get_exit_price(long_symbols, short_symbols, trading_data_interval, stoploss)
+
+        profit = (exit_price - entry_price)*qty     # qty is negative for short positions
+
+        trading_simulation_array = np.array([trading_symbols_interval,
+                                             trading_symbols_multiplier_array,
+                                             entry_price,
+                                             qty,
+                                             stoploss,
+                                             exit_price,
+                                             stoploss_hit_bool,
+                                             profit])
+
         profit_interval = np.sum(profit)
         # create a pandas dataframe with trading_symbols_interval as index, and buy_price, qty, stoploss, sell_price, profit as columns
         # trading_simulation_array = pd.DataFrame(trading_simulation_array.T, columns=['Symbol', 'Buy Price', 'Qty', 'Stoploss', 'Sell Price', 'Profit'])
@@ -96,7 +116,7 @@ class TradingSimulator:
         
         return benchmark_returns
     
-    def run_backtest(self, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count, portfolio_starting_value, risk_pct, reinvest_profits_bool):
+    def run_backtest(self, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count, portfolio_starting_value, risk_pct, reinvest_profits_bool, leverage_multiplier):
         # For each rebalance period, run the analysis and get long short stocks.
         rebalance_periods = self.calculate_rebalance_periods_with_dates(start_date_dt, end_date_dt, rebalance_frequency)
         rebalance_periods = [(datetime.combine(rebalance_periods[0], datetime.min.time()), datetime.combine(rebalance_periods[1], datetime.min.time())) for rebalance_periods in rebalance_periods]
@@ -124,19 +144,29 @@ class TradingSimulator:
                 # Get the trading data for the interval
                 trading_data_interval = self.SAU.get_data_for_interval(trading_symbols_interval, full_stock_data, start_date_interval, end_date_interval)
                 # Run the trades
-                trading_simulation_array, profit_interval = self.trading_simulation(portfolio_value, trading_symbols_interval, trading_data_interval, risk_pct)
+                trading_simulation_array, profit_interval = self.trading_simulation(portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct, leverage_multiplier)
+
                 backtest_runs.append(trading_simulation_array)
                 backtest_profits.append(profit_interval)
                 pbar.set_description(f"Running backtest: {start_date_interval.date()} - {end_date_interval.date()}")
                 pbar.set_postfix({'Profit': round(profit_interval, 2)})
+                if profit_interval <= -portfolio_value:
+                    break
                 if reinvest_profits_bool:
                     portfolio_value += profit_interval
-                
+
                 pbar.update(1)
                 
         test = {'strategy_name':self.strategy.get_name(), 
-                'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt, 'end_date_dt':end_date_dt, 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool}, 
+                'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt.date(), 'end_date_dt':end_date_dt.date(), 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool},
                 'rebalance_periods':rebalance_periods, 
                 'backtest_runs': backtest_runs, 
-                'backtest_profits': backtest_profits}
+                'backtest_profits': backtest_profits,
+                'benchmark_returns': self.get_benchmark_returns(start_date_dt, end_date_dt, rebalance_periods, portfolio_starting_value)
+                }
+
+        pickle_filename = f'backtests/{test["strategy_name"]}_{"_".join(test["inputs"]["symbols"])}_{"_".join([str(x) for x in list(test["inputs"].values())[1:]])}.pkl'
+        pickle.dump(test, open(pickle_filename, 'wb'))
+        print(f'Backtest results saved to {pickle_filename}')
+
         return test
