@@ -1,40 +1,55 @@
 from datetime import datetime, timedelta
 import pickle
 import numpy as np
-from stock_automation_utils import StockAutomationUtils
-from strategy_vault import StrategyVault
 import pandas as pd
 from tqdm import tqdm
 from itertools import compress
 
-<<<<<<< HEAD
-=======
 
->>>>>>> 6-test-analysis
 class BacktestAnalyzer:
     def __init__(self, strategy_name, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count,
-                  portfolio_starting_value, risk_pct, reinvest_profits_bool):
+                  portfolio_starting_value, risk_pct, reinvest_profits_bool, leverage_multiplier):
+        self.base_test = None
         self.strategy_name = strategy_name
         self.symbols = symbols
-        self.start_date_dt = start_date_dt
-        self.end_date_dt = end_date_dt
+        self.start_date_dt = start_date_dt.date()
+        self.end_date_dt = end_date_dt.date()
         self.rebalance_frequency = rebalance_frequency
         self.long_count = long_count
         self.short_count = short_count
         self.portfolio_starting_value = portfolio_starting_value
         self.risk_pct = risk_pct
         self.reinvest_profits_bool = reinvest_profits_bool
+        self.leverage_multiplier = leverage_multiplier
+
+    def __init__(self, test):
+        self.base_test = test
+        self.strategy_name = test['strategy_name']
+        self.symbols = test['inputs']['symbols']
+        self.start_date_dt = test['inputs']['start_date_dt']
+        self.end_date_dt = test['inputs']['end_date_dt']
+        self.rebalance_frequency = test['inputs']['rebalance_frequency']
+        self.long_count = test['inputs']['long_count']
+        self.short_count = test['inputs']['short_count']
+        self.portfolio_starting_value = test['inputs']['portfolio_starting_value']
+        self.risk_pct = test['inputs']['risk_pct']
+        self.reinvest_profits_bool = test['inputs']['reinvest_profits_bool']
+        self.leverage_multiplier = test['inputs']['leverage_multiplier']
 
     def get_backtest_filename_without_path(self):
-        return f'{self.strategy_name}_{"_".join(self.symbols)}_{"_".join([str(x) for x in [self.start_date_dt.date(), self.end_date_dt.date(), self.rebalance_frequency, self.long_count, self.short_count, self.portfolio_starting_value, self.risk_pct, self.reinvest_profits_bool]])}.pkl'
+        return f'{self.strategy_name}_{"_".join([str(x) for x in [self.start_date_dt, self.end_date_dt, self.rebalance_frequency, self.long_count, self.short_count, self.portfolio_starting_value, self.risk_pct, self.reinvest_profits_bool, self.leverage_multiplier]])}.pkl'
 
     def get_backtest_filename(self):
         pickle_filename = f'backtests/{self.get_backtest_filename_without_path()}'
         return pickle_filename
 
     def analyze_backtest(self):
-        test_filename = self.get_backtest_filename()
-        test = pickle.load(open(test_filename, 'rb'))
+        if self.base_test is None:
+            test_filename = self.get_backtest_filename()
+            test = pickle.load(open(test_filename, 'rb'))
+        else:
+            test = self.base_test
+
         long_only = test['inputs']['long_count'] > 0 and test['inputs']['short_count'] == 0
 
         long_profits = [list(compress(x[-1], [y > 0 for y in np.float64(x[1])])) for x in test['backtest_runs']]
@@ -172,90 +187,92 @@ class BacktestAnalyzer:
         test_score = lambda: np.random.random(1)[0]  # np.sum([y.values() for y in x])
 
         backtest_analysis = {
-                'total': {
-                    'cagr': cagr,
-                    'max_drawdown': max_drawdown,
-                    'sharpe_ratio': sharpe_ratio,
-                    'sortino_ratio': sortino_ratio,
-                    'profit_to_drawdown_ratio': profit_to_drawdown_ratio,
-                    'beta': beta,
-                    'alpha': alpha,
-                    'total_return': total_return,
-                    'positive_returns': positive_returns,
-                    'negative_returns': negative_returns,
-                    'pct_profitable_bets': pct_profitable_bets,
-                    'pct_negative_bets': pct_negative_bets,
-                    'median_gain': median_gain,
-                    'average_loss': average_loss,
-                    'median_gain_to_average_loss': median_gain_to_average_loss,
-                    'test_score': test_score()
-                },
-                'long': {
-                    'cagr': long_cagr,
-                    'max_drawdown': max_long_drawdown,
-                    'sharpe_ratio': long_sharpe_ratio,
-                    'sortino_ratio': long_sortino_ratio,
-                    'profit_to_drawdown_ratio': long_profit_to_drawdown_ratio,
-                    'beta': long_beta,
-                    'alpha': long_alpha,
-                    'total_return': long_total_return,
-                    'pct_positive_returns': long_pct_positive_returns,
-                    'pct_negative_returns': long_pct_negative_returns,
-                    'pct_profitable_bets': long_pct_profitable_bets,
-                    'median_gain': long_median_gain,
-                    'average_loss': long_average_loss,
-                    'median_gain_to_average_loss': long_median_gain_to_average_loss,
-                    'test_score': test_score()
-                },
-                'short': {
-                    'cagr': short_cagr,
-                    'max_drawdown': max_short_drawdown,
-                    'sharpe_ratio': short_sharpe_ratio,
-                    'sortino_ratio': short_sortino_ratio,
-                    'profit_to_drawdown_ratio': short_profit_to_drawdown_ratio,
-                    'beta': short_beta,
-                    'alpha': short_alpha,
-                    'total_return': short_total_return,
-                    'pct_positive_returns': short_pct_positive_returns,
-                    'pct_negative_returns': short_pct_negative_returns,
-                    'pct_profitable_bets': short_pct_profitable_bets,
-                    'median_gain': short_median_gain,
-                    'average_loss': short_average_loss,
-                    'median_gain_to_average_loss': short_median_gain_to_average_loss,
-                    'test_score': test_score()
-                },
-                'benchmark': {
-                    'cagr': benchmark_cagr,
-                    'max_drawdown': max_benchmark_drawdown,
-                    'sharpe_ratio': benchmark_sharpe_ratio,
-                    'sortino_ratio': benchmark_sortino_ratio,
-                    'profit_to_drawdown_ratio': benchmark_profit_to_drawdown_ratio,
-                    'beta': 1.0,
-                    'alpha': 0.0,
-                    'total_return': benchmark_total_return,
-                    'pct_positive_returns': benchmark_pct_positive_returns,
-                    'pct_negative_returns': benchmark_pct_negative_returns,
-                    'pct_profitable_bets': np.nan,
-                    'median_gain': np.nan,
-                    'average_loss': np.nan,
-                    'median_gain_to_average_loss': np.nan,
-                    'test_score': test_score()
-                }
+            'total': {
+                'cagr': cagr,
+                'max_drawdown': max_drawdown,
+                'sharpe_ratio': sharpe_ratio,
+                'sortino_ratio': sortino_ratio,
+                'profit_to_drawdown_ratio': profit_to_drawdown_ratio,
+                'beta': beta,
+                'alpha': alpha,
+                'total_return': total_return,
+                'positive_returns': positive_returns,
+                'negative_returns': negative_returns,
+                'pct_profitable_bets': pct_profitable_bets,
+                'pct_negative_bets': pct_negative_bets,
+                'median_gain': median_gain,
+                'average_loss': average_loss,
+                'median_gain_to_average_loss': median_gain_to_average_loss,
+                'test_score': test_score()
+            },
+            'long': {
+                'cagr': long_cagr,
+                'max_drawdown': max_long_drawdown,
+                'sharpe_ratio': long_sharpe_ratio,
+                'sortino_ratio': long_sortino_ratio,
+                'profit_to_drawdown_ratio': long_profit_to_drawdown_ratio,
+                'beta': long_beta,
+                'alpha': long_alpha,
+                'total_return': long_total_return,
+                'pct_positive_returns': long_pct_positive_returns,
+                'pct_negative_returns': long_pct_negative_returns,
+                'pct_profitable_bets': long_pct_profitable_bets,
+                'median_gain': long_median_gain,
+                'average_loss': long_average_loss,
+                'median_gain_to_average_loss': long_median_gain_to_average_loss,
+                'test_score': test_score()
+            },
+            'short': {
+                'cagr': short_cagr,
+                'max_drawdown': max_short_drawdown,
+                'sharpe_ratio': short_sharpe_ratio,
+                'sortino_ratio': short_sortino_ratio,
+                'profit_to_drawdown_ratio': short_profit_to_drawdown_ratio,
+                'beta': short_beta,
+                'alpha': short_alpha,
+                'total_return': short_total_return,
+                'pct_positive_returns': short_pct_positive_returns,
+                'pct_negative_returns': short_pct_negative_returns,
+                'pct_profitable_bets': short_pct_profitable_bets,
+                'median_gain': short_median_gain,
+                'average_loss': short_average_loss,
+                'median_gain_to_average_loss': short_median_gain_to_average_loss,
+                'test_score': test_score()
+            },
+            'benchmark': {
+                'cagr': benchmark_cagr,
+                'max_drawdown': max_benchmark_drawdown,
+                'sharpe_ratio': benchmark_sharpe_ratio,
+                'sortino_ratio': benchmark_sortino_ratio,
+                'profit_to_drawdown_ratio': benchmark_profit_to_drawdown_ratio,
+                'beta': 1.0,
+                'alpha': 0.0,
+                'total_return': benchmark_total_return,
+                'pct_positive_returns': benchmark_pct_positive_returns,
+                'pct_negative_returns': benchmark_pct_negative_returns,
+                'pct_profitable_bets': np.nan,
+                'median_gain': np.nan,
+                'average_loss': np.nan,
+                'median_gain_to_average_loss': np.nan,
+                'test_score': test_score()
+            }
         }
 
         # Pickle analysis
-        pickle_filename = f'backtests/{self.strategy_name}_{"_".join(test["inputs"]["symbols"])}_{"_".join([str(x) for x in list(test["inputs"].values())[1:]])}_analysis.pkl'
+        pickle_filename = self.get_backtest_filename()[:-4] + '_analysis.pkl'
+        print(pickle_filename)
         pickle.dump(backtest_analysis, open(pickle_filename, 'wb'))
         print(f'Backtest analysis saved to {pickle_filename}')
 
         return backtest_analysis
 
     def load_backtest(self):
-        pickle_filename = f'backtests/{self.strategy_name}_{"_".join(self.symbols)}_{self.start_date_dt.date()}_{self.end_date_dt.date()}_{self.rebalance_frequency}_{self.long_count}_{self.short_count}_{self.portfolio_starting_value}_{self.risk_pct}_{self.reinvest_profits_bool}.pkl'
+        pickle_filename = self.get_backtest_filename()
         test = pickle.load(open(pickle_filename, 'rb'))
         print(f'Backtest results loaded from {pickle_filename}')
 
         return test
+
 
 def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyzer):
     backtest1_analysis = backtest1.analyze_backtest()
@@ -279,8 +296,8 @@ def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyz
     long_comparison.sort_values(by='test_score', axis=1, ascending=False, inplace=True)
     short_comparison.sort_values(by='test_score', axis=1, ascending=False, inplace=True)
 
-    total_comparison = total_comparison.set_axis(pd.MultiIndex.from_arrays([['total', 'total'], [comparison_columns[0], comparison_columns[1]]], names = ['lst', 'test']), axis=1)
-    long_comparison = long_comparison.set_axis(pd.MultiIndex.from_arrays([['long', 'long'], [comparison_columns[0], comparison_columns[1]]], names = ['lst', 'test']), axis=1)
-    short_comparison = short_comparison.set_axis(pd.MultiIndex.from_arrays([['short', 'short'], [comparison_columns[0], comparison_columns[1]]], names = ['lst', 'test']), axis=1)
+    total_comparison = total_comparison.set_axis(pd.MultiIndex.from_arrays([['total', 'total'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
+    long_comparison = long_comparison.set_axis(pd.MultiIndex.from_arrays([['long', 'long'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
+    short_comparison = short_comparison.set_axis(pd.MultiIndex.from_arrays([['short', 'short'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
 
     return total_comparison, long_comparison, short_comparison

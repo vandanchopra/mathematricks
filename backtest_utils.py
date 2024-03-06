@@ -66,7 +66,7 @@ class TradingSimulator:
             return np.array(exit_price), stoploss_hit_bool
 
         trading_symbols_interval = list(long_symbols) + list(short_symbols)
-        trading_symbols_multiplier_array = np.array([1]*len(long_symbols) + [-1]*len(short_symbols))
+        trading_symbols_multiplier_array = np.float64(np.array([1]*len(long_symbols) + [-1]*len(short_symbols)))
 
         position_size = calculate_position_size(portfolio_value, trading_symbols_interval)
         position_size *= trading_symbols_multiplier_array     # Short positions are negative
@@ -158,14 +158,14 @@ class TradingSimulator:
                 pbar.update(1)
                 
         test = {'strategy_name':self.strategy.get_name(), 
-                'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt.date(), 'end_date_dt':end_date_dt.date(), 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool},
+                'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt.date(), 'end_date_dt':end_date_dt.date(), 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool, 'leverage_multiplier':leverage_multiplier},
                 'rebalance_periods':rebalance_periods, 
                 'backtest_runs': backtest_runs, 
                 'backtest_profits': backtest_profits,
                 'benchmark_returns': self.get_benchmark_returns(start_date_dt, end_date_dt, rebalance_periods, portfolio_starting_value)
                 }
 
-        pickle_filename = f'backtests/{test["strategy_name"]}_{"_".join(test["inputs"]["symbols"])}_{"_".join([str(x) for x in list(test["inputs"].values())[1:]])}.pkl'
+        pickle_filename = f'backtests/{test["strategy_name"]}_{"_".join([str(x) for x in list(test["inputs"].values())[1:]])}.pkl'
         pickle.dump(test, open(pickle_filename, 'wb'))
         print(f'Backtest results saved to {pickle_filename}')
 

@@ -87,7 +87,7 @@ class StockAutomationUtils:
                     existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
                     last_date = existing_data.index.max()
                     # pbar.set_postfix(f"Data for {symbol} was only available till {last_date}. Updating...")
-                    if datetime.now().date() <= last_date + pd.offsets.BDay():
+                    if datetime.now().date() <= (last_date.date() + pd.offsets.BDay()).date():
                         pass
                     else:
                         # Download data from the day after the last date in the CSV until today
