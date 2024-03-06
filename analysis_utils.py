@@ -243,3 +243,10 @@ class BacktestAnalyzer:
         print(f'Backtest analysis saved to {pickle_filename}')
 
         return backtest_analysis
+
+    def load_backtest(self):
+        pickle_filename = f'backtests/{self.strategy_name}_{"_".join(self.symbols)}_{self.start_date_dt.date()}_{self.end_date_dt.date()}_{self.rebalance_frequency}_{self.long_count}_{self.short_count}_{self.portfolio_starting_value}_{self.risk_pct}_{self.reinvest_profits_bool}.pkl'
+        test = pickle.load(open(pickle_filename, 'rb'))
+        print(f'Backtest results loaded from {pickle_filename}')
+
+        return test
