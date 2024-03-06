@@ -31,7 +31,7 @@ class TradingSimulator:
 
         return rebalance_dates
 
-    def trading_simulation(self, portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct):
+    def trading_simulation(self, portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct, leverage_multiplier):
         def calculate_position_size(portfolio_value, trading_symbols_interval):
             position_size = (np.array(range(len(trading_symbols_interval))) + 1)
             position_size = portfolio_value/position_size
@@ -71,7 +71,7 @@ class TradingSimulator:
         position_size *= trading_symbols_multiplier_array     # Short positions are negative
 
         entry_price = get_entry_price(trading_symbols_interval, trading_data_interval)
-        qty = np.array(position_size/entry_price, dtype=int)
+        qty = np.array(position_size*leverage_multiplier/entry_price, dtype=int)
 
         stoploss = np.array(entry_price * (1 - risk_pct * trading_symbols_multiplier_array))
         exit_price, stoploss_hit_bool = get_exit_price(long_symbols, short_symbols, trading_data_interval, stoploss)
@@ -86,6 +86,7 @@ class TradingSimulator:
                                              exit_price,
                                              stoploss_hit_bool,
                                              profit])
+
         profit_interval = np.sum(profit)
         # create a pandas dataframe with trading_symbols_interval as index, and buy_price, qty, stoploss, sell_price, profit as columns
         # trading_simulation_array = pd.DataFrame(trading_simulation_array.T, columns=['Symbol', 'Buy Price', 'Qty', 'Stoploss', 'Sell Price', 'Profit'])
@@ -114,7 +115,7 @@ class TradingSimulator:
         
         return benchmark_returns
     
-    def run_backtest(self, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count, portfolio_starting_value, risk_pct, reinvest_profits_bool):
+    def run_backtest(self, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count, portfolio_starting_value, risk_pct, reinvest_profits_bool, leverage_multiplier):
         # For each rebalance period, run the analysis and get long short stocks.
         rebalance_periods = self.calculate_rebalance_periods_with_dates(start_date_dt, end_date_dt, rebalance_frequency)
         rebalance_periods = [(datetime.combine(rebalance_periods[0], datetime.min.time()), datetime.combine(rebalance_periods[1], datetime.min.time())) for rebalance_periods in rebalance_periods]
@@ -142,19 +143,23 @@ class TradingSimulator:
                 # Get the trading data for the interval
                 trading_data_interval = self.SAU.get_data_for_interval(trading_symbols_interval, full_stock_data, start_date_interval, end_date_interval)
                 # Run the trades
-                trading_simulation_array, profit_interval = self.trading_simulation(portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct)
+                trading_simulation_array, profit_interval = self.trading_simulation(portfolio_value, long_symbols, short_symbols, trading_data_interval, risk_pct, leverage_multiplier)
+
                 backtest_runs.append(trading_simulation_array)
                 backtest_profits.append(profit_interval)
                 pbar.set_description(f"Running backtest: {start_date_interval.date()} - {end_date_interval.date()}")
                 pbar.set_postfix({'Profit': round(profit_interval, 2)})
+                if profit_interval <= -portfolio_value:
+                    break
                 if reinvest_profits_bool:
                     portfolio_value += profit_interval
-                
+
                 pbar.update(1)
                 
         test = {'strategy_name':self.strategy.get_name(), 
                 'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt, 'end_date_dt':end_date_dt, 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool}, 
                 'rebalance_periods':rebalance_periods, 
                 'backtest_runs': backtest_runs, 
-                'backtest_profits': backtest_profits}
+                'backtest_profits': backtest_profits,
+                'leverage_multiplier': leverage_multiplier}
         return test
