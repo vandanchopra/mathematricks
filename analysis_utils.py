@@ -7,6 +7,10 @@ import pandas as pd
 from tqdm import tqdm
 from itertools import compress
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 6-test-analysis
 class BacktestAnalyzer:
     def __init__(self, strategy_name, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count,
                   portfolio_starting_value, risk_pct, reinvest_profits_bool):
@@ -246,6 +250,12 @@ class BacktestAnalyzer:
 
         return backtest_analysis
 
+    def load_backtest(self):
+        pickle_filename = f'backtests/{self.strategy_name}_{"_".join(self.symbols)}_{self.start_date_dt.date()}_{self.end_date_dt.date()}_{self.rebalance_frequency}_{self.long_count}_{self.short_count}_{self.portfolio_starting_value}_{self.risk_pct}_{self.reinvest_profits_bool}.pkl'
+        test = pickle.load(open(pickle_filename, 'rb'))
+        print(f'Backtest results loaded from {pickle_filename}')
+
+        return test
 
 def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyzer):
     backtest1_analysis = backtest1.analyze_backtest()
