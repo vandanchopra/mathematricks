@@ -37,7 +37,25 @@ class BacktestAnalyzer:
         self.leverage_multiplier = test['inputs']['leverage_multiplier']
 
     def get_backtest_filename_without_path(self):
-        return f'{self.strategy_name}_{"_".join([str(x) for x in [self.start_date_dt, self.end_date_dt, self.rebalance_frequency, self.long_count, self.short_count, self.portfolio_starting_value, self.risk_pct, self.reinvest_profits_bool, self.leverage_multiplier]])}.pkl'
+        backtests_table = pd.read_csv('backtests_table.csv', index_col=[0], header=0)#, parse_dates=[3, 4])
+        backtests_table['test_number'] = backtests_table.index
+
+        this_backtest = backtests_table.loc[[(backtests_table['strategy_name'] == self.strategy_name) &
+                                            # (pd.Series([x == y for x, y in zip([eval(backtests_table.loc[z, 'symbols']) for z in backtests_table.index], self.symbols)])) &
+                                            ([x == str(self.symbols) for x in backtests_table['symbols']]) &
+                                            (backtests_table['start_date_dt'] == str(self.start_date_dt)) &
+                                            (backtests_table['end_date_dt'] == str(self.end_date_dt)) &
+                                            (backtests_table['rebalance_frequency'] == self.rebalance_frequency) &
+                                            (backtests_table['long_count'] == self.long_count) &
+                                            (backtests_table['short_count'] == self.short_count) &
+                                            (backtests_table['portfolio_starting_value'] == self.portfolio_starting_value) &
+                                            (backtests_table['risk_pct'] == self.risk_pct) &
+                                            (backtests_table['reinvest_profits_bool'] == self.reinvest_profits_bool) &
+                                            (backtests_table['leverage_multiplier'] == self.leverage_multiplier)][0]]
+
+        this_backtest_filename = f'''Test_{this_backtest['test_number'].values[0]}.pkl'''
+
+        return this_backtest_filename
 
     def get_backtest_filename(self):
         pickle_filename = f'backtests/{self.get_backtest_filename_without_path()}'
@@ -279,10 +297,32 @@ def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyz
     backtest2_analysis = backtest2.analyze_backtest()
 
     # Compare the two backtests
-    comparison_columns = [backtest1.get_backtest_filename_without_path()[:-4].split('_'), backtest2.get_backtest_filename_without_path()[:-4].split('_')]
+    comparison_columns = {'backtest1': {'strategy_name': backtest1.strategy_name, 'symbols': str(backtest1.symbols),
+                                        'start_date_dt': backtest1.start_date_dt, 'end_date_dt': backtest1.end_date_dt,
+                                        'rebalance_frequency': backtest1.rebalance_frequency,
+                                        'long_count': backtest1.long_count, 'short_count': backtest1.short_count,
+                                        'portfolio_starting_value': backtest1.portfolio_starting_value,
+                                        'risk_pct': backtest1.risk_pct,
+                                        'reinvest_profits_bool': backtest1.reinvest_profits_bool,
+                                        'leverage_multiplier': backtest1.leverage_multiplier},
+                          'backtest2': {'strategy_name': backtest2.strategy_name, 'symbols': str(backtest2.symbols),
+                                        'start_date_dt': backtest2.start_date_dt, 'end_date_dt': backtest2.end_date_dt,
+                                        'rebalance_frequency': backtest2.rebalance_frequency,
+                                        'long_count': backtest2.long_count, 'short_count': backtest2.short_count,
+                                        'portfolio_starting_value': backtest2.portfolio_starting_value,
+                                        'risk_pct': backtest2.risk_pct,
+                                        'reinvest_profits_bool': backtest2.reinvest_profits_bool,
+                                        'leverage_multiplier': backtest2.leverage_multiplier}}
+
     # Compare comparison_columns and leave only the different columns
-    comparison_columns = [list(set(comparison_columns[0]) - set(comparison_columns[1])), list(set(comparison_columns[1]) - set(comparison_columns[0]))]
-    comparison_columns = ['_'.join(comparison_columns[0]), '_'.join(comparison_columns[1])]
+    backtest1_df = pd.DataFrame(comparison_columns['backtest1'], index=[0])
+    backtest2_df = pd.DataFrame(comparison_columns['backtest2'], index=[0])
+    comparison_columns = backtest1_df != backtest2_df
+    print(comparison_columns.loc[0])
+    comparison_columns = [', '.join([f'{x}={y}' for x, y in zip(comparison_columns.loc[:, comparison_columns.loc[0]].columns, backtest1_df.loc[0, comparison_columns.loc[0]])])] + (
+        [', '.join([f'{x}={y}' for x, y in zip(comparison_columns.loc[:, comparison_columns.loc[0]].columns, backtest2_df.loc[0, comparison_columns.loc[0]])])]
+    )
+    print(comparison_columns)
 
     total_comparison = pd.concat([pd.DataFrame(backtest1_analysis)['total'].T, pd.DataFrame(backtest2_analysis)['total'].T], axis=1)
     long_comparison = pd.concat([pd.DataFrame(backtest1_analysis)['long'].T, pd.DataFrame(backtest2_analysis)['long'].T], axis=1)
@@ -300,4 +340,4 @@ def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyz
     long_comparison = long_comparison.set_axis(pd.MultiIndex.from_arrays([['long', 'long'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
     short_comparison = short_comparison.set_axis(pd.MultiIndex.from_arrays([['short', 'short'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
 
-    return total_comparison, long_comparison, short_comparison
+    return total_comparison, long_comparison, short_comparison, backtest1_analysis, backtest2_analysis

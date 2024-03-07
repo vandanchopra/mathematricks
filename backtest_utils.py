@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 import pickle
 from os import listdir
@@ -115,8 +116,30 @@ class TradingSimulator:
         benchmark_returns = np.insert(benchmark_returns, 0, 0)
         
         return benchmark_returns
-    
-    def run_backtest(self, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count, portfolio_starting_value, risk_pct, reinvest_profits_bool, leverage_multiplier):
+
+    def save_test(self, test):
+        backtests_table_filepath = 'backtests_table.csv'
+        if os.path.exists(backtests_table_filepath):
+            backtests_table = pd.read_csv(backtests_table_filepath, index_col=[0])
+            this_backtest_n = backtests_table.index.max() + 1
+        else:
+            backtests_table = pd.DataFrame(columns=['strategy_name', 'symbols', 'start_date_dt', 'end_date_dt', 'rebalance_frequency', 'long_count', 'short_count', 'portfolio_starting_value', 'risk_pct', 'reinvest_profits_bool', 'leverage_multiplier'])
+            this_backtest_n = 1
+
+        backtests_table.loc[this_backtest_n] = [test["strategy_name"], test["inputs"]["symbols"],
+                                                test["inputs"]["start_date_dt"],
+                                                test["inputs"]["end_date_dt"], test["inputs"]["rebalance_frequency"],
+                                                test["inputs"]["long_count"], test["inputs"]["short_count"],
+                                                test["inputs"]["portfolio_starting_value"], test["inputs"]["risk_pct"],
+                                                test["inputs"]["reinvest_profits_bool"],
+                                                test["inputs"]["leverage_multiplier"]]
+        backtests_table.to_csv(backtests_table_filepath)
+
+        pickle_filename = f'backtests/Test_{this_backtest_n}.pkl'
+        pickle.dump(test, open(pickle_filename, 'wb'))
+        print(f'Backtest results saved to {pickle_filename}')
+
+    def run_backtest(self, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count, portfolio_starting_value, risk_pct, reinvest_profits_bool, leverage_multiplier, save_test: bool=False):
         # For each rebalance period, run the analysis and get long short stocks.
         rebalance_periods = self.calculate_rebalance_periods_with_dates(start_date_dt, end_date_dt, rebalance_frequency)
         rebalance_periods = [(datetime.combine(rebalance_periods[0], datetime.min.time()), datetime.combine(rebalance_periods[1], datetime.min.time())) for rebalance_periods in rebalance_periods]
@@ -165,8 +188,7 @@ class TradingSimulator:
                 'benchmark_returns': self.get_benchmark_returns(start_date_dt, end_date_dt, rebalance_periods, portfolio_starting_value)
                 }
 
-        pickle_filename = f'backtests/{test["strategy_name"]}_{"_".join([str(x) for x in list(test["inputs"].values())[1:]])}.pkl'
-        pickle.dump(test, open(pickle_filename, 'wb'))
-        print(f'Backtest results saved to {pickle_filename}')
+        if save_test:
+            self.save_test(test)
 
         return test
