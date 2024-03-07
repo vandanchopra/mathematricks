@@ -1,0 +1,3 @@
+,strategy_name,symbols,start_date_dt,end_date_dt,rebalance_frequency,long_count,short_count,portfolio_starting_value,risk_pct,reinvest_profits_bool,leverage_multiplier
+1,BaseStrategy,"['HDB', 'BIIB', 'BNTX', 'MRNA', 'CHTR', 'AWK', 'SNAP', 'TFC', 'ES', 'KDP', 'HSY', 'NEE', 'TTWO', 'EL', 'JD', 'BA', 'EQNR', 'HUM', 'NTR', 'WPM', 'WBA', 'SBAC', 'MMM', 'BTI', 'ILMN', 'WDS', 'ADM', 'PFE', 'ALNY', 'FNV', 'NEM', 'WBD']",2018-01-01,2020-12-31,15,10,5,110000,0.1,False,1.0
+2,BaseStrategy,"['HDB', 'BIIB', 'BNTX', 'MRNA', 'CHTR', 'AWK', 'SNAP', 'TFC', 'ES', 'KDP', 'HSY', 'NEE', 'TTWO', 'EL', 'JD', 'BA', 'EQNR', 'HUM', 'NTR', 'WPM', 'WBA', 'SBAC', 'MMM', 'BTI', 'ILMN', 'WDS', 'ADM', 'PFE', 'ALNY', 'FNV', 'NEM', 'WBD']",2018-01-01,2020-12-31,15,10,5,110000,0.1,False,5.0
