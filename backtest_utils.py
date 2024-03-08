@@ -1,12 +1,12 @@
 import os
 from datetime import datetime, timedelta
 import pickle
-from os import listdir
 import numpy as np
 from stock_automation_utils import StockAutomationUtils
 from strategy_vault import StrategyVault
 import pandas as pd
 from tqdm import tqdm
+from itertools import compress
 
 class TradingSimulator:
     def __init__(self, strategy_name):
@@ -121,6 +121,12 @@ class TradingSimulator:
         backtests_table_filepath = 'backtests_table.csv'
         if os.path.exists(backtests_table_filepath):
             backtests_table = pd.read_csv(backtests_table_filepath, index_col=[0])
+            backtest_files = os.listdir('backtests')
+            backtest_files = [file for file in backtest_files if not file.endswith('_analysis.pkl')]
+            for test_number in backtests_table.index:
+                if f'Test_{test_number}.pkl' not in backtest_files:
+                    backtests_table.drop(index=test_number, inplace=True)
+
             this_backtest_n = backtests_table.index.max() + 1
         else:
             backtests_table = pd.DataFrame(columns=['strategy_name', 'symbols', 'start_date_dt', 'end_date_dt', 'rebalance_frequency', 'long_count', 'short_count', 'portfolio_starting_value', 'risk_pct', 'reinvest_profits_bool', 'leverage_multiplier'])
@@ -160,6 +166,11 @@ class TradingSimulator:
                 historical_data_interval = self.SAU.get_data_for_interval(symbols, full_stock_data, start_date_interval-timedelta(days=365), start_date_interval-timedelta(days=1))
                 # Get the analysis array
                 symbols_interval, data_analysis_interval, data_index_interval, dates_interval = self.strategy.get_analysis_array(symbols, start_date_interval, historical_data_interval, rebalance_frequency)
+                not_nan_symbols = [x != np.nan for x in symbols_interval]
+                symbols_interval = list(compress(symbols_interval, not_nan_symbols))
+                data_analysis_interval = list(compress(data_analysis_interval, not_nan_symbols))
+                data_index_interval = list(compress(data_index_interval, not_nan_symbols))
+
                 # Get long and short stocks
                 long_symbols, short_symbols, symbols_array, data_array, data_index = self.strategy.get_long_short_symbols(long_count, short_count, symbols_interval, data_analysis_interval, data_index_interval)
                 # Get the trading symbols
@@ -173,13 +184,13 @@ class TradingSimulator:
                 backtest_profits.append(profit_interval)
                 pbar.set_description(f"Running backtest: {start_date_interval.date()} - {end_date_interval.date()}")
                 pbar.set_postfix({'Profit': round(profit_interval, 2)})
-                if profit_interval <= -portfolio_value:
+                if np.sum(backtest_profits) <= -portfolio_value:
                     break
                 if reinvest_profits_bool:
                     portfolio_value += profit_interval
 
                 pbar.update(1)
-                
+
         test = {'strategy_name':self.strategy.get_name(), 
                 'inputs':{'symbols':symbols, 'start_date_dt':start_date_dt.date(), 'end_date_dt':end_date_dt.date(), 'rebalance_frequency':rebalance_frequency, 'long_count':long_count, 'short_count':short_count, 'portfolio_starting_value':portfolio_starting_value, 'risk_pct':risk_pct, 'reinvest_profits_bool':reinvest_profits_bool, 'leverage_multiplier':leverage_multiplier},
                 'rebalance_periods':rebalance_periods, 
