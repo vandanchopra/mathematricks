@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from itertools import compress
-
+import quantstats as qs
 
 class BacktestAnalyzer:
     def __init__(self, strategy_name, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count,
@@ -72,238 +72,170 @@ class BacktestAnalyzer:
             test['rebalance_periods'] = test['rebalance_periods'][:len(test['backtest_profits'])]
             test['benchmark_returns'] = test['benchmark_returns'][:len(test['backtest_profits'])]
 
+        period_length_in_days = (test['rebalance_periods'][0][1] - test['rebalance_periods'][0][0]).days
+        periods_per_year = round(365/period_length_in_days)
+
         long_only = test['inputs']['long_count'] > 0 and test['inputs']['short_count'] == 0
 
         long_profits = [list(compress(x[-1], [y > 0 for y in np.float64(x[1])])) for x in test['backtest_runs']]
-        long_profits = pd.Series([sum(np.float64(x)) for x in long_profits], index=test['rebalance_periods'])
+        long_profits = pd.Series([sum(np.float64(x)) for x in long_profits], index=[x[1] for x in test['rebalance_periods']])
         short_profits = [list(compress(x[-1], [y < 0 for y in np.float64(x[1])])) for x in test['backtest_runs']]
-        short_profits = pd.Series([sum(np.float64(x)) for x in short_profits], index=test['rebalance_periods'])
+        short_profits = pd.Series([sum(np.float64(x)) for x in short_profits], index=[x[1] for x in test['rebalance_periods']])
 
-        backtest_profits = pd.Series(test['backtest_profits'], index=test['rebalance_periods'])
-        benchmark_profits = pd.Series(test['benchmark_returns'], index=test['rebalance_periods'])
+        backtest_profits = pd.Series(test['backtest_profits'], index=[x[1] for x in test['rebalance_periods']])
+        benchmark_profits = pd.Series(test['benchmark_returns'], index=[x[1] for x in test['rebalance_periods']])
 
-        backtest_returns = backtest_profits/(test['inputs']['portfolio_starting_value'] + pd.Series([0] + list(backtest_profits.values[:-1]), index=test['rebalance_periods']))
-        benchmark_returns = benchmark_profits/(test['inputs']['portfolio_starting_value'] + pd.Series([0] + list(benchmark_profits.values[:-1]), index=test['rebalance_periods']))
+        backtest_returns = backtest_profits/(
+                test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(backtest_profits.values[:-1]),
+                                                                       index=[x[1] for x in test['rebalance_periods']]))
+        benchmark_returns = benchmark_profits/(
+                test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(benchmark_profits.values[:-1]),
+                                                                       index=[x[1] for x in test['rebalance_periods']]))
+        long_returns = long_profits / (
+                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(long_profits.values[:-1]),
+                                                                           index=[x[1] for x in test['rebalance_periods']]))
+        short_returns = short_profits / (
+                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(short_profits.values[:-1]),
+                                                                           index=[x[1] for x in test['rebalance_periods']]))
 
         up_bets = np.sum([(np.int64(np.float64(x[-1]) > 0)).sum() for x in test['backtest_runs']])
         down_bets = np.sum([(np.int64(np.float64(x[-1]) < 0)).sum() for x in test['backtest_runs']])
         total_bets = np.sum([len(x[-1]) for x in test['backtest_runs']])
 
-        long_up_bets = np.sum([(np.int64(np.float64(x[-1][np.float64(x[1]) > 0]) > 0)).sum() for x in test['backtest_runs']])
-        long_down_bets = np.sum([(np.int64(np.float64(x[-1][np.float64(x[1]) > 0]) < 0)).sum() for x in test['backtest_runs']])
+        long_up_bets = np.sum(
+            [(np.int64(np.float64(x[-1][np.float64(x[1]) > 0]) > 0)).sum() for x in test['backtest_runs']])
+        long_down_bets = np.sum(
+            [(np.int64(np.float64(x[-1][np.float64(x[1]) > 0]) < 0)).sum() for x in test['backtest_runs']])
         long_total_bets = np.sum([(len(np.float64(x[-1][np.float64(x[1]) > 0]))) for x in test['backtest_runs']])
 
-        short_up_bets = np.sum([(np.int64(np.float64(x[-1][np.float64(x[1]) < 0]) > 0)).sum() for x in test['backtest_runs']])
-        short_down_bets = np.sum([(np.int64(np.float64(x[-1][np.float64(x[1]) < 0]) < 0)).sum() for x in test['backtest_runs']])
+        short_up_bets = np.sum(
+            [(np.int64(np.float64(x[-1][np.float64(x[1]) < 0]) > 0)).sum() for x in test['backtest_runs']])
+        short_down_bets = np.sum(
+            [(np.int64(np.float64(x[-1][np.float64(x[1]) < 0]) < 0)).sum() for x in test['backtest_runs']])
         short_total_bets = np.sum([(len(np.float64(x[-1][np.float64(x[1]) < 0]))) for x in test['backtest_runs']])
 
-        # Calculate the cumulative returns
-        cumulative_profits = np.cumsum(benchmark_profits)
-        benchmark_cumulative_profits = np.cumsum(benchmark_profits)
-        cumulative_returns = np.cumsum(backtest_returns)
-        benchmark_cumulative_returns = np.cumsum(benchmark_returns)
-        # Calculate the CAGR
-        cagr = np.real(np.power(np.complex_(cumulative_returns.iloc[-1] / test['inputs']['portfolio_starting_value']), np.complex_((1 / len(cumulative_returns)))) - 1)
-        # Benchmark CAGR
-        benchmark_cagr = np.real(np.power(np.complex_(benchmark_cumulative_returns.iloc[-1] / test['inputs']['portfolio_starting_value']), np.complex_(1 / len(benchmark_cumulative_returns))) - 1)
-        # Calculate the drawdowns
-        drawdowns = np.maximum.accumulate(cumulative_profits) - cumulative_profits
-        benchmark_drawdowns = np.maximum.accumulate(benchmark_cumulative_profits) - benchmark_cumulative_profits
-        # Calculate the max drawdowns
-        max_drawdown = np.max(drawdowns)
-        max_benchmark_drawdown = np.max(benchmark_drawdowns)
-        # Calculate % drawdowns
-        pct_drawdowns = np.maximum.accumulate(cumulative_returns) - cumulative_returns
-        pct_benchmark_drawdowns = np.maximum.accumulate(benchmark_cumulative_returns) - benchmark_cumulative_returns
-        # Calculate the % max drawdowns
-        pct_max_drawdown = np.max(pct_drawdowns)
-        pct_max_benchmark_drawdown = np.max(pct_benchmark_drawdowns)
-        # Calculate the Sharpe Ratio
-        sharpe_ratio = np.mean(backtest_returns) / np.std(backtest_returns) * np.sqrt(252)
-        benchmark_sharpe_ratio = np.mean(benchmark_returns) / np.std(benchmark_returns) * np.sqrt(252)
-        # Calculate the Sortino Ratio
-        sortino_ratio = np.mean(backtest_returns) / np.std([x for x in backtest_returns if x < 0])
-        benchmark_sortino_ratio = np.mean(benchmark_returns) / np.std([x for x in benchmark_returns if x < 0])
-        # Calculate the Profit to Drawdown Ratio
-        profit_to_drawdown_ratio = np.sum(backtest_profits) / max_drawdown
-        benchmark_profit_to_drawdown_ratio = np.sum(benchmark_profits) / max_benchmark_drawdown
-        # Calculate beta
-        beta = np.cov(backtest_returns, benchmark_returns)[0,1] / np.var(benchmark_returns)
-        # Calculate alpha
-        alpha = np.mean(backtest_returns) - beta * np.mean(benchmark_returns)
-        # Calculate the total return
-        total_return = np.sum(backtest_profits)
-        benchmark_total_return = np.sum(benchmark_profits)
-        # Calculate the number of positive returns
-        positive_returns = backtest_profits.loc[backtest_profits > 0].sum()
-        benchmark_positive_returns = benchmark_profits.loc[benchmark_profits > 0].sum()
-        # Calculate the number of negative returns
-        negative_returns = backtest_profits.loc[backtest_profits < 0].sum()
-        benchmark_negative_returns = benchmark_profits.loc[benchmark_profits < 0].sum()
-        # Calculate the % of positive returns
-        pct_positive_returns = positive_returns / len(backtest_profits)
-        benchmark_pct_positive_returns = benchmark_positive_returns / len(benchmark_profits)
-        # Calculate the % of negative returns
-        pct_negative_returns = negative_returns / len(backtest_profits)
-        benchmark_pct_negative_returns = benchmark_negative_returns / len(benchmark_profits)
-        # Calculate the % of bets that were profitable
-        pct_profitable_bets = up_bets / total_bets
-        pct_negative_bets = down_bets / total_bets
-        # Calculate median gain/average loss
+        ##########################################################################################################################################################################
+        cagr = qs.stats.cagr(backtest_returns, compounded=False, periods=periods_per_year)
+        drawdowns = qs.stats.to_drawdown_series(backtest_returns)
+        max_drawdown = qs.stats.max_drawdown(backtest_returns)
+        win_rate = qs.stats.win_rate(backtest_returns)
+        loss_rate = 1 - win_rate
+
         median_gain = benchmark_profits.loc[benchmark_profits > 0].median()
         average_loss = benchmark_profits.loc[benchmark_profits < 0].mean()
         median_gain_to_average_loss = median_gain / average_loss
 
-        # Same metrics as above for longs and shorts
-        long_returns = long_profits / (test['inputs']['portfolio_starting_value'] + pd.Series([0] + list(long_profits.values[:-1]), index=test['rebalance_periods']))
+        profit_factor = qs.stats.profit_factor(backtest_profits)
+        sharpe = qs.stats.sharpe(backtest_returns, periods=periods_per_year)
+        beta = qs.stats.greeks(backtest_returns, benchmark_returns).to_dict().get("beta", 0)
+        sortino = qs.stats.sortino(backtest_returns, periods=periods_per_year)
 
-        long_cumulative_profits = np.cumsum(long_profits)
-        long_cumulative_returns = np.cumsum(long_returns)
+        # Same stats as above but for benchmark
+        benchmark_cagr = qs.stats.cagr(benchmark_returns, compounded=False, periods=periods_per_year)
+        benchmark_drawdowns = qs.stats.to_drawdown_series(benchmark_returns)
+        benchmark_max_drawdown = qs.stats.max_drawdown(benchmark_returns)
+        benchmark_win_rate = qs.stats.win_rate(benchmark_returns)
+        benchmark_loss_rate = 1 - benchmark_win_rate
 
-        # Same metrics as above but for longs
-        long_cagr = np.real(np.power(np.complex_(long_cumulative_returns.iloc[-1] / test['inputs']['portfolio_starting_value']), np.complex_((1 / len(long_cumulative_returns)))) - 1)
-        long_drawdowns = np.maximum.accumulate(long_cumulative_profits) - long_cumulative_profits
-        max_long_drawdown = np.max(long_drawdowns)
-        long_pct_drawdowns = np.maximum.accumulate(long_returns) - long_returns
-        long_pct_max_drawdown = np.max(long_pct_drawdowns)
-        long_profit_to_drawdown_ratio = np.sum(long_profits) / max_long_drawdown
-        long_beta = np.cov(long_returns, benchmark_returns)[0,1] / np.var(benchmark_returns)
-        long_alpha = np.mean(long_returns) - long_beta * np.mean(benchmark_returns)
-        long_sharpe_ratio = np.mean(long_returns) / np.std(long_returns) * np.sqrt(252)
-        long_sortino_ratio = np.mean(long_returns) / np.std([x for x in long_returns if x < 0])
-        long_total_return = np.sum(long_profits)
-        long_positive_returns = long_profits.loc[long_profits > 0].sum()
-        long_negative_returns = long_profits.loc[long_profits < 0].sum()
-        long_pct_positive_returns = long_positive_returns / len(long_profits)
-        long_pct_negative_returns = long_negative_returns / len(long_profits)
-        long_pct_profitable_bets = long_up_bets/long_total_bets
-        long_pct_negative_bets = long_down_bets / long_total_bets
+        benchmark_median_gain = benchmark_profits.loc[benchmark_profits > 0].median()
+        benchmark_average_loss = benchmark_profits.loc[benchmark_profits < 0].mean()
+        benchmark_median_gain_to_average_loss = benchmark_median_gain / benchmark_average_loss
+
+        benchmark_profit_factor = qs.stats.profit_factor(benchmark_profits)
+        benchmark_sharpe = qs.stats.sharpe(benchmark_returns, periods=periods_per_year)
+        benchmark_beta = 1.0
+        benchmark_sortino = qs.stats.sortino(benchmark_returns, periods=periods_per_year)
+
+        # Same stats as above but for longs only
+        long_cagr = qs.stats.cagr(long_returns, compounded=False, periods=periods_per_year)
+        long_drawdowns = qs.stats.to_drawdown_series(long_returns)
+        long_max_drawdown = qs.stats.max_drawdown(long_returns)
+        long_win_rate = qs.stats.win_rate(long_returns)
+        long_loss_rate = 1 - long_win_rate
+
         long_median_gain = long_profits.loc[long_profits > 0].median()
         long_average_loss = long_profits.loc[long_profits < 0].mean()
         long_median_gain_to_average_loss = long_median_gain / long_average_loss
 
-        if not long_only:
-            short_returns = short_profits / (test['inputs']['portfolio_starting_value'] + pd.Series([0] + list(short_profits.values[:-1]), index=test['rebalance_periods']))
+        long_profit_factor = qs.stats.profit_factor(long_profits)
+        long_sharpe = qs.stats.sharpe(long_returns, periods=periods_per_year)
+        long_beta = qs.stats.greeks(long_returns, benchmark_returns).to_dict().get("beta", 0)
+        long_sortino = qs.stats.sortino(long_returns, periods=periods_per_year)
 
-            short_cumulative_profits = np.cumsum(short_profits)
-            short_cumulative_returns = np.cumsum(short_returns)
-            try:
-                short_cagr = np.real(np.power(np.complex_(short_cumulative_returns.iloc[-1] / test['inputs']['portfolio_starting_value']), np.complex_((1 / len(short_cumulative_returns)))) - 1)
-            except:
-                short_cagr = 0
-            short_drawdowns = np.maximum.accumulate(short_cumulative_profits) - short_cumulative_profits
-            max_short_drawdown = np.max(short_drawdowns)
-            short_pct_drawdowns = np.maximum.accumulate(short_returns) - short_returns
-            short_pct_max_drawdown = np.max(short_pct_drawdowns)
-            short_profit_to_drawdown_ratio = np.sum(short_profits) / max_short_drawdown
-            short_beta = np.cov(short_returns, benchmark_returns)[0,1] / np.var(benchmark_returns)
-            short_alpha = np.mean(short_returns) - short_beta * np.mean(benchmark_returns)
-            short_sharpe_ratio = np.mean(short_returns) / np.std(short_returns) * np.sqrt(252)
-            short_sortino_ratio = np.mean(short_returns) / np.std([x for x in short_returns if x < 0])
-            short_total_return = np.sum(short_profits)
-            short_positive_returns = short_profits.loc[short_profits > 0].sum()
-            short_negative_returns = short_profits.loc[short_profits < 0].sum()
-            short_pct_positive_returns = short_positive_returns / len(short_profits)
-            short_pct_negative_returns = short_negative_returns / len(short_profits)
-            short_pct_profitable_bets = short_up_bets/short_total_bets
-            short_pct_negative_bets = short_down_bets / short_total_bets
-            short_median_gain = short_profits.loc[short_profits > 0].median()
-            short_average_loss = short_profits.loc[short_profits < 0].mean()
-            short_median_gain_to_average_loss = short_median_gain / short_average_loss
-        else:
-            short_cumulative_profits = 0
-            short_cagr = 0
-            short_drawdowns = 0
-            max_short_drawdown = 0
-            short_profit_to_drawdown_ratio = 0
-            short_beta = 0
-            short_alpha = 0
-            short_sharpe_ratio = 0
-            short_sortino_ratio = 0
-            short_total_return = 0
-            short_positive_returns = 0
-            short_negative_returns = 0
-            short_pct_positive_returns = 0
-            short_pct_negative_returns = 0
-            short_pct_profitable_bets = 0
-            short_pct_negative_bets = 0
-            short_median_gain = 0
-            short_average_loss = 0
-            short_median_gain_to_average_loss = 0
+        # Same stats as above but for shorts only
+        short_cagr = qs.stats.cagr(short_returns, compounded=False, periods=periods_per_year)
+        short_drawdowns = qs.stats.to_drawdown_series(short_returns)
+        short_max_drawdown = qs.stats.max_drawdown(short_returns)
+        short_win_rate = qs.stats.win_rate(short_returns)
+        short_loss_rate = 1 - short_win_rate
+
+        short_median_gain = short_profits.loc[short_profits > 0].median()
+        short_average_loss = short_profits.loc[short_profits < 0].mean()
+        short_median_gain_to_average_loss = short_median_gain / short_average_loss
+
+        short_profit_factor = qs.stats.profit_factor(short_profits)
+        short_sharpe = qs.stats.sharpe(short_returns, periods=periods_per_year)
+        short_beta = qs.stats.greeks(short_returns, benchmark_returns).to_dict().get("beta", 0)
+        short_sortino = qs.stats.sortino(short_returns, periods=periods_per_year)
+
+        ##########################################################################################################################################################################
 
         test_score = lambda: np.random.random(1)[0]  # np.sum([y.values() for y in x])
 
         backtest_analysis = {
             'total': {
                 'cagr': cagr,
-                'max_drawdown': pct_max_drawdown,
-                'sharpe_ratio': sharpe_ratio,
-                'sortino_ratio': sortino_ratio,
-                'profit_to_drawdown_ratio': profit_to_drawdown_ratio,
-                'beta': beta,
-                'alpha': alpha,
-                'total_return': total_return,
-                'positive_returns': positive_returns,
-                'negative_returns': negative_returns,
-                'pct_profitable_bets': pct_profitable_bets,
-                'pct_negative_bets': pct_negative_bets,
-                'median_gain': median_gain,
-                'average_loss': average_loss,
+                'max_drawdown': max_drawdown,
+                'win_rate': win_rate,
+                'loss_rate': loss_rate,
+                'pct_up_bets': up_bets / total_bets,
+                'pct_down_bets': down_bets / total_bets,
                 'median_gain_to_average_loss': median_gain_to_average_loss,
-                'test_score': test_score()
+                'profit_factor': profit_factor,
+                'sharpe_ratio': sharpe,
+                'beta': beta,
+                'sortino_ratio': sortino,
+                'test_score': test_score(),
             },
             'long': {
                 'cagr': long_cagr,
-                'max_drawdown': long_pct_max_drawdown,
-                'sharpe_ratio': long_sharpe_ratio,
-                'sortino_ratio': long_sortino_ratio,
-                'profit_to_drawdown_ratio': long_profit_to_drawdown_ratio,
-                'beta': long_beta,
-                'alpha': long_alpha,
-                'total_return': long_total_return,
-                'positive_returns': long_positive_returns,
-                'negative_returns': long_negative_returns,
-                'pct_profitable_bets': long_pct_profitable_bets,
-                'pct_negative_bets': long_pct_negative_bets,
-                'median_gain': long_median_gain,
-                'average_loss': long_average_loss,
+                'max_drawdown': long_max_drawdown,
+                'win_rate': long_win_rate,
+                'loss_rate': long_loss_rate,
+                'pct_up_bets': long_up_bets / long_total_bets,
+                'pct_down_bets': long_down_bets / long_total_bets,
                 'median_gain_to_average_loss': long_median_gain_to_average_loss,
-                'test_score': test_score()
+                'profit_factor': long_profit_factor,
+                'sharpe_ratio': long_sharpe,
+                'beta': long_beta,
+                'sortino_ratio': long_sortino,
+                'test_score': test_score(),
             },
             'short': {
                 'cagr': short_cagr,
-                'max_drawdown': short_pct_max_drawdown,
-                'sharpe_ratio': short_sharpe_ratio,
-                'sortino_ratio': short_sortino_ratio,
-                'profit_to_drawdown_ratio': short_profit_to_drawdown_ratio,
-                'beta': short_beta,
-                'alpha': short_alpha,
-                'total_return': short_total_return,
-                'positive_returns': short_positive_returns,
-                'negative_returns': short_negative_returns,
-                'pct_profitable_bets': short_pct_profitable_bets,
-                'pct_negative_bets': short_pct_negative_bets,
-                'median_gain': short_median_gain,
-                'average_loss': short_average_loss,
+                'max_drawdown': short_max_drawdown,
+                'win_rate': short_win_rate,
+                'loss_rate': short_loss_rate,
+                'pct_up_bets': short_up_bets / short_total_bets,
+                'pct_down_bets': short_down_bets / short_total_bets,
                 'median_gain_to_average_loss': short_median_gain_to_average_loss,
-                'test_score': test_score()
+                'profit_factor': short_profit_factor,
+                'sharpe_ratio': short_sharpe,
+                'beta': short_beta,
+                'sortino_ratio': short_sortino,
+                'test_score': test_score(),
             },
             'benchmark': {
                 'cagr': benchmark_cagr,
-                'max_drawdown': pct_max_benchmark_drawdown,
-                'sharpe_ratio': benchmark_sharpe_ratio,
-                'sortino_ratio': benchmark_sortino_ratio,
-                'profit_to_drawdown_ratio': benchmark_profit_to_drawdown_ratio,
-                'beta': 1.0,
-                'alpha': 0.0,
-                'total_return': benchmark_total_return,
-                'positive_returns': benchmark_positive_returns,
-                'negative_returns': benchmark_negative_returns,
-                'pct_profitable_bets': np.nan,
-                'median_gain': np.nan,
-                'average_loss': np.nan,
-                'median_gain_to_average_loss': np.nan,
-                'test_score': test_score()
+                'max_drawdown': benchmark_max_drawdown,
+                'win_rate': benchmark_win_rate,
+                'loss_rate': benchmark_loss_rate,
+                'median_gain_to_average_loss': benchmark_median_gain_to_average_loss,
+                'profit_factor': benchmark_profit_factor,
+                'sharpe_ratio': benchmark_sharpe,
+                'beta': benchmark_beta,
+                'sortino_ratio': benchmark_sortino,
+                'test_score': test_score(),
             }
         }
 

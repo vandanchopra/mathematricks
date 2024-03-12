@@ -166,10 +166,6 @@ class TradingSimulator:
                 historical_data_interval = self.SAU.get_data_for_interval(symbols, full_stock_data, start_date_interval-timedelta(days=365), start_date_interval-timedelta(days=1))
                 # Get the analysis array
                 symbols_interval, data_analysis_interval, data_index_interval, dates_interval = self.strategy.get_analysis_array(symbols, start_date_interval, historical_data_interval, rebalance_frequency)
-                not_nan_symbols = [x != np.nan for x in symbols_interval]
-                symbols_interval = list(compress(symbols_interval, not_nan_symbols))
-                data_analysis_interval = list(compress(data_analysis_interval, not_nan_symbols))
-                data_index_interval = list(compress(data_index_interval, not_nan_symbols))
 
                 # Get long and short stocks
                 long_symbols, short_symbols, symbols_array, data_array, data_index = self.strategy.get_long_short_symbols(long_count, short_count, symbols_interval, data_analysis_interval, data_index_interval)
@@ -184,10 +180,12 @@ class TradingSimulator:
                 backtest_profits.append(profit_interval)
                 pbar.set_description(f"Running backtest: {start_date_interval.date()} - {end_date_interval.date()}")
                 pbar.set_postfix({'Profit': round(profit_interval, 2)})
-                if np.sum(backtest_profits) <= -portfolio_value:
-                    break
                 if reinvest_profits_bool:
                     portfolio_value += profit_interval
+                    if portfolio_value < 0:
+                        break
+                elif np.sum(backtest_profits) <= -portfolio_value:
+                    break
 
                 pbar.update(1)
 
