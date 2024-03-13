@@ -4,39 +4,42 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from itertools import compress
-import quantstats as qs
+# import quantstats as qs
+
+
+def load_test(test_number_or_path):
+    if isinstance(test_number_or_path, int):
+        test = pickle.load(open(f'backtests/Test_{test_number_or_path}.pkl', 'rb'))
+    elif isinstance(test_number_or_path, str):
+        test = pickle.load(open(test_number_or_path, 'rb'))
+    else:
+        raise ValueError('test_number_or_path must be an integer or a string')
+
+    return test
+
 
 class BacktestAnalyzer:
-    def __init__(self, strategy_name, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count,
-                  portfolio_starting_value, risk_pct, reinvest_profits_bool, leverage_multiplier):
-        self.base_test = None
-        self.strategy_name = strategy_name
-        self.symbols = symbols
-        self.start_date_dt = start_date_dt
-        self.end_date_dt = end_date_dt
-        self.rebalance_frequency = rebalance_frequency
-        self.long_count = long_count
-        self.short_count = short_count
-        self.portfolio_starting_value = portfolio_starting_value
-        self.risk_pct = risk_pct
-        self.reinvest_profits_bool = reinvest_profits_bool
-        self.leverage_multiplier = leverage_multiplier
 
-    @classmethod
-    def by_test(cls, test):
-        return cls(test['strategy_name'], test['inputs']['symbols'], test['inputs']['start_date_dt'], test['inputs']['end_date_dt'],
-                   test['inputs']['rebalance_frequency'], test['inputs']['long_count'], test['inputs']['short_count'],
-                   test['inputs']['portfolio_starting_value'], test['inputs']['risk_pct'], test['inputs']['reinvest_profits_bool'],
-                   test['inputs']['leverage_multiplier'])
+    def __init__(self, test):
+        self.base_test = test
+        self.strategy_name = test['strategy_name']
+        self.symbols = test['inputs']['symbols']
+        self.start_date_dt = test['inputs']['start_date_dt']
+        self.end_date_dt = test['inputs']['end_date_dt']
+        self.rebalance_frequency = test['inputs']['rebalance_frequency']
+        self.long_count = test['inputs']['long_count']
+        self.short_count = test['inputs']['short_count']
+        self.portfolio_starting_value = test['inputs']['portfolio_starting_value']
+        self.risk_pct = test['inputs']['risk_pct']
+        self.reinvest_profits_bool = test['inputs']['reinvest_profits_bool']
+        self.leverage_multiplier = test['inputs']['leverage_multiplier']
 
     @classmethod
     def by_number(cls, test_number: int):
         test_table = pd.read_csv('backtests_table.csv', index_col=[0], header=0)
-        base_test = test_table.loc[test_number]
-        return cls(base_test['strategy_name'], eval(base_test['symbols']), base_test['start_date_dt'], base_test['end_date_dt'],
-                   base_test['rebalance_frequency'], base_test['long_count'], base_test['short_count'],
-                   base_test['portfolio_starting_value'], base_test['risk_pct'], base_test['reinvest_profits_bool'],
-                   base_test['leverage_multiplier'])
+        test = load_test(test_table.loc[test_number])
+        return cls(test)
+
 
     def get_backtest_filename_without_path(self):
         backtests_table = pd.read_csv('backtests_table.csv', index_col=[0], header=0)#, parse_dates=[3, 4])
