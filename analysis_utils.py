@@ -7,6 +7,22 @@ from itertools import compress
 import quantstats as qs
 
 class BacktestAnalyzer:
+
+    def __init__(self, test_number):
+        test_table = pd.read_csv('backtests_table.csv', index_col=[0], header=0)
+        self.base_test = test_table.loc[test_number]
+        self.strategy_name = self.base_test['strategy_name']
+        self.symbols = self.base_test['inputs']['symbols']
+        self.start_date_dt = self.base_test['inputs']['start_date_dt']
+        self.end_date_dt = self.base_test['inputs']['end_date_dt']
+        self.rebalance_frequency = self.base_test['inputs']['rebalance_frequency']
+        self.long_count = self.base_test['inputs']['long_count']
+        self.short_count = self.base_test['inputs']['short_count']
+        self.portfolio_starting_value = self.base_test['inputs']['portfolio_starting_value']
+        self.risk_pct = self.base_test['inputs']['risk_pct']
+        self.reinvest_profits_bool = self.base_test['inputs']['reinvest_profits_bool']
+        self.leverage_multiplier = self.base_test['inputs']['leverage_multiplier']
+
     def __init__(self, strategy_name, symbols, start_date_dt, end_date_dt, rebalance_frequency, long_count, short_count,
                   portfolio_starting_value, risk_pct, reinvest_profits_bool, leverage_multiplier):
         self.base_test = None
@@ -85,18 +101,24 @@ class BacktestAnalyzer:
         backtest_profits = pd.Series(test['backtest_profits'], index=[x[1] for x in test['rebalance_periods']])
         benchmark_profits = pd.Series(test['benchmark_returns'], index=[x[1] for x in test['rebalance_periods']])
 
-        backtest_returns = backtest_profits/(
-                test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(backtest_profits.values[:-1]),
-                                                                       index=[x[1] for x in test['rebalance_periods']]))
-        benchmark_returns = benchmark_profits/(
-                test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(benchmark_profits.values[:-1]),
-                                                                       index=[x[1] for x in test['rebalance_periods']]))
-        long_returns = long_profits / (
-                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(long_profits.values[:-1]),
+        if test['inputs']['reinvest_profits_bool']:
+            backtest_returns = backtest_profits/(
+                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(backtest_profits.values[:-1]),
                                                                            index=[x[1] for x in test['rebalance_periods']]))
-        short_returns = short_profits / (
-                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(short_profits.values[:-1]),
+            benchmark_returns = benchmark_profits/(
+                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(benchmark_profits.values[:-1]),
                                                                            index=[x[1] for x in test['rebalance_periods']]))
+            long_returns = long_profits / (
+                        test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(long_profits.values[:-1]),
+                                                                               index=[x[1] for x in test['rebalance_periods']]))
+            short_returns = short_profits / (
+                        test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(short_profits.values[:-1]),
+                                                                               index=[x[1] for x in test['rebalance_periods']]))
+        else:
+            backtest_returns = backtest_profits/test['inputs']['portfolio_starting_value']
+            benchmark_returns = benchmark_profits/test['inputs']['portfolio_starting_value']
+            long_returns = long_profits/test['inputs']['portfolio_starting_value']
+            short_returns = short_profits/test['inputs']['portfolio_starting_value']
 
         up_bets = np.sum([(np.int64(np.float64(x[-1]) > 0)).sum() for x in test['backtest_runs']])
         down_bets = np.sum([(np.int64(np.float64(x[-1]) < 0)).sum() for x in test['backtest_runs']])
@@ -115,7 +137,11 @@ class BacktestAnalyzer:
         short_total_bets = np.sum([(len(np.float64(x[-1][np.float64(x[1]) < 0]))) for x in test['backtest_runs']])
 
         ##########################################################################################################################################################################
-        cagr = qs.stats.cagr(backtest_returns, compounded=False, periods=periods_per_year)
+
+        total_report = qs.reports.full(backtest_returns, benchmark_returns, compounded=test['inputs']['reinvest_profits_bool'], title='Strategy', benchmark_title='Benchmark')
+
+        ##########################################################################################################################################################################
+        cagr = qs.stats.cagr(backtest_returns, compounded=test['inputs']['reinvest_profits_bool'])
         drawdowns = qs.stats.to_drawdown_series(backtest_returns)
         max_drawdown = qs.stats.max_drawdown(backtest_returns)
         win_rate = qs.stats.win_rate(backtest_returns)
@@ -131,7 +157,7 @@ class BacktestAnalyzer:
         sortino = qs.stats.sortino(backtest_returns, periods=periods_per_year)
 
         # Same stats as above but for benchmark
-        benchmark_cagr = qs.stats.cagr(benchmark_returns, compounded=False, periods=periods_per_year)
+        benchmark_cagr = qs.stats.cagr(benchmark_returns, compounded=test['inputs']['reinvest_profits_bool'], periods=periods_per_year)
         benchmark_drawdowns = qs.stats.to_drawdown_series(benchmark_returns)
         benchmark_max_drawdown = qs.stats.max_drawdown(benchmark_returns)
         benchmark_win_rate = qs.stats.win_rate(benchmark_returns)
@@ -147,7 +173,7 @@ class BacktestAnalyzer:
         benchmark_sortino = qs.stats.sortino(benchmark_returns, periods=periods_per_year)
 
         # Same stats as above but for longs only
-        long_cagr = qs.stats.cagr(long_returns, compounded=False, periods=periods_per_year)
+        long_cagr = qs.stats.cagr(long_returns, compounded=test['inputs']['reinvest_profits_bool'], periods=periods_per_year)
         long_drawdowns = qs.stats.to_drawdown_series(long_returns)
         long_max_drawdown = qs.stats.max_drawdown(long_returns)
         long_win_rate = qs.stats.win_rate(long_returns)
@@ -163,7 +189,7 @@ class BacktestAnalyzer:
         long_sortino = qs.stats.sortino(long_returns, periods=periods_per_year)
 
         # Same stats as above but for shorts only
-        short_cagr = qs.stats.cagr(short_returns, compounded=False, periods=periods_per_year)
+        short_cagr = qs.stats.cagr(short_returns, compounded=test['inputs']['reinvest_profits_bool'], periods=periods_per_year)
         short_drawdowns = qs.stats.to_drawdown_series(short_returns)
         short_max_drawdown = qs.stats.max_drawdown(short_returns)
         short_win_rate = qs.stats.win_rate(short_returns)
