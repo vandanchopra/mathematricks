@@ -94,26 +94,32 @@ class BacktestAnalyzer:
         long_only = test['inputs']['long_count'] > 0 and test['inputs']['short_count'] == 0
 
         long_profits = [list(compress(x[-1], [y > 0 for y in np.float64(x[1])])) for x in test['backtest_runs']]
-        long_profits = pd.Series([sum(np.float64(x)) for x in long_profits], index=[x[1] for x in test['rebalance_periods']])
+        long_profits = pd.Series([sum(np.float64(x)) for x in long_profits], index=[x[1] for x in test['rebalance_periods']], name='Close')
         short_profits = [list(compress(x[-1], [y < 0 for y in np.float64(x[1])])) for x in test['backtest_runs']]
-        short_profits = pd.Series([sum(np.float64(x)) for x in short_profits], index=[x[1] for x in test['rebalance_periods']])
+        short_profits = pd.Series([sum(np.float64(x)) for x in short_profits], index=[x[1] for x in test['rebalance_periods']], name='Close')
 
-        backtest_profits = pd.Series(test['backtest_profits'], index=[x[1] for x in test['rebalance_periods']])
-        benchmark_profits = pd.Series(test['benchmark_returns'], index=[x[1] for x in test['rebalance_periods']])
+        backtest_profits = pd.Series(test['backtest_profits'], index=[x[1] for x in test['rebalance_periods']], name='Close')
+        benchmark_profits = pd.Series(test['benchmark_returns'], index=[x[1] for x in test['rebalance_periods']], name='Close')
 
-        if test['inputs']['reinvest_profits_bool']:
+        compounded = test['inputs']['reinvest_profits_bool']
+
+        if compounded:
             backtest_returns = backtest_profits/(
-                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(backtest_profits.values[:-1]),
-                                                                           index=[x[1] for x in test['rebalance_periods']]))
+                 pd.Series([test['inputs']['portfolio_starting_value']] + list(backtest_profits.values[:-1]),
+                    index=[x[1] for x in test['rebalance_periods']]).cumsum()
+            )
             benchmark_returns = benchmark_profits/(
-                    test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(benchmark_profits.values[:-1]),
-                                                                           index=[x[1] for x in test['rebalance_periods']]))
+                pd.Series([test['inputs']['portfolio_starting_value']] + list(benchmark_profits.values[:-1]),
+                    index=[x[1] for x in test['rebalance_periods']]).cumsum()
+            )
             long_returns = long_profits / (
-                        test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(long_profits.values[:-1]),
-                                                                               index=[x[1] for x in test['rebalance_periods']]))
+                pd.Series([test['inputs']['portfolio_starting_value']] + list(long_profits.values[:-1]),
+                    index=[x[1] for x in test['rebalance_periods']]).cumsum()
+            )
             short_returns = short_profits / (
-                        test['inputs']['portfolio_starting_value'] + pd.Series([1] + list(short_profits.values[:-1]),
-                                                                               index=[x[1] for x in test['rebalance_periods']]))
+                pd.Series([test['inputs']['portfolio_starting_value']] + list(short_profits.values[:-1]),
+                    index=[x[1] for x in test['rebalance_periods']]).cumsum()
+            )
         else:
             backtest_returns = backtest_profits/test['inputs']['portfolio_starting_value']
             benchmark_returns = benchmark_profits/test['inputs']['portfolio_starting_value']
@@ -138,71 +144,168 @@ class BacktestAnalyzer:
 
         ##########################################################################################################################################################################
 
-        total_report = qs.reports.full(backtest_returns, benchmark_returns, compounded=test['inputs']['reinvest_profits_bool'], title='Strategy', benchmark_title='Benchmark')
+        # print(backtest_returns)
+        # print(benchmark_returns)
+
+        # # benchmark_returns.name = 'Benchmark'
+        # total_report = qs.reports.html(
+        #     backtest_returns,
+        #     benchmark_returns,
+        #     compounded=True,#compounded,
+        #     title='Strategy',
+        #     benchmark_title='Benchmark',
+        #     periods_per_year=periods_per_year
+        # )
 
         ##########################################################################################################################################################################
-        cagr = qs.stats.cagr(backtest_returns, compounded=test['inputs']['reinvest_profits_bool'])
-        drawdowns = qs.stats.to_drawdown_series(backtest_returns)
-        max_drawdown = qs.stats.max_drawdown(backtest_returns)
-        win_rate = qs.stats.win_rate(backtest_returns)
-        loss_rate = 1 - win_rate
+        backtest_years = (backtest_returns.index[-1] - backtest_returns.index[0]).days / 365
+
+        if compounded:
+            cagr = (backtest_returns[-1] / backtest_returns[0]) ** (1 / backtest_years) - 1
+        else:
+            cagr = backtest_returns.sum() / backtest_years
+
+        drawdowns = np.maximum.accumulate(backtest_returns.cumsum()) - backtest_returns.cumsum()
+        max_drawdown = drawdowns.max()
+        pct_periods_up = (backtest_returns > 0).sum() / len(backtest_returns)
+        pct_periods_down = 1 - pct_periods_up
 
         median_gain = benchmark_profits.loc[benchmark_profits > 0].median()
         average_loss = benchmark_profits.loc[benchmark_profits < 0].mean()
         median_gain_to_average_loss = median_gain / average_loss
 
-        profit_factor = qs.stats.profit_factor(backtest_profits)
-        sharpe = qs.stats.sharpe(backtest_returns, periods=periods_per_year)
-        beta = qs.stats.greeks(backtest_returns, benchmark_returns).to_dict().get("beta", 0)
-        sortino = qs.stats.sortino(backtest_returns, periods=periods_per_year)
+        profit_factor = (backtest_returns.sum())/max_drawdown
+        sharpe = backtest_returns.mean() / backtest_returns.std() * np.sqrt(periods_per_year)
+        beta = np.cov(backtest_returns, benchmark_returns)[0, 1] / np.var(benchmark_returns)
+        sortino = backtest_returns.mean() / backtest_returns.loc[backtest_returns < 0].std() * np.sqrt(periods_per_year)
 
         # Same stats as above but for benchmark
-        benchmark_cagr = qs.stats.cagr(benchmark_returns, compounded=test['inputs']['reinvest_profits_bool'], periods=periods_per_year)
-        benchmark_drawdowns = qs.stats.to_drawdown_series(benchmark_returns)
-        benchmark_max_drawdown = qs.stats.max_drawdown(benchmark_returns)
-        benchmark_win_rate = qs.stats.win_rate(benchmark_returns)
-        benchmark_loss_rate = 1 - benchmark_win_rate
+        benchmark_years = (benchmark_returns.index[-1] - benchmark_returns.index[0]).days / 365
+        if compounded:
+            benchmark_cagr = (benchmark_returns[-1] / benchmark_returns[0]) ** (1 / benchmark_years) - 1
+        else:
+            benchmark_cagr = benchmark_returns.sum() / benchmark_years
+
+        benchmark_drawdowns = np.maximum.accumulate(benchmark_returns.cumsum()) - benchmark_returns.cumsum()
+        benchmark_max_drawdown = benchmark_drawdowns.max()
+        benchmark_pct_periods_up = (benchmark_returns > 0).sum() / len(benchmark_returns)
+        benchmark_pct_periods_down = 1 - benchmark_pct_periods_up
 
         benchmark_median_gain = benchmark_profits.loc[benchmark_profits > 0].median()
         benchmark_average_loss = benchmark_profits.loc[benchmark_profits < 0].mean()
         benchmark_median_gain_to_average_loss = benchmark_median_gain / benchmark_average_loss
 
-        benchmark_profit_factor = qs.stats.profit_factor(benchmark_profits)
-        benchmark_sharpe = qs.stats.sharpe(benchmark_returns, periods=periods_per_year)
+        benchmark_profit_factor = benchmark_returns.sum()/benchmark_max_drawdown
+        benchmark_sharpe = benchmark_returns.mean() / benchmark_returns.std() * np.sqrt(periods_per_year)
         benchmark_beta = 1.0
-        benchmark_sortino = qs.stats.sortino(benchmark_returns, periods=periods_per_year)
+        benchmark_sortino = benchmark_returns.mean() / benchmark_returns.loc[benchmark_returns < 0].std() * np.sqrt(periods_per_year)
 
         # Same stats as above but for longs only
-        long_cagr = qs.stats.cagr(long_returns, compounded=test['inputs']['reinvest_profits_bool'], periods=periods_per_year)
-        long_drawdowns = qs.stats.to_drawdown_series(long_returns)
-        long_max_drawdown = qs.stats.max_drawdown(long_returns)
-        long_win_rate = qs.stats.win_rate(long_returns)
-        long_loss_rate = 1 - long_win_rate
+        long_years = backtest_years
+        if compounded:
+            long_cagr = (long_returns[-1] / long_returns[0]) ** (1 / long_years) - 1
+        else:
+            long_cagr = long_returns.sum() / long_years
+
+        long_drawdowns = np.maximum.accumulate(long_returns.cumsum()) - long_returns.cumsum()
+        long_max_drawdown = long_drawdowns.max()
+        long_pct_periods_up = (long_returns > 0).sum() / len(long_returns)
+        long_pct_periods_down = 1 - long_pct_periods_up
 
         long_median_gain = long_profits.loc[long_profits > 0].median()
         long_average_loss = long_profits.loc[long_profits < 0].mean()
         long_median_gain_to_average_loss = long_median_gain / long_average_loss
 
-        long_profit_factor = qs.stats.profit_factor(long_profits)
-        long_sharpe = qs.stats.sharpe(long_returns, periods=periods_per_year)
-        long_beta = qs.stats.greeks(long_returns, benchmark_returns).to_dict().get("beta", 0)
-        long_sortino = qs.stats.sortino(long_returns, periods=periods_per_year)
+        long_profit_factor = long_returns.sum()/long_max_drawdown
+        long_sharpe = long_returns.mean() / long_returns.std() * np.sqrt(periods_per_year)
+        long_beta = np.cov(long_returns, benchmark_returns)[0, 1] / np.var(benchmark_returns)
+        long_sortino = long_returns.mean() / long_returns.loc[long_returns < 0].std() * np.sqrt(periods_per_year)
 
         # Same stats as above but for shorts only
-        short_cagr = qs.stats.cagr(short_returns, compounded=test['inputs']['reinvest_profits_bool'], periods=periods_per_year)
-        short_drawdowns = qs.stats.to_drawdown_series(short_returns)
-        short_max_drawdown = qs.stats.max_drawdown(short_returns)
-        short_win_rate = qs.stats.win_rate(short_returns)
-        short_loss_rate = 1 - short_win_rate
+        short_years = backtest_years
+        if compounded:
+            short_cagr = (short_returns[-1] / short_returns[0]) ** (1 / short_years) - 1
+        else:
+            short_cagr = short_returns.sum() / short_years
+
+        short_drawdowns = np.maximum.accumulate(short_returns.cumsum()) - short_returns.cumsum()
+        short_max_drawdown = short_drawdowns.max()
+        short_pct_periods_up = (short_returns > 0).sum() / len(short_returns)
+        short_pct_periods_down = 1 - short_pct_periods_up
 
         short_median_gain = short_profits.loc[short_profits > 0].median()
         short_average_loss = short_profits.loc[short_profits < 0].mean()
         short_median_gain_to_average_loss = short_median_gain / short_average_loss
 
-        short_profit_factor = qs.stats.profit_factor(short_profits)
-        short_sharpe = qs.stats.sharpe(short_returns, periods=periods_per_year)
-        short_beta = qs.stats.greeks(short_returns, benchmark_returns).to_dict().get("beta", 0)
-        short_sortino = qs.stats.sortino(short_returns, periods=periods_per_year)
+        short_profit_factor = short_returns.sum()/short_max_drawdown
+        short_sharpe = short_returns.mean() / short_returns.std() * np.sqrt(periods_per_year)
+        short_beta = np.cov(short_returns, benchmark_returns)[0, 1] / np.var(benchmark_returns)
+        short_sortino = short_returns.mean() / short_returns.loc[short_returns < 0].std() * np.sqrt(periods_per_year)
+
+
+        ##########################################################################################################################################################################
+        # cagr = qs.stats.cagr(backtest_returns, compounded=test['inputs']['reinvest_profits_bool'], periods=365)
+        # drawdowns = qs.stats.to_drawdown_series(backtest_returns)
+        # max_drawdown = qs.stats.max_drawdown(backtest_returns)
+        # win_rate = qs.stats.win_rate(backtest_returns)
+        # loss_rate = 1 - win_rate
+        #
+        # median_gain = benchmark_profits.loc[benchmark_profits > 0].median()
+        # average_loss = benchmark_profits.loc[benchmark_profits < 0].mean()
+        # median_gain_to_average_loss = median_gain / average_loss
+        #
+        # profit_factor = qs.stats.profit_factor(backtest_profits)
+        # sharpe = qs.stats.sharpe(backtest_returns, periods=periods_per_year)
+        # beta = qs.stats.greeks(backtest_returns, benchmark_returns).to_dict().get("beta", 0)
+        # sortino = qs.stats.sortino(backtest_returns, periods=periods_per_year)
+        #
+        # # Same stats as above but for benchmark
+        # benchmark_cagr = qs.stats.cagr(benchmark_returns, compounded=test['inputs']['reinvest_profits_bool'])
+        # benchmark_drawdowns = qs.stats.to_drawdown_series(benchmark_returns)
+        # benchmark_max_drawdown = qs.stats.max_drawdown(benchmark_returns)
+        # benchmark_win_rate = qs.stats.win_rate(benchmark_returns)
+        # benchmark_loss_rate = 1 - benchmark_win_rate
+        #
+        # benchmark_median_gain = benchmark_profits.loc[benchmark_profits > 0].median()
+        # benchmark_average_loss = benchmark_profits.loc[benchmark_profits < 0].mean()
+        # benchmark_median_gain_to_average_loss = benchmark_median_gain / benchmark_average_loss
+        #
+        # benchmark_profit_factor = qs.stats.profit_factor(benchmark_profits)
+        # benchmark_sharpe = qs.stats.sharpe(benchmark_returns, periods=periods_per_year)
+        # benchmark_beta = 1.0
+        # benchmark_sortino = qs.stats.sortino(benchmark_returns, periods=periods_per_year)
+        #
+        # # Same stats as above but for longs only
+        # long_cagr = qs.stats.cagr(long_returns, compounded=test['inputs']['reinvest_profits_bool'])
+        # long_drawdowns = qs.stats.to_drawdown_series(long_returns)
+        # long_max_drawdown = qs.stats.max_drawdown(long_returns)
+        # long_win_rate = qs.stats.win_rate(long_returns)
+        # long_loss_rate = 1 - long_win_rate
+        #
+        # long_median_gain = long_profits.loc[long_profits > 0].median()
+        # long_average_loss = long_profits.loc[long_profits < 0].mean()
+        # long_median_gain_to_average_loss = long_median_gain / long_average_loss
+        #
+        # long_profit_factor = qs.stats.profit_factor(long_profits)
+        # long_sharpe = qs.stats.sharpe(long_returns, periods=periods_per_year)
+        # long_beta = qs.stats.greeks(long_returns, benchmark_returns).to_dict().get("beta", 0)
+        # long_sortino = qs.stats.sortino(long_returns, periods=periods_per_year)
+        #
+        # # Same stats as above but for shorts only
+        # short_cagr = qs.stats.cagr(short_returns, compounded=test['inputs']['reinvest_profits_bool'])
+        # short_drawdowns = qs.stats.to_drawdown_series(short_returns)
+        # short_max_drawdown = qs.stats.max_drawdown(short_returns)
+        # short_win_rate = qs.stats.win_rate(short_returns)
+        # short_loss_rate = 1 - short_win_rate
+        #
+        # short_median_gain = short_profits.loc[short_profits > 0].median()
+        # short_average_loss = short_profits.loc[short_profits < 0].mean()
+        # short_median_gain_to_average_loss = short_median_gain / short_average_loss
+        #
+        # short_profit_factor = qs.stats.profit_factor(short_profits)
+        # short_sharpe = qs.stats.sharpe(short_returns, periods=periods_per_year)
+        # short_beta = qs.stats.greeks(short_returns, benchmark_returns).to_dict().get("beta", 0)
+        # short_sortino = qs.stats.sortino(short_returns, periods=periods_per_year)
 
         ##########################################################################################################################################################################
 
@@ -212,8 +315,8 @@ class BacktestAnalyzer:
             'total': {
                 'cagr': cagr,
                 'max_drawdown': max_drawdown,
-                'win_rate': win_rate,
-                'loss_rate': loss_rate,
+                'pct_periods_up': pct_periods_up,
+                'pct_periods_down': pct_periods_down,
                 'pct_up_bets': up_bets / total_bets,
                 'pct_down_bets': down_bets / total_bets,
                 'median_gain_to_average_loss': median_gain_to_average_loss,
@@ -226,8 +329,8 @@ class BacktestAnalyzer:
             'long': {
                 'cagr': long_cagr,
                 'max_drawdown': long_max_drawdown,
-                'win_rate': long_win_rate,
-                'loss_rate': long_loss_rate,
+                'pct_periods_up': long_pct_periods_up,
+                'pct_periods_down': long_pct_periods_down,
                 'pct_up_bets': long_up_bets / long_total_bets,
                 'pct_down_bets': long_down_bets / long_total_bets,
                 'median_gain_to_average_loss': long_median_gain_to_average_loss,
@@ -240,8 +343,8 @@ class BacktestAnalyzer:
             'short': {
                 'cagr': short_cagr,
                 'max_drawdown': short_max_drawdown,
-                'win_rate': short_win_rate,
-                'loss_rate': short_loss_rate,
+                'pct_periods_up': short_pct_periods_up,
+                'pct_periods_down': short_pct_periods_down,
                 'pct_up_bets': short_up_bets / short_total_bets,
                 'pct_down_bets': short_down_bets / short_total_bets,
                 'median_gain_to_average_loss': short_median_gain_to_average_loss,
@@ -254,8 +357,8 @@ class BacktestAnalyzer:
             'benchmark': {
                 'cagr': benchmark_cagr,
                 'max_drawdown': benchmark_max_drawdown,
-                'win_rate': benchmark_win_rate,
-                'loss_rate': benchmark_loss_rate,
+                'pct_periods_up': benchmark_pct_periods_up,
+                'pct_periods_down': benchmark_pct_periods_down,
                 'median_gain_to_average_loss': benchmark_median_gain_to_average_loss,
                 'profit_factor': benchmark_profit_factor,
                 'sharpe_ratio': benchmark_sharpe,
@@ -319,13 +422,24 @@ def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyz
     long_comparison.columns = comparison_columns
     short_comparison.columns = comparison_columns
 
+    total_comparison.loc['test_names'] = total_comparison.columns
     total_comparison.sort_values(by='test_score', axis=1, ascending=False, inplace=True)
-    long_comparison.sort_values(by='test_score', axis=1, ascending=False, inplace=True)
-    short_comparison.sort_values(by='test_score', axis=1, ascending=False, inplace=True)
+    total_comparison.columns = total_comparison.loc['test_names']
+    total_comparison.drop('test_names', inplace=True)
 
-    total_comparison = total_comparison.set_axis(pd.MultiIndex.from_arrays([['total', 'total'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
-    long_comparison = long_comparison.set_axis(pd.MultiIndex.from_arrays([['long', 'long'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
-    short_comparison = short_comparison.set_axis(pd.MultiIndex.from_arrays([['short', 'short'], [comparison_columns[0], comparison_columns[1]]], names=['lst', 'test']), axis=1)
+    long_comparison.loc['test_names'] = long_comparison.columns
+    long_comparison.sort_values(by='test_score', axis=1, ascending=False, inplace=True)
+    long_comparison.columns = long_comparison.loc['test_names']
+    long_comparison.drop('test_names', inplace=True)
+
+    short_comparison.loc['test_names'] = short_comparison.columns
+    short_comparison.sort_values(by='test_score', axis=1, ascending=False, inplace=True)
+    short_comparison.columns = short_comparison.loc['test_names']
+    short_comparison.drop('test_names', inplace=True)
+
+    total_comparison = total_comparison.set_axis(pd.MultiIndex.from_arrays([['total', 'total'], total_comparison.columns], names=['lst', 'test']), axis=1)
+    long_comparison = long_comparison.set_axis(pd.MultiIndex.from_arrays([['long', 'long'], long_comparison.columns], names=['lst', 'test']), axis=1)
+    short_comparison = short_comparison.set_axis(pd.MultiIndex.from_arrays([['short', 'short'], short_comparison.columns], names=['lst', 'test']), axis=1)
 
     total_comparison.fillna(0, inplace=True)
     long_comparison.fillna(0, inplace=True)
