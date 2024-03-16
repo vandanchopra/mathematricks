@@ -10,7 +10,7 @@ from itertools import compress
 
 class StockAutomationUtils:
     def __init__(self):
-        pass
+        self.project_path = os.path.dirname(os.path.abspath(__file__))
 
     def add_stock_symbols_to_pickle(self, symbols, filename):
         # Check if the pickle file already exists
@@ -32,7 +32,7 @@ class StockAutomationUtils:
     
     def get_stock_data(self, symbol, start_date_d, end_date_d):
         # Load data from 'data' folder
-        csv_path = f'data/{symbol}.csv'
+        csv_path = f'{self.project_path}/data/{symbol}.csv'
         df = pd.read_csv(csv_path)
         # Convert the 'Date' column to datetime
         df['Date'] = pd.to_datetime(df['Date'])
@@ -147,7 +147,9 @@ class StockAutomationUtils:
         pruned_data = {}
         for symbol in symbols:
             try:
-                pruned_data[symbol] = symbols_df[symbol][(symbols_df[symbol]['Date'] >= start_date) & (symbols_df[symbol]['Date'] <= end_date)]
+                data = symbols_df[symbol][(symbols_df[symbol]['Date'] >= start_date) & (symbols_df[symbol]['Date'] <= end_date)]
+                if not data.empty:
+                    pruned_data[symbol] = data
             except Exception as e:
                 print(f'Error loading data for {symbol}: {e}')
         return pruned_data

@@ -1,25 +1,127 @@
-from datetime import datetime, timedelta
-import pickle
+import pickle, os
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from itertools import compress
-# import quantstats as qs
+from stock_automation_utils import StockAutomationUtils
+import datetime as dt
+import quantstats_lumi as qs
+from matplotlib import pyplot as plt
 
 
-def load_test(test_number_or_path):
-    if isinstance(test_number_or_path, int):
-        test = pickle.load(open(f'backtests/Test_{test_number_or_path}.pkl', 'rb'))
-    elif isinstance(test_number_or_path, str):
-        test = pickle.load(open(test_number_or_path, 'rb'))
-    else:
-        raise ValueError('test_number_or_path must be an integer or a string')
+class BackTestManager:
+    def __init__(self):
+        self.project_path = os.path.dirname(os.path.abspath(__file__))
+        self.backtests_folder_path='/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/backtests'
+        self.backtests_table_filepath = self.backtests_folder_path + '/backtests_table.csv'
+        
+    def get_test_filepath_from_backtests_table(self, backtests_table_index):
+        backtests_table = self.load_backtests_table()
+        test_filename = backtests_table.iloc[backtests_table_index]['test_filename']
+        return test_filename
+    
+    def load_test(self, test):
+        if isinstance(test, int):
+            backtests_table = self.load_backtests_table()
+            test_filename = backtests_table.iloc[test]['test_filename']
+            test = pickle.load(open(test_filename, 'rb'))
+        elif isinstance(test, str):
+            test = pickle.load(open(test, 'rb'))
+        return test
+    
+    def save_test(self, test):
+        backtests_table = self.load_backtests_table()
+        this_backtest_n = backtests_table.index.max() + 1 if backtests_table.index.max() is not np.nan else 0
+        pickle_filename = self.backtests_folder_path + '/Test_{}.pkl'.format(this_backtest_n)
+        test['test_run_dt'] = dt.datetime.now()
+        backtests_table.loc[this_backtest_n] = [test['test_run_dt'], 
+                                                test["strategy_name"], test["inputs"]["symbols"],
+                                                test["inputs"]["start_date_dt"],
+                                                test["inputs"]["end_date_dt"], 
+                                                test["inputs"]["rebalance_frequency"],
+                                                test["inputs"]["long_count"], 
+                                                test["inputs"]["short_count"],
+                                                test["inputs"]["portfolio_starting_value"], 
+                                                test["inputs"]["risk_pct"],
+                                                test["inputs"]["reinvest_profits_bool"],
+                                                test["inputs"]["leverage_multiplier"], 
+                                                pickle_filename]
+        backtests_table.to_csv(self.backtests_table_filepath)
 
-    return test
+        pickle.dump(test, open(pickle_filename, 'wb'))
+        print(f'Backtest results saved to {pickle_filename}')
+        
+    def remake_backtests_table(self):
+        ''' 
+        start with an empty backtests table
+        open each test and update the backtests table
+        '''
+        backtest_files = os.listdir(self.backtests_folder_path)
+        print({'backtest_files':backtest_files})
+        # For all files that don't have the work '_analysis' in them
+        test_inputs_list = []
+        for file in backtest_files:
+            if '_analysis' not in file and '.DS_Store' not in file and 'csv' not in file:
+                test_filename = self.backtests_folder_path+'/{}'.format(file)
+                # Load the test
+                test = pd.read_pickle(test_filename)
+                test_inputs_list.append({'test_run_dt': test['test_run_dt'],
+                                "strategy_name": test["strategy_name"],
+                                "symbols": test["inputs"]["symbols"],
+                                "start_date_dt": test["inputs"]["start_date_dt"],
+                                "end_date_dt": test["inputs"]["end_date_dt"],
+                                "rebalance_frequency": test["inputs"]["rebalance_frequency"],
+                                "long_count": test["inputs"]["long_count"],
+                                "short_count": test["inputs"]["short_count"],
+                                "portfolio_starting_value": test["inputs"]["portfolio_starting_value"],
+                                "risk_pct": test["inputs"]["risk_pct"],
+                                "reinvest_profits_bool": test["inputs"]["reinvest_profits_bool"],
+                                "leverage_multiplier": test["inputs"]["leverage_multiplier"],
+                                "test_filename": test_filename
+                            })
+                
+        if len(test_inputs_list) == 0:
+            backtests_table = pd.DataFrame(columns=['test_run_dt', 'strategy_name', 'symbols', 'start_date_dt', 'end_date_dt', 'rebalance_frequency', 'long_count', 'short_count', 'portfolio_starting_value', 'risk_pct', 'reinvest_profits_bool', 'leverage_multiplier', 'test_filename'])
+        else:
+            backtests_table = pd.DataFrame.from_dict(test_inputs_list)
+            print('Remade backtests table')
+        backtests_table.sort_values(by='test_run_dt', inplace=True, ascending=False)
+        backtests_table.to_csv(self.backtests_table_filepath)
+        return backtests_table
+    
+    def load_backtests_table(self):
+        if os.path.exists(self.backtests_table_filepath):
+            backtests_table = pd.read_csv(self.backtests_table_filepath, index_col=[0])
+        else:
+            backtests_table = pd.DataFrame(columns=['test_run_dt', 'strategy_name', 'symbols', 'start_date_dt', 'end_date_dt', 'rebalance_frequency', 'long_count', 'short_count', 'portfolio_starting_value', 'risk_pct', 'reinvest_profits_bool', 'leverage_multiplier', 'test_filename'])
+        return backtests_table
+    
+    # def get_backtest_filename_without_path(self):
+    #     backtests_table = pd.read_csv('backtests_table.csv', index_col=[0], header=0)#, parse_dates=[3, 4])
+    #     backtests_table['test_number'] = backtests_table.index
 
+    #     this_backtest = backtests_table.loc[[(backtests_table['strategy_name'] == self.strategy_name) &
+    #                                         # (pd.Series([x == y for x, y in zip([eval(backtests_table.loc[z, 'symbols']) for z in backtests_table.index], self.symbols)])) &
+    #                                         (pd.Series([x == str(self.symbols) for x in backtests_table['symbols']], index=backtests_table.index)) &
+    #                                         (backtests_table['start_date_dt'] == str(self.start_date_dt)) &
+    #                                         (backtests_table['end_date_dt'] == str(self.end_date_dt)) &
+    #                                         (backtests_table['rebalance_frequency'] == self.rebalance_frequency) &
+    #                                         (backtests_table['long_count'] == self.long_count) &
+    #                                         (backtests_table['short_count'] == self.short_count) &
+    #                                         (backtests_table['portfolio_starting_value'] == self.portfolio_starting_value) &
+    #                                         (backtests_table['risk_pct'] == self.risk_pct) &
+    #                                         (backtests_table['reinvest_profits_bool'] == self.reinvest_profits_bool) &
+    #                                         (backtests_table['leverage_multiplier'] == self.leverage_multiplier)][0]]
 
+    #     this_backtest_filename = f'''Test_{this_backtest['test_number'].values[0]}.pkl'''
+
+    #     return this_backtest_filename
+
+    def get_backtest_filename(self):
+        pickle_filename = f'backtests/{self.get_backtest_filename_without_path()}'
+        return pickle_filename
+    
 class BacktestAnalyzer:
-
     def __init__(self, test):
         self.base_test = test
         self.strategy_name = test['strategy_name']
@@ -33,45 +135,11 @@ class BacktestAnalyzer:
         self.risk_pct = test['inputs']['risk_pct']
         self.reinvest_profits_bool = test['inputs']['reinvest_profits_bool']
         self.leverage_multiplier = test['inputs']['leverage_multiplier']
-
-    @classmethod
-    def by_number(cls, test_number: int):
-        test_table = pd.read_csv('backtests_table.csv', index_col=[0], header=0)
-        test = load_test(test_table.loc[test_number])
-        return cls(test)
-
-
-    def get_backtest_filename_without_path(self):
-        backtests_table = pd.read_csv('backtests_table.csv', index_col=[0], header=0)#, parse_dates=[3, 4])
-        backtests_table['test_number'] = backtests_table.index
-
-        this_backtest = backtests_table.loc[[(backtests_table['strategy_name'] == self.strategy_name) &
-                                            # (pd.Series([x == y for x, y in zip([eval(backtests_table.loc[z, 'symbols']) for z in backtests_table.index], self.symbols)])) &
-                                            (pd.Series([x == str(self.symbols) for x in backtests_table['symbols']], index=backtests_table.index)) &
-                                            (backtests_table['start_date_dt'] == str(self.start_date_dt)) &
-                                            (backtests_table['end_date_dt'] == str(self.end_date_dt)) &
-                                            (backtests_table['rebalance_frequency'] == self.rebalance_frequency) &
-                                            (backtests_table['long_count'] == self.long_count) &
-                                            (backtests_table['short_count'] == self.short_count) &
-                                            (backtests_table['portfolio_starting_value'] == self.portfolio_starting_value) &
-                                            (backtests_table['risk_pct'] == self.risk_pct) &
-                                            (backtests_table['reinvest_profits_bool'] == self.reinvest_profits_bool) &
-                                            (backtests_table['leverage_multiplier'] == self.leverage_multiplier)][0]]
-
-        this_backtest_filename = f'''Test_{this_backtest['test_number'].values[0]}.pkl'''
-
-        return this_backtest_filename
-
-    def get_backtest_filename(self):
-        pickle_filename = f'backtests/{self.get_backtest_filename_without_path()}'
-        return pickle_filename
-
+        self.BTM = BackTestManager()
+        self.SAU = StockAutomationUtils()
+    
     def analyze_backtest(self):
-        if self.base_test is None:
-            test_filename = self.get_backtest_filename()
-            test = pickle.load(open(test_filename, 'rb'))
-        else:
-            test = self.base_test
+        test = self.base_test
 
         if len(test['backtest_profits']) < len(test['benchmark_returns']):
             test['rebalance_periods'] = test['rebalance_periods'][:len(test['backtest_profits'])]
@@ -357,28 +425,205 @@ class BacktestAnalyzer:
             }
         }
 
-        # Pickle analysis
-        pickle_filename = self.get_backtest_filename()[:-4] + '_analysis.pkl'
-        print(pickle_filename)
-        pickle.dump(backtest_analysis, open(pickle_filename, 'wb'))
-        print(f'Backtest analysis saved to {pickle_filename}')
+        # # Pickle analysis
+        # pickle_filename = self.get_backtest_filename()[:-4] + '_analysis.pkl'
+        # print(pickle_filename)
+        # pickle.dump(backtest_analysis, open(pickle_filename, 'wb'))
+        # print(f'Backtest analysis saved to {pickle_filename}')
 
         return backtest_analysis
+    
+    def get_benchmark_returns(self, benchmark_name='^IXIC'):
+        start_date_dt = self.base_test['rebalance_periods'][0][0]
+        end_date_dt = self.base_test['rebalance_periods'][-1][1]
+        rebalance_periods = self.base_test['rebalance_periods']
+        portfolio_starting_value = self.base_test['inputs']['portfolio_starting_value']
+        
+        # Bring in the Nasdaq data and calculate the returns
+        benchmark_input_data = self.SAU.get_stock_data(benchmark_name, start_date_dt, end_date_dt)
+        
+        # Only keep the Adjussted Close column
+        benchmark_input_data = benchmark_input_data[['Date', 'Adj Close']]
+        # Convert 'Date' to datetime
+        benchmark_input_data['Date'] = pd.to_datetime(benchmark_input_data['Date'])
+        dates = np.array(rebalance_periods)[:, 1]
+        # For each date in dates, find a date in nasdaq_data that is the same or the closest
+        pruned_benchmark_data = []
+        for date in dates:
+            idx = benchmark_input_data['Date'].sub(date).abs().idxmin()
+            pruned_benchmark_data.append(benchmark_input_data.loc[idx, 'Adj Close'])
+        pruned_benchmark_data = np.array(pruned_benchmark_data)
+        benchmark_returns = ((1-(pruned_benchmark_data[1:]/pruned_benchmark_data[:-1]))*portfolio_starting_value) * -1
+        benchmark_returns = np.insert(benchmark_returns, 0, 0)
+        
+        return benchmark_returns
 
-    def load_backtest(self):
-        pickle_filename = self.get_backtest_filename()
-        test = pickle.load(open(pickle_filename, 'rb'))
-        print(f'Backtest results loaded from {pickle_filename}')
+    def create_test_full_tearsheet(self, test_num):
+        test = self.base_test
+        # calculate the cumulative profits
+        profits_np = np.cumsum(test['backtest_profits'])
+        dates = np.array(test['rebalance_periods'])[:, 1]
 
-        return test
+        # Create a pandas series of the returns with dates, with the index name as 'Date' and the column name as 'Strategy'
+        profit = pd.Series(profits_np, index=pd.to_datetime(dates, format='%Y-%m-%d'), name='Smooth_Operator_test_num_{}'.format(test_num))
+        profit.index.name = 'Date'
+        returns = profit.pct_change()
+        if test['inputs']['leverage_multiplier'] > 1:
+            returns = returns * test['inputs']['leverage_multiplier']
 
+        # Using quantstats to create a HTML report and save it to a html file
+        test_file_path = self.BTM.get_test_filepath_from_backtests_table(test_num)
+        report_filepath = test_file_path.replace('.pkl', '_analysis.html')
+        qs.reports.html(returns, 'SPY', rf=0.04, periods_per_year=252, output=report_filepath)
+        print('Profit in Mn: {}'.format(profits_np[-1] / 1e6))
+    
+    def create_orders_df(self):
+        test = self.base_test
+        backtest_runs = test['backtest_runs']
 
+        rebal_period_index = ['symbols', 'direction', 'entry_price', 'quantity', 'stoploss_price', 'exit_price', 'stoploss_hit_bool', 'profit']
+        orders_list = []
+        # Create entry and exit
+        for count, rebal_period in enumerate(backtest_runs):
+            for symbol in rebal_period[0]:
+                symbol_number = list(rebal_period[0]).index(symbol)
+                orders_list.append(
+                    {'symbol':symbol, 
+                    'direction': float(rebal_period[:, symbol_number][rebal_period_index.index('direction')]), 
+                    'entry_dt': test['rebalance_periods'][count][0], 
+                    'exit_dt': test['rebalance_periods'][count][1], 
+                    'quantity': float(rebal_period[:, symbol_number][rebal_period_index.index('quantity')]),
+                    'entry_price': float(rebal_period[:, symbol_number][rebal_period_index.index('entry_price')]),
+                    'exit_price': float(rebal_period[:, symbol_number][rebal_period_index.index('exit_price')]),
+                    'stoploss_price': float(rebal_period[:, symbol_number][rebal_period_index.index('stoploss_price')]),
+                    'stoploss_hit_bool': rebal_period[:, symbol_number][rebal_period_index.index('stoploss_hit_bool')] == 'True',
+                    'profit': float(rebal_period[:, symbol_number][rebal_period_index.index('profit')])
+                    })
+        orders_df = pd.DataFrame(orders_list)
+
+        return orders_df
+    
+    def test_metrics_orders(self, orders_df):
+
+        final_dict = {}
+
+        calc_df = orders_df.copy()
+        # Win Ratio
+        win_ratio = (calc_df['profit'] > 0).sum() / calc_df['profit'].count()
+        # Average Win
+        average_win = calc_df[calc_df['profit'] > 0]['profit'].mean()
+        # Average Loss
+        average_loss = calc_df[calc_df['profit'] < 0]['profit'].mean()
+        # Risk Reward Ratio
+        risk_reward_ratio = abs(average_win / average_loss)
+        # Probability of Profit
+        probability_of_profit = abs(average_win/average_loss) * win_ratio
+        # Pct of Stoploss hit
+        pct_of_stoploss_hit = (calc_df[calc_df['stoploss_hit_bool'] == False]['stoploss_hit_bool'].count()) / (calc_df['stoploss_hit_bool'].count())
+        final_dict['total'] = {'win_ratio': win_ratio, 'average_win': average_win, 'average_loss': average_loss, 
+                'risk_reward_ratio': risk_reward_ratio, 
+                'pct_of_stoploss_hit': pct_of_stoploss_hit, 'probability_of_profit': probability_of_profit}
+
+        calc_df = orders_df.copy()
+        calc_df = calc_df[calc_df['direction'] == 1.0]
+        if not calc_df.empty:
+                # Win Ratio
+                win_ratio = (calc_df['profit'] > 0).sum() / calc_df['profit'].count()
+                # Average Win
+                average_win = calc_df[calc_df['profit'] > 0]['profit'].mean()
+                # Average Loss
+                average_loss = calc_df[calc_df['profit'] < 0]['profit'].mean()
+                # Risk Reward Ratio
+                risk_reward_ratio = abs(average_win / average_loss)
+                # Probability of Profit
+                probability_of_profit = abs(average_win/average_loss) * win_ratio
+                # Pct of Stoploss hit
+                pct_of_stoploss_hit = (calc_df[calc_df['stoploss_hit_bool'] == False]['stoploss_hit_bool'].count()) / (calc_df['stoploss_hit_bool'].count())
+                final_dict['long'] = {'win_ratio': win_ratio, 'average_win': average_win, 'average_loss': average_loss, 
+                        'risk_reward_ratio': risk_reward_ratio, 
+                        'pct_of_stoploss_hit': pct_of_stoploss_hit, 'probability_of_profit': probability_of_profit}
+        else:
+                del final_dict['short']
+
+        calc_df = orders_df.copy()
+        calc_df = calc_df[calc_df['direction'] == -1.0]
+        if not calc_df.empty:
+                # Win Ratio
+                win_ratio = (calc_df['profit'] > 0).sum() / calc_df['profit'].count()
+                # Average Win
+                average_win = calc_df[calc_df['profit'] > 0]['profit'].mean()
+                # Average Loss
+                average_loss = calc_df[calc_df['profit'] < 0]['profit'].mean()
+                # Risk Reward Ratio
+                risk_reward_ratio = abs(average_win / average_loss)
+                # Probability of Profit
+                probability_of_profit = abs(average_win/average_loss) * win_ratio
+                # Pct of Stoploss hit
+                pct_of_stoploss_hit = (calc_df[calc_df['stoploss_hit_bool'] == False]['stoploss_hit_bool'].count()) / (calc_df['stoploss_hit_bool'].count())
+                final_dict['short'] = {'win_ratio': win_ratio, 'average_win': average_win, 'average_loss': average_loss, 
+                        'risk_reward_ratio': risk_reward_ratio, 
+                        'pct_of_stoploss_hit': pct_of_stoploss_hit, 'probability_of_profit': probability_of_profit}
+        else:
+                del final_dict['long']
+                
+        return final_dict
+
+    def eyeball_symbol(self, symbol, test, orders_df, figsize, orders_to_show=None):
+        '''
+        - get the start and end date of the test.
+        - load the data for the asset for those dates.
+        - plot it on a chart with dates.
+        - now start adding the entries on the chart.
+        - now add the exits on the chart.
+        - now change the marker color for the stoploss hits, profits, and losses.
+        '''
+
+        # Get the start and end date of the test
+        start_date = np.datetime64(test['inputs']['start_date_dt'])
+        end_date = np.datetime64(test['inputs']['end_date_dt'])
+
+        # Load the data for the asset for those dates
+        # Assuming the asset symbol is stored in the variable 'symbol'
+        asset_data =  self.SAU.get_stock_data(symbol, start_date, end_date)
+        asset_data.set_index('Date', inplace=True)
+        # drop all columns except 'close'
+        asset_data.drop(columns=[col for col in asset_data.columns if col != 'Adj Close'], inplace=True)
+        # Rename the column to 'close'
+        asset_data.rename(columns={'Adj Close':'close'}, inplace=True)
+        # Plot it on a chart with dates
+        # asset_data.iloc[0:int(len(asset_data)/2)].plot()
+        
+        # Create a plot with the pricing data, along with all the entry and exits points based on date and price.
+        asset_orders_df = orders_df[orders_df['symbol'] == symbol]
+        if orders_to_show:
+            asset_orders_df = asset_orders_df.sample(orders_to_show)
+            min_date = asset_orders_df['entry_dt'].min() - dt.timedelta(days=10)
+            max_date = asset_orders_df['exit_dt'].max() + dt.timedelta(days=10)
+            asset_data = asset_data[(asset_data.index >= min_date) & (asset_data.index <= max_date)]
+
+        
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        ax.plot(asset_data['close'], linewidth=0.2, c='grey')
+        ax.scatter(asset_orders_df['entry_dt'], asset_orders_df['entry_price'], c='black', marker='^', label='entry')
+        ax.scatter(asset_orders_df['exit_dt'], asset_orders_df['exit_price'], c=np.where(asset_orders_df['profit'] < 0, 'r', 'g'), marker='v', label='exit')
+        
+        # plt.plot(asset_data['close'], linewidth=0.2, c='grey')
+        # plt.scatter(asset_orders_df['entry_dt'], asset_orders_df['entry_price'], c='black', marker='^', label='entry')
+        # plt.scatter(asset_orders_df['exit_dt'], asset_orders_df['exit_price'], c=np.where(asset_orders_df['profit'] < 0, 'r', 'g'), marker='v', label='exit')
+
+        # plt.scatter(orders_df[orders_df['stoploss_hit_bool'] == True]['exit_dt'], orders_df[orders_df['stoploss_hit_bool'] == True]['stoploss_price'], c='b', marker='x', label='stoploss')
+        # plt.legend()
+        # plt.show()
+        
+        return asset_data, min_date, max_date, ax
+
+    
 def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyzer):
     backtest1_analysis = backtest1.analyze_backtest()
     backtest2_analysis = backtest2.analyze_backtest()
 
     # Compare the two backtests
-    comparison_columns = {'backtest1': {'strategy_name': backtest1.strategy_name, 'symbols': str(backtest1.symbols),
+    comparison_columns = {'backtest1': {'strategy_name': backtest1.strategy_name, 'symbols': str(len(backtest1.symbols)),
                                         'start_date_dt': backtest1.start_date_dt, 'end_date_dt': backtest1.end_date_dt,
                                         'rebalance_frequency': backtest1.rebalance_frequency,
                                         'long_count': backtest1.long_count, 'short_count': backtest1.short_count,
@@ -386,7 +631,7 @@ def compare_two_backtests(backtest1: BacktestAnalyzer, backtest2: BacktestAnalyz
                                         'risk_pct': backtest1.risk_pct,
                                         'reinvest_profits_bool': backtest1.reinvest_profits_bool,
                                         'leverage_multiplier': backtest1.leverage_multiplier},
-                          'backtest2': {'strategy_name': backtest2.strategy_name, 'symbols': str(backtest2.symbols),
+                          'backtest2': {'strategy_name': backtest2.strategy_name, 'symbols': str(len(backtest1.symbols)),
                                         'start_date_dt': backtest2.start_date_dt, 'end_date_dt': backtest2.end_date_dt,
                                         'rebalance_frequency': backtest2.rebalance_frequency,
                                         'long_count': backtest2.long_count, 'short_count': backtest2.short_count,
