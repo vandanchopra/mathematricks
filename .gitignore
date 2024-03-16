@@ -2,9 +2,13 @@
 ##### ignore all files in the vault directory except base_strategy.py
 vault/*
 !vault/base_strategy.py
+spectre/*
 ##### ignore all files in the data directory
 data/*
 !data/^IXIC.csv
+
+# ignore all files in the backtests directory except the __init__.py file
+backtests/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

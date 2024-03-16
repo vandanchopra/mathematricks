@@ -137,3 +137,6 @@ class BaseStrategy:
         long_symbols = np.random.choice(symbols_array, long_count)
 
         return long_symbols, short_symbols, symbols_array, data_array, data_index
+
+class Strategy(BaseStrategy):
+    pass
