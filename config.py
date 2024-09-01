@@ -1,6 +1,12 @@
+# read the txt file in a list and remove the '\n' character
+with open('/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.txt', 'r') as f:
+    stock_symbols = f.readlines()
+    stock_symbols = [x.strip() for x in stock_symbols]
+
 config_dict = {
-    'run_mode': 2, # 1: live trading - real money, 2: live trading - paper money, 3: live simulated trading - paper money, 4: backtesting, 5: data update only
-    'simulated_trading_speed': '1x', # 0.25x, 0.5x, 1x, 2x, 4x, 100x, x
+    'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
     'backtest_inputs': {},
     'data_update_inputs': {'data_source':['yahoo', 'ibkr']},
+    'list_of_symbols': stock_symbols[:10],
+    'sleep_time':0,
 }

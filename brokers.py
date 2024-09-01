@@ -1,7 +1,7 @@
-from brokers.ib import IB
+from brokers.ibkr import IBKR
 from brokers.yahoo import Yahoo
 
 class Brokers():
     def __init__(self):
-        self.ib = IB()
+        self.ib = IBKR()
         self.yahoo = Yahoo()
