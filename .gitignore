@@ -5,7 +5,13 @@ vault/*
 spectre/*
 ##### ignore all files in the data directory
 data/*
-!data/^IXIC.csv
+!data/yahoo/^IXIC.csv
+!data/yahoo/AMZN.csv
+!data/yahoo/MSFT.csv
+!data/yahoo/GOOGL.csv
+!data/yahoo/AMZN.csv
+!data/yahoo/FB.csv
+!data/yahoo/AAPL.csv
 
 # ignore all files in the backtests directory except the __init__.py file
 backtests/*
