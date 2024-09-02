@@ -6,6 +6,8 @@ from config import config_dict
 from systems.datafetcher import DataFetcher
 from systems.datafeeder import DataFeeder
 import pandas as pd
+from utils import create_logger
+import logging
 
 '''
 write the software for AAPL, MSFT only.
@@ -16,6 +18,7 @@ class Mathematricks:
         self.datafeeder = DataFeeder(config_dict)
         self.sleep_time = config_dict['sleep_time']
         self.market_data_df = pd.DataFrame()
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks')
     
     def run_live_real_money(self):
         while True:
@@ -39,6 +42,7 @@ class Mathematricks:
             print ('Exiting...')
     
     def run_data_update(self):
+        # self.market_data_df = self.datafetcher.fetch_updated_data(self.market_data_df)
         pass
     
     def run(self):

@@ -4,9 +4,9 @@ with open('/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathem
     stock_symbols = [x.strip() for x in stock_symbols]
 
 config_dict = {
-    'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
+    'run_mode': 1, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
     'backtest_inputs': {},
-    'data_update_inputs': {'data_source':['yahoo', 'ibkr']},
+    'data_update_inputs': {'data_sources':['yahoo', 'ibkr']},
     'list_of_symbols': stock_symbols[:10],
     'sleep_time':0,
 }
