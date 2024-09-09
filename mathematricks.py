@@ -33,13 +33,14 @@ class Mathematricks:
                 break
     
     def run_live_paper_money(self):
-        try:
-            market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
-            # signals = generate_signals(data)
-            # execute_signals(signals)
-        except KeyboardInterrupt:
-            print ('Exiting...')
-            break
+        while True:
+            try:
+                market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
+                # signals = generate_signals(data)
+                # execute_signals(signals)
+            except KeyboardInterrupt:
+                print ('Exiting...')
+                break
     
     def run_backtest(self):
         try:
