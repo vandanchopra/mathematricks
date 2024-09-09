@@ -151,10 +151,9 @@ class Yahoo():
             existing_data = existing_data[existing_data.index < symbol_start_date]
             self.logger.debug({'asset_data_df-shape': asset_data_df.shape})
             self.logger.debug({'existing_data-shape': existing_data.shape})
-            sys.exit()
             # concatenate the existing data and the new data
             updated_data = pd.concat([existing_data, asset_data_df])
-            sys.exit()
+            # sys.exit()
             updated_data.to_csv(csv_file_path)
             data_frames.append(updated_data)
             pbar.update(1)

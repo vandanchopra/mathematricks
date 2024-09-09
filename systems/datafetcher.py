@@ -59,8 +59,6 @@ class DataFetcher:
                 raise NotImplementedError('IBKR data source is not implemented yet.')
         return market_data_df
         
-        
-        
     '''
     # DUMMY CODE FOR IBKR DATA DOWNLOAD
     ticker = "AMZN"

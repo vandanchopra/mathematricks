@@ -16,6 +16,4 @@ config_dict = {
 
 '''
 once a week, update stock symbols by 
-
-
 '''
