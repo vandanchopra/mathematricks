@@ -8,6 +8,7 @@ from systems.datafeeder import DataFeeder
 import pandas as pd
 from utils import create_logger
 import logging
+import sys
 
 '''
 write the software for AAPL, MSFT only.
@@ -16,9 +17,10 @@ write the software for AAPL, MSFT only.
 class Mathematricks:
     def __init__(self):
         self.datafeeder = DataFeeder(config_dict)
+        self.datafetcher = DataFetcher(config_dict)
         self.sleep_time = config_dict['sleep_time']
         self.market_data_df = pd.DataFrame()
-        self.logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks')
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
     
     def run_live_real_money(self):
         while True:
@@ -42,8 +44,7 @@ class Mathematricks:
             print ('Exiting...')
     
     def run_data_update(self):
-        # self.market_data_df = self.datafetcher.fetch_updated_data(self.market_data_df)
-        pass
+        self.market_data_df = self.datafetcher.fetch_updated_price_data(self.market_data_df)
     
     def run(self):
         run_mode = config_dict['run_mode']
@@ -56,9 +57,11 @@ class Mathematricks:
         elif run_mode == 3: # backtesting
             self.run_backtest()
         elif run_mode == 4: # data update only
-            data_update_inputs = config_dict['data_update_inputs']
-            print ({'data_update_inputs': data_update_inputs})
+            self.logger.debug('len-stock_symbols: {}'.format(len(config_dict['list_of_symbols'])))
+            self.logger.debug({'BEFORE: market_data_df': self.market_data_df.shape})
             self.run_data_update()
+            self.logger.debug({'AFTER: market_data_df': self.market_data_df.shape})
+            self.logger.debug({'market_data_df': self.market_data_df})
         else:
             raise ValueError('Invalid run_mode value: {}'.format(run_mode))
 

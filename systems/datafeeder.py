@@ -4,7 +4,7 @@ Live: Update data, and return updated data
 Backtest: return historical data until the current test system date
 
 '''
-from .datafetcher import DataFetcher
+from systems.datafetcher import DataFetcher
 import time
 from utils import create_logger
 import logging
@@ -19,7 +19,7 @@ class DataFeeder:
         # update data and return the updated data
         if run_mode == 'LIVE':
             # use datafetcher to update the data
-            market_data_df = self.datafetcher.fetch_updated_data(market_data_df)
+            market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df)
             
         while not market_data_df.empty:
             # extract the last row of the DataFrame and print it
