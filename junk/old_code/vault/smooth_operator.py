@@ -2,6 +2,8 @@
 from vault.base_strategy import BaseStrategy
 import numpy as np
 from datetime import timedelta
+import numpy as np
+
 
 class Strategy(BaseStrategy):
     def __init__(self):
@@ -93,7 +95,6 @@ class Strategy(BaseStrategy):
                 
         return symbols_array, np.array(data_array), data_index_final, dates_final
     
-    import numpy as np
     def calculate_u_curve_weights(self, points_count, mode='normal'):
         x = np.linspace(-5, 5, points_count)
         
