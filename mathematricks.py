@@ -6,6 +6,7 @@ from config import config_dict
 from systems.datafetcher import DataFetcher
 from systems.datafeeder import DataFeeder
 from systems.vault import Vault, RMS
+from systems.oms import OMS
 import pandas as pd
 from systems.utils import create_logger
 import logging
@@ -24,6 +25,7 @@ class Mathematricks:
         self.rms = RMS()
         self.datafeeder = DataFeeder(self.vault.datafeeder_config)
         self.datafetcher = DataFetcher(self.vault.datafeeder_config)
+        self.oms = OMS()
     
     def run_live_real_money(self):
         while True:
@@ -33,6 +35,8 @@ class Mathematricks:
                 signals_output = self.vault.generate_signals(market_data_df)
                 # Convert signals to orders
                 orders = self.rms.convert_signals_to_orders(signals_output)
+                # Place orders to broker
+                self.oms.execute_orders(orders)
                 
             except KeyboardInterrupt:
                 print ('Exiting...')

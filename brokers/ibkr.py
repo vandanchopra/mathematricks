@@ -53,7 +53,7 @@ class IBKR():
         # Return the stop loss orders
         return stop_loss_orders
 
-    def place_order(self, ticker: str, exchange: str, currency: str, action: str, quantity: int, order_type: str, limit_price: float = 0, stop_price: float = 0):
+    def execute_order(self, ticker: str, exchange: str, currency: str, action: str, quantity: int, order_type: str, limit_price: float = 0, stop_price: float = 0):
         # Create a contract for the stock
         ib = self.ib
         contract = ib.qualifyContracts(Stock(ticker, exchange, currency))
@@ -85,3 +85,11 @@ class IBKR():
 
         # Return the trade
         return trade
+    
+    
+if __name__ == '__main__':
+    ibkr = IBKR()
+    ibkr.connect_to_IBKR()
+    print(ibkr.get_current_portfolio())
+    # get a stream of market data for AAPL and MSFT and print the streaming data
+    

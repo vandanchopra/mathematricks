@@ -3,5 +3,5 @@ from brokers.yahoo import Yahoo
 
 class Brokers():
     def __init__(self):
-        # self.ib = IBKR()
+        self.ib = IBKR()
         self.yahoo = Yahoo()
