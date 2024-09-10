@@ -5,6 +5,7 @@ from config import config_dict
 # from brokers import Brokers
 from systems.datafetcher import DataFetcher
 from systems.datafeeder import DataFeeder
+from systems.vault import Vault, RMS
 import pandas as pd
 from utils import create_logger
 import logging
@@ -16,18 +17,23 @@ write the software for AAPL, MSFT only.
 
 class Mathematricks:
     def __init__(self):
-        self.datafeeder = DataFeeder(config_dict)
-        self.datafetcher = DataFetcher(config_dict)
         self.sleep_time = config_dict['sleep_time']
         self.market_data_df = pd.DataFrame()
         self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
+        self.vault = Vault(config_dict)
+        self.rms = RMS()
+        self.datafeeder = DataFeeder(self.vault.datafeeder_config)
+        self.datafetcher = DataFetcher(self.vault.datafeeder_config)
     
     def run_live_real_money(self):
         while True:
             try:
                 market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
-                # signals = generate_signals(data)
                 # execute_signals(signals)
+                signals_output = self.vault.generate_signals(market_data_df)
+                # Convert signals to orders
+                orders = self.rms.convert_signals_to_orders(signals_output)
+                
             except KeyboardInterrupt:
                 print ('Exiting...')
                 break
@@ -36,8 +42,11 @@ class Mathematricks:
         while True:
             try:
                 market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
-                # signals = generate_signals(data)
                 # execute_signals(signals)
+                signals_output = self.vault.generate_signals(market_data_df)
+                # Convert signals to orders
+                orders = self.rms.convert_signals_to_orders(signals_output)
+                
             except KeyboardInterrupt:
                 print ('Exiting...')
                 break
@@ -45,8 +54,11 @@ class Mathematricks:
     def run_backtest(self):
         try:
             market_data_df = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='BT', sleep_time=self.sleep_time)
-            # signals = generate_signals(data)
             # execute_signals(signals)
+            signals_output = self.vault.generate_signals(market_data_df)
+            # Convert signals to orders
+            orders = self.rms.convert_signals_to_orders(signals_output)
+            
         except KeyboardInterrupt:
             print ('Exiting...')
     
