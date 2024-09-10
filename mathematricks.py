@@ -9,6 +9,7 @@ import pandas as pd
 from utils import create_logger
 import logging
 import sys
+import time
 
 '''
 write the software for AAPL, MSFT only.
@@ -29,6 +30,7 @@ class Mathematricks:
                 self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
                 self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
                 self.logger.debug({f'LIVE: data frame': self.market_data_df})
+                time.sleep(self.sleep_time)
                 # signals = generate_signals(data)
                 # execute_signals(signals)
             except KeyboardInterrupt:

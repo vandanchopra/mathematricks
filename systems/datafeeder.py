@@ -41,6 +41,5 @@ class DataFeeder:
             # remove the last row from the DataFrame
             market_data_df = market_data_df.drop((interval,last_row.name))
             
-        time.sleep(sleep_time)
         last_rows = pd.concat(last_rows)
         return last_rows

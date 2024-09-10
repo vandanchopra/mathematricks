@@ -16,7 +16,7 @@ config_dict = {
     'backtest_inputs': {},
     'data_update_inputs': {'data_sources':['yahoo']},
     'list_of_symbols': stock_symbols[:2],
-    'sleep_time':10,
+    'sleep_time':60,
     'log_level':'DEBUG',
     'data_inputs':data_inputs,
 }
