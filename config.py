@@ -10,7 +10,8 @@ config_dict = {
     'data_update_inputs': {'data_sources':['yahoo']},
     'list_of_symbols': stock_symbols[:20],
     'sleep_time':0,
-    'log_level':'DEBUG'
+    'log_level':'DEBUG',
+    'list_of_strategies':['strategy_1', 'strategy_2']
 }
 
 
