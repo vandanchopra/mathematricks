@@ -89,7 +89,7 @@ class Yahoo():
                         self.logger.debug({'start_date to yahoo': start_date})
                         data = yf.download(batch, start=start_date, progress=True,interval=interval)
                     else:
-                        data = yf.download(batch, period="max", progress=True,interval=interval)
+                        data = yf.download(batch, progress=True,interval=interval)
                     for ticker in stock_symbols[interval]:
                         # if the ticker is not in the combined_data DataFrame, skip it
                         if ticker in data.columns.get_level_values(1):
