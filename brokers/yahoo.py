@@ -118,10 +118,14 @@ class Yahoo():
             
         # Get the data for the ones that don't have data
         asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, batch_size=75)
-        
+
         for symbol in asset_data_df_dict:
             asset_data_df = asset_data_df_dict[symbol]
             csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
+            asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
+            cols = list(asset_data_df.columns)
+            asset_data_df = asset_data_df.T.reset_index(drop=True).T
+            asset_data_df = asset_data_df.set_axis(cols,axis=1)
             asset_data_df.to_csv(csv_file_path)
             data_frames.append(asset_data_df)
             pbar.update(1)
@@ -139,6 +143,11 @@ class Yahoo():
         
         for symbol in asset_data_df_dict:
             asset_data_df = asset_data_df_dict[symbol]
+            asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
+            cols = list(asset_data_df.columns)
+            asset_data_df = asset_data_df.T.reset_index(drop=True).T
+            asset_data_df = asset_data_df.set_axis(cols,axis=1)
+
             csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
             existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
             # get the start date of asset_data_df
@@ -153,16 +162,20 @@ class Yahoo():
             self.logger.debug({'existing_data-shape': existing_data.shape})
             # concatenate the existing data and the new data
             updated_data = pd.concat([existing_data, asset_data_df])
-            # sys.exit()
+            updated_data['symbol'] = symbol
             updated_data.to_csv(csv_file_path)
             data_frames.append(updated_data)
             pbar.update(1)
         
         # Combine all DataFrames into a single DataFrame
         combined_df = pd.concat(data_frames)
-
+        combined_df.reset_index(drop=False,inplace=True)
+        
         # Set multi-index
-        combined_df.set_index(['symbol', 'date'], inplace=True)
+        combined_df.set_index(['Date','symbol'],inplace=True)
+
+        combined_df = combined_df.reset_index().pivot_table(values=cols, index=['Date'], columns=['symbol'], aggfunc='mean')
+        # combined_df = combined_df.unstack(level='symbol')
 
         # Sort the index
         combined_df.sort_index(inplace=True)       

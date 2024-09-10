@@ -1,0 +1,26 @@
+{
+    "1min": {
+        "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "SMA15",
+            "SMA30"
+        ],
+        "lookback": 100
+    },
+    "1d": {
+        "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "SMA15",
+            "SMA30"
+        ],
+        "lookback": 100
+    }
+}
