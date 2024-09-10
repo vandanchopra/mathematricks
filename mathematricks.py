@@ -25,7 +25,10 @@ class Mathematricks:
     def run_live_real_money(self):
         while True:
             try:
-                market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
+                next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)     
+                self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
+                self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
+                self.logger.debug({f'LIVE: data frame': self.market_data_df})
                 # signals = generate_signals(data)
                 # execute_signals(signals)
             except KeyboardInterrupt:
@@ -35,7 +38,10 @@ class Mathematricks:
     def run_live_paper_money(self):
         while True:
             try:
-                market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
+                next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)     
+                self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
+                self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
+                self.logger.debug({f'LIVE: data frame': self.market_data_df})
                 # signals = generate_signals(data)
                 # execute_signals(signals)
             except KeyboardInterrupt:

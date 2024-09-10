@@ -8,6 +8,7 @@ from tqdm import tqdm
 class Yahoo():
     def __init__(self):
         self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
+        self.asset_data_df_dict = {}
     
     def get_nasdaq_stock_symbols(self, nasdaq_csv_filepath, min_market_cap=10 * 1 * 1000 * 1000 * 1000):
         '''
@@ -77,41 +78,44 @@ class Yahoo():
     
     def update_price_data_batch(self, stock_symbols, start_date, batch_size=75):
         asset_data_df_dict = {}
-        for i in range(0, len(stock_symbols), batch_size):
-            batch = stock_symbols[i:i + batch_size]
-            if len(batch) > 1:
-                if start_date is not None:
-                    # convert Timestamp to _datetime
-                    start_date = start_date.to_pydatetime()
-                    self.logger.debug({'start_date to yahoo': start_date})
-                    data = yf.download(batch, start=start_date, progress=True)
+        for interval in stock_symbols:
+            asset_data_df_dict[interval] = {}
+            for i in range(0, len(stock_symbols[interval]), batch_size):
+                batch = stock_symbols[interval][i:i + batch_size]
+                if len(batch) > 0:
+                    if start_date is not None:
+                        # convert Timestamp to _datetime
+                        # start_date = start_date.to_pydatetime()
+                        self.logger.debug({'start_date to yahoo': start_date})
+                        data = yf.download(batch, start=start_date, progress=True,interval=interval)
+                    else:
+                        data = yf.download(batch, period="max", progress=True,interval=interval)
+                    for ticker in stock_symbols[interval]:
+                        # if the ticker is not in the combined_data DataFrame, skip it
+                        if ticker in data.columns.get_level_values(1):
+                            asset_data_df = data.loc[:, data.columns.get_level_values(1) == ticker]
+                            asset_data_df_dict[interval][ticker]= asset_data_df
                 else:
-                    data = yf.download(batch, period="max", progress=True)
-                for ticker in stock_symbols:
-                    # if the ticker is not in the combined_data DataFrame, skip it
-                    if ticker in data.columns.get_level_values(1):
-                        asset_data_df = data.loc[:, data.columns.get_level_values(1) == ticker]
-                        asset_data_df_dict[ticker]= asset_data_df
-            else:
-                asset_data_df = self.update_price_data_single_asset(batch[0])
-                asset_data_df_dict[batch[0]] = asset_data_df
-            time.sleep(1)  # To avoid hitting rate limits
-                    
+                    asset_data_df = self.update_price_data_single_asset(batch[0])
+                    asset_data_df_dict[interval][batch[0]] = asset_data_df
+                time.sleep(1)  # To avoid hitting rate limits
+                        
         return asset_data_df_dict
     
-    def update_price_data(self, stock_symbols, data_folder='db/data/yahoo', throttle_secs=1):
+    def update_price_data(self, stock_symbols,interval_inputs=['1d'], data_folder='db/data/yahoo', throttle_secs=1):
         data_frames = []
         pbar = tqdm(stock_symbols, desc='Updating data: ')
-        
+
         # Break the list into two lists. ones that don't have data and ones that have data
-        stock_symbols_no_data = []
-        stock_symbols_with_data = []
-        for symbol in stock_symbols:
-            csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
-            if not os.path.exists(csv_file_path):
-                stock_symbols_no_data.append(symbol)
-            else:
-                stock_symbols_with_data.append(symbol)
+        stock_symbols_no_data = { k:[] for k in interval_inputs}
+        stock_symbols_with_data = { k:[] for k in interval_inputs}
+        for interval in interval_inputs:
+            for symbol in stock_symbols:
+                csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
+                if not os.path.exists(csv_file_path):
+                    stock_symbols_no_data[interval].append(symbol)
+                else:
+                    stock_symbols_with_data[interval].append(symbol)
                 
         self.logger.debug({'stock_symbols_no_data': stock_symbols_no_data})
         self.logger.debug({'stock_symbols_with_data': stock_symbols_with_data})
@@ -119,62 +123,73 @@ class Yahoo():
         # Get the data for the ones that don't have data
         asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, batch_size=75)
 
-        for symbol in asset_data_df_dict:
-            asset_data_df = asset_data_df_dict[symbol]
-            csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
-            asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
-            cols = list(asset_data_df.columns)
-            asset_data_df = asset_data_df.T.reset_index(drop=True).T
-            asset_data_df = asset_data_df.set_axis(cols,axis=1)
-            asset_data_df.to_csv(csv_file_path)
-            data_frames.append(asset_data_df)
-            pbar.update(1)
+        for interval in asset_data_df_dict:
+            data_input_folder = os.path.join(data_folder,interval)
+            if not os.path.exists(data_input_folder):
+                os.makedirs(data_input_folder)
+            for symbol in asset_data_df_dict[interval]:
+                asset_data_df = asset_data_df_dict[interval][symbol]
+                csv_file_path = os.path.join(data_input_folder, f"{symbol}.csv")
+                asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
+                cols = list(asset_data_df.columns)
+                asset_data_df = asset_data_df.T.reset_index(drop=True).T
+                asset_data_df = asset_data_df.set_axis(cols,axis=1)
+                asset_data_df.index.names = ['Datetime']
+                asset_data_df['symbol'] = symbol
+                asset_data_df['interval'] = interval
+                asset_data_df.to_csv(csv_file_path)
+                data_frames.append(asset_data_df)
+                pbar.update(1)
         
         # Update the existing data. Get the minimum start date for the ones that have data. Then update the new downloaded data to the existing data
         start_date = None
-        for symbol in stock_symbols_with_data:
-            csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
-            existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
-            last_date = existing_data.index.max()
-            start_date = last_date if start_date is None else min(start_date, last_date)
+        for interval in stock_symbols_with_data:
+            for symbol in stock_symbols_with_data[interval]:
+                csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
+                existing_data = pd.read_csv(csv_file_path, index_col='Datetime', parse_dates=True)
+                last_date = existing_data.index.max()
+                start_date = last_date if start_date is None else min(start_date, last_date)
+                
         self.logger.debug({'start_date': start_date})
                 
         asset_data_df_dict = self.update_price_data_batch(stock_symbols_with_data, start_date=start_date, batch_size=75)
-        
-        for symbol in asset_data_df_dict:
-            asset_data_df = asset_data_df_dict[symbol]
-            asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
-            cols = list(asset_data_df.columns)
-            asset_data_df = asset_data_df.T.reset_index(drop=True).T
-            asset_data_df = asset_data_df.set_axis(cols,axis=1)
 
-            csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
-            existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
-            # get the start date of asset_data_df
-            symbol_start_date = asset_data_df.index.min()
-            self.logger.debug({'symbol_start_date': symbol_start_date})
-            # prune the existing_data to only include data before the start date
-            self.logger.debug(type(existing_data.index[0]))
-            self.logger.debug(type(symbol_start_date))
-            symbol_start_date = symbol_start_date.to_pydatetime()
-            existing_data = existing_data[existing_data.index < symbol_start_date]
-            self.logger.debug({'asset_data_df-shape': asset_data_df.shape})
-            self.logger.debug({'existing_data-shape': existing_data.shape})
-            # concatenate the existing data and the new data
-            updated_data = pd.concat([existing_data, asset_data_df])
-            updated_data['symbol'] = symbol
-            updated_data.to_csv(csv_file_path)
-            data_frames.append(updated_data)
-            pbar.update(1)
+        for interval in asset_data_df_dict:
+            for symbol in asset_data_df_dict[interval]:
+                asset_data_df = asset_data_df_dict[interval][symbol]
+                asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
+                cols = list(asset_data_df.columns)
+                asset_data_df = asset_data_df.T.reset_index(drop=True).T
+                asset_data_df = asset_data_df.set_axis(cols,axis=1)
+                asset_data_df.index.names = ['Datetime']
+                csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
+                existing_data = pd.read_csv(csv_file_path, index_col='Datetime', parse_dates=True)
+                # get the start date of asset_data_df
+                symbol_start_date = asset_data_df.index.min()
+                self.logger.debug({'symbol_start_date': symbol_start_date})
+                # prune the existing_data to only include data before the start date
+                self.logger.debug(type(existing_data.index[0]))
+                self.logger.debug(type(symbol_start_date))
+                symbol_start_date = symbol_start_date.to_pydatetime()
+                existing_data = existing_data[existing_data.index < symbol_start_date]
+                self.logger.debug({'asset_data_df-shape': asset_data_df.shape})
+                self.logger.debug({'existing_data-shape': existing_data.shape})
+                # concatenate the existing data and the new data
+                updated_data = pd.concat([existing_data, asset_data_df])
+                updated_data['symbol'] = symbol
+                updated_data['interval'] = interval
+                updated_data.to_csv(csv_file_path)
+                data_frames.append(updated_data)
+                pbar.update(1)
         
         # Combine all DataFrames into a single DataFrame
         combined_df = pd.concat(data_frames)
         combined_df.reset_index(drop=False,inplace=True)
         
         # Set multi-index
-        combined_df.set_index(['Date','symbol'],inplace=True)
+        combined_df.set_index(['Datetime','symbol'],inplace=True)
 
-        combined_df = combined_df.reset_index().pivot_table(values=cols, index=['Date'], columns=['symbol'], aggfunc='mean')
+        combined_df = combined_df.reset_index().pivot_table(values=cols, index=['interval','Datetime'], columns=['symbol'], aggfunc='mean')
         # combined_df = combined_df.unstack(level='symbol')
 
         # Sort the index

@@ -49,12 +49,12 @@ class DataFetcher:
     
     def fetch_updated_price_data(self, market_data_df):
         list_of_symbols = self.config_dict['list_of_symbols']
-        # data_inputs = self.config_dict['data_input']
+        interval_inputs = self.config_dict['data_inputs']
         self.logger.debug({'list_of_symbols': list_of_symbols})
         data_sources = self.config_dict['data_update_inputs']['data_sources']
         for data_source in data_sources:
             if data_source == 'yahoo':
-                market_data_df = self.broker.yahoo.update_price_data(list_of_symbols)
+                market_data_df = self.broker.yahoo.update_price_data(list_of_symbols,interval_inputs=interval_inputs)
                 
             elif data_source == 'ibkr':
                 raise NotImplementedError('IBKR data source is not implemented yet.')
