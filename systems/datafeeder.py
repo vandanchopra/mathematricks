@@ -6,7 +6,7 @@ Backtest: return historical data until the current test system date
 '''
 from systems.datafetcher import DataFetcher
 import time
-from utils import create_logger
+from systems.utils import create_logger
 import logging
 
 class DataFeeder:
