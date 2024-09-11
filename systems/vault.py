@@ -13,7 +13,8 @@ class Vault:
     def create_datafeeder_config(self):
         '''
         # Datafeeder starting parameters (right now it'll be hardcoded, and later, it will be fetched from a datafeeder_config variable)
-        data_inputs = {'1min':{'columns':['open', 'high', 'low', 'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}, '1d':{'columns':['open', 'high', 'low', 'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}}
+        data_inputs = {'1min':{'columns':['open', 'high', 'low', 'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}, '1d':{'columns':['open', 'high', 'low', 
+        'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}}
         tickers = ['AAPL', 'MSFT', 'NVDA']
 
         datafeeder_config = {'data_inputs':data_inputs, 'tickers':tickers}
@@ -21,14 +22,30 @@ class Vault:
         # for each strategy in self.strategies, get the granularity, lookback period, raw data columns and indicators needed and create a dict like above.
         # we also need to get the tickers from each strategy and create a unified list of tickers.
         # This information should get added to the config_dict file, which can then be passed to the DataFeeder class.
-        pass
-    
+        data_inputs = {}
+        tickers = []
+        for strategy in self.strategies:
+            data_input_temp , ticker_temp = strategy.datafeeder_inputs()
+            data_inputs[strategy.get_name()] = data_input_temp
+            tickers += ticker_temp
+        tickers = list(set(tickers))
+        
+        datafeeder_config = {'data_inputs':data_inputs, 'tickers':tickers}
+        return datafeeder_config
+        
     def generate_signals(self, market_data_df):
         signals_output = {'signals':[], 'ideal_portfolios':[]}
         ''' 
         for each strategy in self.strategies, get the signals and ideal portfolio.
         combine the signals and ideal portfolio from all strategies and return the combined signals.
         '''
+        for strategy in self.strategies:
+            signal , ideal_portfolio = strategy.generate_signals()
+            if(signal):
+                signals_output["signals"].append(signal)
+            if(ideal_portfolio):
+                signals_output["ideal_portfolios"].append(ideal_portfolio)
+                
         
         # run reach strategy and get either the signals or ideal portforlio from each strategy, based on current data.
         # combine the signals from all strategies and return the combined signals.
