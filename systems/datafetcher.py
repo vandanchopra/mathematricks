@@ -57,7 +57,8 @@ class DataFetcher:
                 market_data_df = self.broker.yahoo.update_price_data(list_of_symbols,interval_inputs=interval_inputs)
                 
             elif data_source == 'ibkr':
-                raise NotImplementedError('IBKR data source is not implemented yet.')
+                market_data_df = self.broker.ib.update_price_data(list_of_symbols,interval_inputs=interval_inputs)
+                
         return market_data_df
         
     '''

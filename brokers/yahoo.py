@@ -87,9 +87,9 @@ class Yahoo():
                         # convert Timestamp to _datetime
                         # start_date = start_date.to_pydatetime()
                         self.logger.debug({'start_date to yahoo': start_date})
-                        data = yf.download(batch, start=start_date, progress=True,interval=interval)
+                        data = yf.download(batch, start=start_date, progress=False,interval=interval)
                     else:
-                        data = yf.download(batch, progress=True,interval=interval)
+                        data = yf.download(batch, period="max", progress=False,interval=interval)
                     for ticker in stock_symbols[interval]:
                         # if the ticker is not in the combined_data DataFrame, skip it
                         if ticker in data.columns.get_level_values(1):
@@ -137,6 +137,7 @@ class Yahoo():
                 asset_data_df.index.names = ['Datetime']
                 asset_data_df['symbol'] = symbol
                 asset_data_df['interval'] = interval
+                asset_data_df = asset_data_df.dropna()
                 asset_data_df.to_csv(csv_file_path)
                 data_frames.append(asset_data_df)
                 pbar.update(1)
@@ -178,6 +179,7 @@ class Yahoo():
                 updated_data = pd.concat([existing_data, asset_data_df])
                 updated_data['symbol'] = symbol
                 updated_data['interval'] = interval
+                updated_data = updated_data.dropna()
                 updated_data.to_csv(csv_file_path)
                 data_frames.append(updated_data)
                 pbar.update(1)

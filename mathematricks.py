@@ -29,8 +29,7 @@ class Mathematricks:
                 next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)     
                 self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
                 self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
-                self.logger.debug({f'LIVE: data frame': self.market_data_df})
-                time.sleep(self.sleep_time)
+                self.logger.debug({f'LIVE: next rows': next_rows})
                 # signals = generate_signals(data)
                 # execute_signals(signals)
             except KeyboardInterrupt:
