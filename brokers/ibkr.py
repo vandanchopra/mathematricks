@@ -165,6 +165,7 @@ class IBKR():
                 cols = list(asset_data_df.columns)
                 asset_data_df['symbol'] = symbol
                 asset_data_df['interval'] = interval
+                asset_data_df = asset_data_df.dropna(how='all')
                 asset_data_df.to_csv(csv_file_path)
                 data_frames.append(asset_data_df)
                 pbar.update(1)
@@ -206,6 +207,7 @@ class IBKR():
                 updated_data = pd.concat([existing_data, asset_data_df])
                 updated_data['symbol'] = symbol
                 updated_data['interval'] = interval
+                updated_data = updated_data.dropna(how='all')
                 updated_data.to_csv(csv_file_path)
                 data_frames.append(updated_data)
                 pbar.update(1)

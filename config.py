@@ -8,15 +8,14 @@ with open(stock_symbols_path) as file:
     stock_symbols = json.load(file)
     
 config_dict = {
-    'run_mode': 1, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
+    'run_mode': 4, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
     'backtest_inputs': {},
     'data_update_inputs': {'data_sources':['yahoo']},
     'list_of_symbols': stock_symbols[:2],
     'sleep_time':60,
     'log_level':'DEBUG',
-    'data_inputs':{"1m": {"columns": ["open","high","low","close","volume","SMA15","SMA30" ],"lookback": 100},
-                   "1d": {"columns": ["open","high","low","close","volume","SMA15","SMA30"],"lookback": 100},
-                   "5m": {"columns": ["open","high","low","close","volume","SMA15","SMA30"],"lookback": 100}},
+    'data_inputs':{"1m": {"columns": ["open","high","SMA15","SMA30" ],"lookback": 100},
+                   "1d": {"columns": ["open","high","SMA15","SMA30"],"lookback": 100}}
 }
 
 

@@ -40,12 +40,12 @@ class DataFeeder:
         for interval in self.market_data_df.index.get_level_values(0).unique():
             first_row = self.market_data_df.loc[interval,:].iloc[0]
             first_df = pd.DataFrame(first_row).T
-            first_df.index.names = ['Datetime']
+            first_df.index.names = ['datetime']
             if first_df.index[0] == self.system_timestamp:
                 self.system_timestamp = first_df.index[0]
                 first_df.reset_index(drop=False,inplace=True)
                 first_df['interval'] = interval
-                first_df.set_index(['interval','Datetime'],inplace=True)
+                first_df.set_index(['interval','datetime'],inplace=True)
                 first_rows.append(first_df)
 
                 # remove the first row from the DataFrame
