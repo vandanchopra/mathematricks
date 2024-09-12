@@ -8,8 +8,9 @@ class OMS:
         for order in orders:
             if order['broker'] == 'IBKR':
                 self.brokers.ib.execute_order(order)
-            elif order['broker'] == 'YAHOO':
-                raise Exception('YAHOO does not support live trading')
+            elif order['broker'] == 'SIM':
+                self.brokers.sim.execute_order(order)
+
             else:
                 raise Exception("Broker not supported. Please check broker is 'IBKR'.")
             
