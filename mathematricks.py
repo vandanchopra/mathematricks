@@ -11,6 +11,7 @@ import pandas as pd
 from systems.utils import create_logger
 import logging
 import sys
+import time
 
 '''
 write the software for AAPL, MSFT only.
@@ -30,7 +31,11 @@ class Mathematricks:
     def run_live_real_money(self):
         while True:
             try:
-                market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
+                next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)     
+                self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
+                self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
+                self.logger.debug({f'LIVE: next rows': next_rows})
+                # signals = generate_signals(data)
                 # execute_signals(signals)
                 signals_output = self.vault.generate_signals(market_data_df)
                 # Convert signals to orders
@@ -45,7 +50,11 @@ class Mathematricks:
     def run_live_paper_money(self):
         while True:
             try:
-                market_data_df = self.datafeeder.next(market_data_df=market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)
+                next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)     
+                self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
+                self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
+                self.logger.debug({f'LIVE: data frame': self.market_data_df})
+                # signals = generate_signals(data)
                 # execute_signals(signals)
                 signals_output = self.vault.generate_signals(market_data_df)
                 # Convert signals to orders
