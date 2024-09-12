@@ -24,7 +24,7 @@ class Vault:
         # This information should get added to the config_dict file, which can then be passed to the DataFeeder class.
         data_inputs = {}
         tickers = []
-        for strategy in self.strategies:
+        for strategy in self.strategies.values():
             data_input_temp , ticker_temp = strategy.datafeeder_inputs()
             data_inputs[strategy.get_name()] = data_input_temp
             tickers += ticker_temp
@@ -39,10 +39,10 @@ class Vault:
         for each strategy in self.strategies, get the signals and ideal portfolio.
         combine the signals and ideal portfolio from all strategies and return the combined signals.
         '''
-        for strategy in self.strategies:
-            signal , ideal_portfolio = strategy.generate_signals()
+        for strategy in self.strategies.values():
+            signal , ideal_portfolio = strategy.generate_signals(market_data_df)
             if(signal):
-                signals_output["signals"].append(signal)
+                signals_output["signals"] += signal
             if(ideal_portfolio):
                 signals_output["ideal_portfolios"].append(ideal_portfolio)
                 
