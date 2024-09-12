@@ -37,7 +37,7 @@ class Mathematricks:
                 self.logger.debug({f'LIVE: next rows': next_rows})
                 # signals = generate_signals(data)
                 # execute_signals(signals)
-                signals_output = self.vault.generate_signals(market_data_df)
+                signals_output = self.vault.generate_signals(self.market_data_df)
                 # Convert signals to orders
                 orders = self.rms.convert_signals_to_orders(signals_output)
                 # Place orders to broker
@@ -56,7 +56,7 @@ class Mathematricks:
                 self.logger.debug({f'LIVE: data frame': self.market_data_df})
                 # signals = generate_signals(data)
                 # execute_signals(signals)
-                signals_output = self.vault.generate_signals(market_data_df)
+                signals_output = self.vault.generate_signals(self.market_data_df)
                 # Convert signals to orders
                 orders = self.rms.convert_signals_to_orders(signals_output)
                 

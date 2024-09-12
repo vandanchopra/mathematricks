@@ -25,3 +25,8 @@ class OMS:
     # check if any order or position needs to be updated (eg. stoploss on any order needs to be updated.)
     # if there has been an update, update the trasaction to the CSV file.
     '''
+    
+if __name__ == '__main__':
+    oms = OMS()
+    orders = []
+    oms.execute_orders(orders)
