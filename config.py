@@ -13,7 +13,7 @@ config_dict = {
     'data_update_inputs': {'data_sources':['yahoo']},
     'list_of_symbols': stock_symbols[:2],
     'sleep_time':60,
-    'log_level':'DEBUG',
+    'log_level':'INFO',
     'data_inputs':{"1m": {"columns": ["open","high","SMA15","SMA30" ],"lookback": 100},
                    "1d": {"columns": ["open","high","SMA15","SMA30"],"lookback": 100}}
 }
