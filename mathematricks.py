@@ -27,16 +27,21 @@ class Mathematricks:
         self.logger = create_logger(log_level=logging.INFO, logger_name='datafetcher', print_to_console=False)
     
     def run_live_real_money(self):
+        x = 0
         while True:
             try:
                 next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='LIVE', sleep_time=self.sleep_time)     
                 self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
                 self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
-                self.logger.debug({f'LIVE: next rows': next_rows})
+                # self.logger.debug({'x':x, 'LIVE: next rows': next_rows})
                 # signals = generate_signals(data)
                 # execute_signals(signals)
+                for interval, datetime in next_rows.index:
+                    self.logger.debug(f"Interval: {interval}, Datetime: {datetime}")
+                    
             except KeyboardInterrupt:
-                print ('Exiting...')
+                self.logger.debug({'self.market_data_df':self.market_data_df})
+                self.logger.debug('Exiting...')
                 break
     
     def run_live_paper_money(self):
@@ -74,7 +79,7 @@ class Mathematricks:
             self.run_live_paper_money()
         elif run_mode == 3: # backtesting
             start_time = pd.Timestamp(datetime(2020,1,1)).tz_localize('UTC').tz_convert('EST')
-            end_time = pd.Timestamp(datetime(2024,9,9)).tz_localize('UTC').tz_convert('EST')
+            end_time = pd.Timestamp(datetime(2024,9,10)).tz_localize('UTC').tz_convert('EST')
             self.run_backtest(start_time,end_time)
 
         elif run_mode == 4: # data update only

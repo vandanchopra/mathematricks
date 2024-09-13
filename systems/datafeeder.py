@@ -4,6 +4,8 @@ Live: Update data, and return updated data
 Backtest: return historical data until the current test system date
 
 '''
+import datetime
+import pytz
 from systems.datafetcher import DataFetcher
 import time
 from utils import create_logger
@@ -54,9 +56,15 @@ class DataFeeder:
         first_rows = pd.concat(first_rows)
 
         if len(self.market_data_df) < 1:
-            sleep_time = min([self.sleep_lookup[interval] for interval in interval_inputs])
+            sleep_time_old = min([self.sleep_lookup[interval] for interval in interval_inputs])
+            now = datetime.datetime.now()
+            passed_time = now.astimezone(pytz.utc) - self.system_timestamp
+            sleep_time = sleep_time_old- passed_time.seconds
             self.market_data_df = None
-            time.sleep(sleep_time-10)
+            if sleep_time < 0:
+                sleep_time = sleep_time_old
+                
+            time.sleep(sleep_time)
         else:
             self.system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
 

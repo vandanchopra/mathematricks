@@ -3,5 +3,6 @@ from brokers.sim import Sim
 
 class Brokers():
     def __init__(self):
-        self.ib = IBKR(None)
+        ib = None
+        self.ib = IBKR(ib)
         self.sim = Sim()

@@ -143,7 +143,7 @@ class Yahoo():
                 asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
                 asset_data_df.columns = asset_data_df.columns.str.lower()
                 asset_data_df.index.names = ['datetime']
-                asset_data_df.index = asset_data_df.index.tz_convert('EST')
+                asset_data_df.index = asset_data_df.index.tz_convert('UTC')
                 cols = list(asset_data_df.columns)
                 pass_cols = []
                 for col in useful_columns:
@@ -178,7 +178,7 @@ class Yahoo():
                 asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
                 asset_data_df.columns = asset_data_df.columns.str.lower()
                 asset_data_df.index.names = ['datetime']
-                asset_data_df.index = asset_data_df.index.tz_convert('EST')
+                asset_data_df.index = asset_data_df.index.tz_convert('UTC')
                 cols = list(asset_data_df.columns)
                 pass_cols = []
                 for col in useful_columns:
