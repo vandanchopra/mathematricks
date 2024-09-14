@@ -9,13 +9,22 @@ class Strategy (BaseStrategy):
     def __init__(self):
         self.strategy_name = 'strategy_1'
         self.granularity = "1min"
+        self.stop_loss_abs = 0.3
+        self.stop_loss_pct = 0.2    #percentage
+        self.target_abs = 0.3
+        self.target_pct = 0.2       #percentage
+        
+        self.orderType = "MARKET" #MARKET, LIMIT, STOPLOSS  
+        self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
+        self.timeInForce = "DAY"    #DAY, Expiry, IoC (immediate or cancel) , TTL (Order validity in minutes) 
+        self.orderQuantity = 10
         
     def get_name(self):
         return self.strategy_name
         
     def datafeeder_inputs(self):
-        tickers = ['AAPL', 'MSFT', 'NVDA']
-        return {'granularity': self.granularity, 'lookback':100, 'columns': ['Open', 'High', 'Low', 'Close', 'Volume']}, tickers
+        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        return { self.granularity : {'columns': ['Open', 'High', 'Low', 'Close', 'Volume'] , 'lookback':100}}, tickers
         
     def generate_signals (self, market_data_df):
         """
@@ -31,7 +40,13 @@ class Strategy (BaseStrategy):
             asset_data_df['signal_strength'][30:] = np.where(asset_data_df['SMA15'][30:] > asset_data_df['SMA30'][30:], 1, 0) 
             asset_data_df['position'] = asset_data_df['signal_strength'].diff() 
 
-            signal = {'symbol': symbol, 'signal_strength':0.8, "strategy_name": self.strategy_name, 'timestamp': asset_data_df.iloc[-1]['Datetime'], 'entry_order_type': 'market','exit_order_type':'stoploss_pct'}
+            #long if above sma15 else short
+            if(asset_data_df.iloc[-1]['SMA15'] < asset_data_df.iloc[-1]['Close']):
+                signal_strength = 1
+            else:
+                signal_strength = -1
+                
+            signal = {'symbol': symbol, 'signal_strength':signal_strength, "strategy_name": self.strategy_name, 'timestamp': asset_data_df.iloc[-1]['Datetime'], 'entry_order_type': self.orderType, 'exit_order_type':self.exit_order_type, "sl_pct": self.stop_loss_pct, "sl_abs": self.stop_loss_abs, "symbol_ltp" : asset_data_df.iloc[-1]['Close'], "timeInForce" : self.timeInForce , "orderQuantity" : self.orderQuantity}
             
             signals.append(signal)
             
