@@ -1,4 +1,5 @@
 from brokers.brokers import Brokers
+import pandas as pd
 
 class OMS:
     def __init__(self):
@@ -29,5 +30,21 @@ class OMS:
     
 if __name__ == '__main__':
     oms = OMS()
-    orders = []
+    # load the orders from the json file
+    orders = orders = [[
+        {'symbol': 'INTC',
+        'timestamp': pd.Timestamp('2023-01-01 01:39:00'),
+        'orderSide': 'BUY',
+        'entryPrice': 151.4395341959,
+        'orderType': 'MARKET',
+        'timeInForce': 'DAY',
+        'orderQuantity': 10}, 
+
+        {'symbol': 'INTC',
+        'timestamp': pd.Timestamp('2023-01-01 01:39:00'),
+        'orderSide': 'SELL',
+        'exitPrice': 149.4395341959,
+        'orderType': 'STOPLOSS-MARKET',
+        'timeInForce': 'DAY',
+        'orderQuantity': 10}]] # Orders might have 1 leg or multiple legs. Each leg is a dictionary. and the OMS needs to implement the logic to handle multiple legs.
     oms.execute_orders(orders)
