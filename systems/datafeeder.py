@@ -8,7 +8,7 @@ import datetime
 import pytz
 from systems.datafetcher import DataFetcher
 import time
-from systems.utils import create_logger
+from systems.utils import create_logger, sleeper
 import logging
 import pandas as pd
 
@@ -69,8 +69,10 @@ class DataFeeder:
             self.market_data_df = None
             if sleep_time < 0:
                 sleep_time = sleep_time_old
-            self.logger.debug({f'Waiting time for min interval ': sleep_time})
-            time.sleep(sleep_time)
+            # self.logger.debug({f'Waiting time for min interval ': sleep_time})
+            # time.sleep(sleep_time)
+            sleeper(sleep_time)
+            
         else:
             self.system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
 
