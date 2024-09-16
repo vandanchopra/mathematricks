@@ -58,13 +58,21 @@ class Mathematricks:
                 break
     
     def run_backtest(self,start_date,end_date):
-        try:
-            market_data_df = self.datafetcher.fetch_updated_price_data(self.market_data_df,start_date,end_date)
-            self.logger.debug({f'Backtesting Data': market_data_df})
-            # signals = generate_signals(data)
-            # execute_signals(signals)
-        except KeyboardInterrupt:
-            print ('Exiting...')
+        while True:
+            try:
+                next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode='LIVE', sleep_time=self.sleep_time,start_date=start_date,end_date=end_date)     
+                self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
+                self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
+                self.logger.debug({f'Back Test: next rows': next_rows})
+
+                # signals = generate_signals(data)
+                # execute_signals(signals)
+
+                if self.datafeeder.market_data_df is None:
+                    break
+                
+            except KeyboardInterrupt:
+                print ('Exiting...')
     
     def run_data_update(self):
         self.market_data_df = self.datafetcher.fetch_updated_price_data(self.market_data_df)
@@ -78,8 +86,8 @@ class Mathematricks:
             print ('live trading - paper money')
             self.run_live_paper_money()
         elif run_mode == 3: # backtesting
-            start_time = pd.Timestamp(datetime(2020,1,1)).tz_localize('UTC').tz_convert('EST')
-            end_time = pd.Timestamp(datetime(2024,9,10)).tz_localize('UTC').tz_convert('EST')
+            start_time = pd.Timestamp(datetime(2024,9,12)).tz_localize('UTC').tz_convert('EST')
+            end_time = pd.Timestamp(datetime(2024,9,15)).tz_localize('UTC').tz_convert('EST')
             self.run_backtest(start_time,end_time)
 
         elif run_mode == 4: # data update only
