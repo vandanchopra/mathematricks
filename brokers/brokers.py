@@ -1,7 +1,8 @@
 from brokers.ibkr import IBKR
-from brokers.yahoo import Yahoo
+from brokers.sim import Sim
 
 class Brokers():
     def __init__(self):
-        # self.ib = IBKR()
-        self.yahoo = Yahoo()
+        ib = None
+        self.ib = IBKR(ib)
+        self.sim = Sim()
