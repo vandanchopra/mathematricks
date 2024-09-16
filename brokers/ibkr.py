@@ -75,6 +75,7 @@ class IBKR():
         # Place the order
         trade = ib.placeOrder(contract, order)
 
+        
         # Return the trade
         return trade
 
