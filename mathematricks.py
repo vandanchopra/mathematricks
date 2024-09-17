@@ -41,7 +41,7 @@ class Mathematricks:
                 # Convert signals to orders
                 orders = self.rms.convert_signals_to_orders(signals_output)
                 # Place orders to broker
-                self.oms.execute_orders(orders)
+                self.oms.run_oms(orders)
                 
             except KeyboardInterrupt:
                 print ('Exiting...')

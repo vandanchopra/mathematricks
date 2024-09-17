@@ -39,7 +39,7 @@ class OMS:
         # Now that the orders have been synced, update the open orders in the json file.
         self.save_open_orders()
         
-    def execute_orders(self, new_orders):
+    def run_oms(self, new_orders):
         for multi_leg_order in new_orders:
             for order in multi_leg_order:
                 run_mode = self.config_dict['run_mode']
@@ -77,7 +77,7 @@ if __name__ == '__main__':
     from config import config_dict
     oms = OMS(config_dict)
     # load the orders from the json file
-    orders = orders = [[
+    orders = [[
         # Entry order
         {'symbol': 'INTC',
         'timestamp': pd.Timestamp('2023-01-01 01:39:00'),
@@ -97,5 +97,16 @@ if __name__ == '__main__':
         'timeInForce': 'DAY',
         'orderQuantity': 10,
         'strategy_name': 'SMA15-SMA30', 
-        'broker': 'IBKR'}]] # Orders might have 1 leg or multiple legs. Each leg is a dictionary. and the OMS needs to implement the logic to handle multiple legs.
+        'broker': 'IBKR'}, 
+        # Exit Order / Trail Stop Order
+        {'symbol': 'INTC',
+        'timestamp': pd.Timestamp('2023-01-01 01:39:00'),
+        'orderSide': 'SELL',
+        'exitPrice': 151.43,
+        'orderType': 'STOPLOSS-TRAILING-MARKET',
+        'timeInForce': 'DAY',
+        'orderQuantity': 10,
+        'strategy_name': 'SMA15-SMA30', 
+        'broker': 'IBKR'}
+        ]] # Orders might have 1 leg or multiple legs. Each leg is a dictionary. and the OMS needs to implement the logic to handle multiple legs.
     oms.execute_orders(orders)
