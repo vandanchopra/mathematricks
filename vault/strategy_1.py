@@ -4,11 +4,12 @@ Create a simple Single Moving Crossover Strategy as a demo
 
 from vault.base_strategy import BaseStrategy
 import numpy as np
+import sys
 
 class Strategy (BaseStrategy):
     def __init__(self):
         self.strategy_name = 'strategy_1'
-        self.granularity = "1min"
+        self.granularity = "1m"
         self.stop_loss_abs = 0.3    #absolute value
         self.stop_loss_pct = 0.2    #percentage
         self.target_abs = 0.3       #absolute value
@@ -24,9 +25,11 @@ class Strategy (BaseStrategy):
         
     def datafeeder_inputs(self):
         tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
-        return { self.granularity : {'columns': ['Open', 'High', 'Low', 'Close', 'Volume'] , 'lookback':100}}, tickers
+        tickers = ['NVDA', 'NFLX']
+        data_inputs = {'1m': {'columns': ['Open', 'High', 'Close', 'Volume'] , 'lookback':100}, '1d': {'columns': ['Open', 'High', 'Close', 'Volume'] , 'lookback':100}}
+        return data_inputs, tickers
         
-    def generate_signals (self, market_data_df):
+    def generate_signals(self, market_data_df):
         """
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING SIGNALS.
         """
@@ -46,24 +49,27 @@ class Strategy (BaseStrategy):
             #but for testing purposes I want to generate signals for each instruments 
             
             #long if above sma15 else short
-            if(asset_data_df.iloc[-1]['SMA15'] < asset_data_df.iloc[-1]['Close']):
+            if (asset_data_df.iloc[-1]['SMA15'] > asset_data_df.iloc[-1]['SMA30']) and (asset_data_df.iloc[-2]['SMA15'] <= asset_data_df.iloc[-2]['SMA30']):
                 signal_strength = 1
-            else:
+            elif (asset_data_df.iloc[-1]['SMA15'] < asset_data_df.iloc[-1]['SMA30']) and (asset_data_df.iloc[-2]['SMA15'] >= asset_data_df.iloc[-2]['SMA30']):
                 signal_strength = -1
-                
-            signal = {"symbol": symbol, 
-                      "signal_strength":signal_strength, 
-                      "strategy_name": self.strategy_name, 
-                      "timestamp": asset_data_df.iloc[-1]['Datetime'], 
-                      "entry_order_type": self.orderType, 
-                      "exit_order_type":self.exit_order_type, 
-                      "sl_pct": self.stop_loss_pct, 
-                      "sl_abs": self.stop_loss_abs, 
-                      "symbol_ltp" : asset_data_df.iloc[-1]['Close'], 
-                      "timeInForce" : self.timeInForce , 
-                      "orderQuantity" : self.orderQuantity
-                     }
-            signal["timestamp"] = signal["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
-            signals.append(signal)
+            else:
+                signal_strength = 0
             
-        return signals , False
+            if signal_strength != 0:
+                signal = {"symbol": symbol, 
+                        "signal_strength":signal_strength, 
+                        "strategy_name": self.strategy_name, 
+                        "timestamp": asset_data_df.iloc[-1]['Datetime'], 
+                        "entry_order_type": self.orderType, 
+                        "exit_order_type":self.exit_order_type, 
+                        "sl_pct": self.stop_loss_pct, 
+                        "sl_abs": self.stop_loss_abs, 
+                        "symbol_ltp" : asset_data_df.iloc[-1]['Close'], 
+                        "timeInForce" : self.timeInForce , 
+                        "orderQuantity" : self.orderQuantity
+                        }
+                signal["timestamp"] = signal["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
+                signals.append(signal)
+            
+        return signals, False

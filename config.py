@@ -1,22 +1,25 @@
 import json
 import os
+import pandas as pd
+from datetime import datetime
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
 
-cwd = os.getcwd()
-stock_symbols_path = os.path.join(cwd,'db/stock_symbols.json')
-with open(stock_symbols_path) as file:
-    stock_symbols = json.load(file)
+
     
 config_dict = {
-    'run_mode': 2, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
-    'backtest_inputs': {},
+    'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
+    'backtest_inputs': {
+        'start_time': pd.Timestamp(datetime(2024,9,16)).tz_localize('UTC').tz_convert('EST'), 
+        'end_time': pd.Timestamp(datetime(2024,9,18)).tz_localize('UTC').tz_convert('EST')
+        },
     'data_update_inputs': {'data_sources':['yahoo']},
-    'list_of_symbols': stock_symbols[:2],
     'sleep_time':60,
-    'log_level':'INFO',
-    'data_inputs':{"1m": {"columns": ["open","high","SMA15","SMA30" ],"lookback": 100},
-                   "1d": {"columns": ["open","high","SMA15","SMA30"],"lookback": 100}},
-    'strategies':['strategy_1', 'strategy_2'],
+    'log_level':'DEBUG',
+    'strategies':['strategy_1'],
+    'account_info':[{'account_id': '1234567890', 'account_type': 'client', 'broker':'ibkr', 'account_name':'paper_money_1', 'account_currency':'CAD', 
+                     'funding_transactions':[{'transaction_type':'deposit', 'timestamp':pd.Timestamp(datetime(2024,9,12)).tz_localize('UTC').tz_convert('EST'), 'amount':200000, 'currency':'CAD'}], 
+                     'current_account_balance':200000}],
+    'risk_management':{'max_risk_per_trade':0.02},
     "total_portfolio" : 200000,
     "total_funds_s_1" : 100000,
     "avail_funds_s_1" : 100000,
@@ -25,7 +28,3 @@ config_dict = {
     "max_signal_fund" : 25000,
     "max_risk_per" : 5
 }
-
-'''
-once a week, update stock symbols by 
-'''

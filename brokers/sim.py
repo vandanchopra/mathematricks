@@ -1,3 +1,4 @@
+from datetime import tzinfo
 import os, sys, time, json
 import pandas as pd
 import yfinance as yf
@@ -85,33 +86,34 @@ class Yahoo():
         
         return asset_data_df
     
-    def update_price_data_batch(self, stock_symbols, start_date, batch_size=75):
+    def update_price_data_batch(self, stock_symbols, start_date, pbar, batch_size=75):
         asset_data_df_dict = {}
         for interval in stock_symbols:
             asset_data_df_dict[interval] = {}
             for i in range(0, len(stock_symbols[interval]), batch_size):
                 batch = stock_symbols[interval][i:i + batch_size]
-                if len(batch) > 0:
+                if len(batch) == 1:
+                    batch.append('AAPL')
+                    dummy_addition = True
+                if len(batch) > 1:
                     if start_date is not None:
                         # convert Timestamp to _datetime
                         # start_date = start_date.to_pydatetime()
-                        self.logger.debug({'start_date to yahoo': start_date})
                         data = yf.download(batch, start=start_date, progress=False,interval=interval)
                     else:
                         data = yf.download(batch, period="max", progress=False,interval=interval)
+                    
                     for ticker in stock_symbols[interval]:
-                        # if the ticker is not in the combined_data DataFrame, skip it
                         if ticker in data.columns.get_level_values(1):
                             asset_data_df = data.loc[:, data.columns.get_level_values(1) == ticker]
                             asset_data_df_dict[interval][ticker]= asset_data_df
-                else:
-                    asset_data_df = self.update_price_data_single_asset(batch[0])
-                    asset_data_df_dict[interval][batch[0]] = asset_data_df
-                time.sleep(1)  # To avoid hitting rate limits
+                            pbar.update(1)
+                            
+                time.sleep(0.25)  # To avoid hitting rate limits
                         
         return asset_data_df_dict
     
-    def update_price_data(self, stock_symbols,interval_inputs=['1d'], data_folder='db/data/yahoo', throttle_secs=1,back_test_start_date=None,back_test_end_date=None):
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder='db/data/yahoo', throttle_secs=1, back_test_start_date=None, back_test_end_date=None):
         data_frames = []
         pbar = tqdm(stock_symbols, desc='Updating data: ')
 
@@ -125,13 +127,11 @@ class Yahoo():
                     stock_symbols_no_data[interval].append(symbol)
                 else:
                     stock_symbols_with_data[interval].append(symbol)
-                
-        self.logger.debug({'stock_symbols_no_data': stock_symbols_no_data})
-        self.logger.debug({'stock_symbols_with_data': stock_symbols_with_data})
-            
+        
         # Get the data for the ones that don't have data
-        asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, batch_size=75)
+        asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, pbar=pbar, batch_size=75)
 
+        # Extract the data from yahoo batch response and save it to csv
         for interval in asset_data_df_dict:
             useful_columns = interval_inputs[interval]['columns']
             data_input_folder = os.path.join(data_folder,interval)
@@ -157,7 +157,6 @@ class Yahoo():
                 to_use_cols = pass_cols+['symbol','interval']
                 asset_data_df.to_csv(csv_file_path)
                 data_frames.append(asset_data_df[to_use_cols])
-                pbar.update(1)
         
         # Update the existing data. Get the minimum start date for the ones that have data. Then update the new downloaded data to the existing data
         start_date = None
@@ -165,12 +164,13 @@ class Yahoo():
             for symbol in stock_symbols_with_data[interval]:
                 csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
                 existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
-                last_date = existing_data.index.max()
-                start_date = last_date if start_date is None else min(start_date, last_date)
+                # last_date = existing_data.index.max().tz_localize('UTC') if not existing_data.empty else None
+                last_date = existing_data.index.max().tz_convert('UTC') if not existing_data.empty else None
+                start_date = last_date if start_date is None and last_date is not None else None if last_date is None else min(start_date, last_date)
+                # self.logger.debug({'interval':interval, 'symbol': symbol, 'last_date': last_date, 'start_date': start_date})
+        # self.logger.debug({'start_date': start_date})
                 
-        self.logger.debug({'start_date': start_date})
-                
-        asset_data_df_dict = self.update_price_data_batch(stock_symbols_with_data, start_date=start_date, batch_size=75)
+        asset_data_df_dict = self.update_price_data_batch(stock_symbols_with_data, start_date=start_date,  pbar=pbar, batch_size=75)
 
         for interval in asset_data_df_dict:
             for symbol in asset_data_df_dict[interval]:
@@ -190,14 +190,14 @@ class Yahoo():
                 existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
                 # get the start date of asset_data_df
                 symbol_start_date = asset_data_df.index.min()
-                self.logger.debug({'symbol_start_date': symbol_start_date})
+                # self.logger.debug({'symbol_start_date': symbol_start_date})
                 # prune the existing_data to only include data before the start date
-                self.logger.debug(type(existing_data.index[0]))
-                self.logger.debug(type(symbol_start_date))
+                # self.logger.debug(type(existing_data.index[0]))
+                # self.logger.debug(type(symbol_start_date))
                 symbol_start_date = symbol_start_date.to_pydatetime()
                 existing_data = existing_data[existing_data.index < symbol_start_date]
-                self.logger.debug({'asset_data_df-shape': asset_data_df.shape})
-                self.logger.debug({'existing_data-shape': existing_data.shape})
+                # self.logger.debug({'asset_data_df-shape': asset_data_df.shape})
+                # self.logger.debug({'existing_data-shape': existing_data.shape})
                 # concatenate the existing data and the new data
                 updated_data = pd.concat([existing_data, asset_data_df])
                 updated_data = updated_data.dropna(how='all')
@@ -206,7 +206,6 @@ class Yahoo():
                 to_use_cols = pass_cols+['symbol','interval']
                 updated_data.to_csv(csv_file_path)
                 data_frames.append(updated_data[to_use_cols])
-                pbar.update(1)
         
         # Combine all DataFrames into a single DataFrame
         combined_df = pd.concat(data_frames)
@@ -234,67 +233,3 @@ class Yahoo():
 
         return combined_df
     
-    def update_price_data_old(self, stock_symbols, data_folder='data/yahoo', throttle_secs=1):
-        # Create the data directory if it doesn't exist
-        os.makedirs(data_folder, exist_ok=True)
-        
-        # Initialize an empty list to store DataFrames
-        data_frames = []
-        
-        for symbol in stock_symbols:
-            time.sleep(throttle_secs)
-            csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
-
-            # If CSV file does not exist, download all available data
-            if not os.path.exists(csv_file_path):
-                data = yf.download(symbol, period="max", progress=False)
-                if not data.empty:
-                    data.to_csv(csv_file_path)
-                    # add the data to the dataframe
-                    df = pd.read_csv(csv_file_path)
-                    df['symbol'] = symbol
-                    df['date'] = pd.to_datetime(df['Date'])
-                    data_frames.append(df)
-
-            # If CSV file exists, update the data
-            else:
-                # print(f"Updating data for {symbol}...")
-                existing_data = pd.read_csv(csv_file_path, index_col='Date', parse_dates=True)
-                last_date = existing_data.index.max()
-                # self.logger.debug(f"Data for {symbol} was only available till {last_date}. Updating till today now...")
-
-                # Download data from the day after the last date in the CSV until today
-                if last_date + pd.Timedelta(days=1) < pd.Timestamp.today():
-                    # self.logger.debug({'last_date': last_date, 'today': pd.Timestamp.today()})
-                    new_data = yf.download(symbol, start=last_date + pd.Timedelta(days=1), progress=False)
-                    if not new_data.empty:
-                        updated_data = pd.concat([existing_data, new_data])
-                        updated_data.to_csv(csv_file_path)
-                        # add the data to the dataframe
-                        df = pd.read_csv(csv_file_path)
-                        df['symbol'] = symbol
-                        df['date'] = pd.to_datetime(df['Date'])
-                        data_frames.append(df)
-                        
-                else:
-                    # add the data to the dataframe
-                    df = existing_data
-                    df['symbol'] = symbol
-                    df['date'] = pd.to_datetime(df['Date'])
-                    data_frames.append(df)
-
-                    # print(f"Data for {symbol} updated in {csv_file_path}.")
-                # else:
-                    # print(f"No new data available for {symbol}.")
-       
-       
-        # Combine all DataFrames into a single DataFrame
-        combined_df = pd.concat(data_frames)
-
-        # Set multi-index
-        combined_df.set_index(['symbol', 'date'], inplace=True)
-
-        # Sort the index
-        combined_df.sort_index(inplace=True)       
-        
-        return combined_df

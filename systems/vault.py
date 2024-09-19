@@ -2,18 +2,17 @@ import json
 
 class Vault:
     def __init__(self, config_dict):
-        self.config_dict = config_dict
         self.strategies = self.load_strategies(config_dict['strategies'])
-        self.datafeeder_config = self.create_datafeeder_config()
+        self.config_dict = self.create_datafeeder_config(config_dict, self.strategies)
 
-    def load_strategies(self, strategies):
+    def load_strategies(self, strategy_names):
         strategies_dict = {}
-        for strategy in strategies:
+        for strategy in strategy_names:
             # import strategy module and get the class
             strategies_dict[strategy] = getattr(__import__('vault.{}'.format(strategy), fromlist=[strategy]), 'Strategy')()
         return strategies_dict
     
-    def create_datafeeder_config(self):
+    def create_datafeeder_config(self, config_dict, strategies):
         '''
         # Datafeeder starting parameters (right now it'll be hardcoded, and later, it will be fetched from a datafeeder_config variable)
         data_inputs = {'1min':{'columns':['open', 'high', 'low', 'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}, '1d':{'columns':['open', 'high', 'low', 
@@ -26,17 +25,17 @@ class Vault:
         # we also need to get the tickers from each strategy and create a unified list of tickers.
         # This information should get added to the config_dict file, which can then be passed to the DataFeeder class.
         data_inputs = {}
-        tickers = []
-        for strategy in self.strategies.values():
-            data_input_temp , ticker_temp = strategy.datafeeder_inputs()
+        list_of_symbols = []
+        for strategy in strategies.values():
+            data_input_temp , list_of_symbols_temp = strategy.datafeeder_inputs()
             data_inputs = data_inputs | data_input_temp
-            tickers += ticker_temp
-        tickers = list(set(tickers))
+            list_of_symbols += list_of_symbols_temp
+        list_of_symbols = list(set(list_of_symbols))
         
-        datafeeder_config = {'data_inputs':data_inputs, 'tickers':tickers}
-        self.config_dict["datafeeder_config"] = datafeeder_config
+        datafeeder_config = {'data_inputs':data_inputs, 'list_of_symbols':list_of_symbols}
+        config_dict["datafeeder_config"] = datafeeder_config
         
-        return self.config_dict
+        return config_dict
         
     def generate_signals(self, market_data_df):
         signals_output = {'signals':[], 'ideal_portfolios':[]}
@@ -45,7 +44,7 @@ class Vault:
         combine the signals and ideal portfolio from all strategies and return the combined signals.
         '''
         for strategy in self.strategies.values():
-            signal , ideal_portfolio = strategy.generate_signals(market_data_df)
+            signal, ideal_portfolio = strategy.generate_signals(market_data_df)
             if(signal):
                 signals_output["signals"] += signal
             if(ideal_portfolio):
@@ -61,17 +60,17 @@ class RMS:
     def __init__(self,config_dict):
         #initializing constants from config dict
         self.config_dict = config_dict
-        self.total_portfolio = config_dict["total_portfolio"]
-        self.total_funds_s_1 = config_dict["total_funds_s_1"]
-        self.avail_funds_s_1 = config_dict["avail_funds_s_1"]
-        self.total_funds_s_2 = config_dict["total_funds_s_2"]
-        self.avail_funds_s_2 = config_dict["avail_funds_s_2"]
-        self.max_signal_fund = config_dict["max_signal_fund"]
-        self.max_risk_per = config_dict["max_risk_per"]
-        with open('db/vault/current_portfolio.json') as file:
-            self.current_portfolio = json.load(file)
-        with open('db/vault/vault.json') as file:
-            self.orders = json.load(file)
+        # self.total_portfolio = config_dict["total_portfolio"]
+        # self.total_funds_s_1 = config_dict["total_funds_s_1"]
+        # self.avail_funds_s_1 = config_dict["avail_funds_s_1"]
+        # self.total_funds_s_2 = config_dict["total_funds_s_2"]
+        # self.avail_funds_s_2 = config_dict["avail_funds_s_2"]
+        # self.max_signal_fund = config_dict["max_signal_fund"]
+        # self.max_risk_per = config_dict["max_risk_per"]
+        # with open('db/vault/current_portfolio.json') as file:
+        #     self.current_portfolio = json.load(file)
+        # with open('db/vault/vault.json') as file:
+        #     self.orders = json.load(file)
         
                 
     def RMS_check_signal(self, signal,symbol,avail_funds,total_funds,price,weight):
@@ -123,7 +122,7 @@ class RMS:
                  "timestamp": signal["timestamp"], 
                  "orderSide":SLorderSide, 
                  "exitPrice":slPrice, 
-                 "orderType":signal["exit_order_type"], 
+                 "orderType":signal["exit_order_type"],
                  "timeInForce":signal["timeInForce"], 
                  "orderQuantity":abs(order_qty),
                  "strategy_name":signal["strategy_name"],
@@ -154,7 +153,7 @@ class RMS:
 
             cash_req, order_qty, order, check = self.RMS_check_signal(signal,symbol,avail_funds,total_funds,price,weight)
             if(check):
-                check = Flase
+                check = False
                 continue
             
             self.avail_funds_s_1 -= cash_req
@@ -183,7 +182,7 @@ class RMS:
                 
                 cash_req, order_qty, order, check = self.RMS_check_signal(portfolio,symbol,avail_funds,total_funds,price,weight)
                 if(check):
-                    check = Flase
+                    check = False
                     continue
                 
                 self.avail_funds_s_2 -= cash_req
