@@ -12,18 +12,44 @@ class Vault:
             strategies_dict[strategy] = getattr(__import__('vault.{}'.format(strategy), fromlist=[strategy]), 'Strategy')()
         return strategies_dict
     
-    def create_datafeeder_config(self, config_dict, strategies):
-        '''
-        # Datafeeder starting parameters (right now it'll be hardcoded, and later, it will be fetched from a datafeeder_config variable)
-        data_inputs = {'1min':{'columns':['open', 'high', 'low', 'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}, '1d':{'columns':['open', 'high', 'low', 
-        'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}}
-        tickers = ['AAPL', 'MSFT', 'NVDA']
+    # def create_datafeeder_config(self, config_dict, strategies):
+    #     '''
+    #     # Datafeeder starting parameters (right now it'll be hardcoded, and later, it will be fetched from a datafeeder_config variable)
+    #     data_inputs = {'1min':{'columns':['open', 'high', 'low', 'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}, '1d':{'columns':['open', 'high', 'low', 
+    #     'close', 'volume,' 'SMA15', 'SMA30'], 'lookback':100}}
+    #     tickers = ['AAPL', 'MSFT', 'NVDA']
 
-        datafeeder_config = {'data_inputs':data_inputs, 'tickers':tickers}
-        '''
-        # for each strategy in self.strategies, get the granularity, lookback period, raw data columns and indicators needed and create a dict like above.
-        # we also need to get the tickers from each strategy and create a unified list of tickers.
-        # This information should get added to the config_dict file, which can then be passed to the DataFeeder class.
+    #     datafeeder_config = {'data_inputs':data_inputs, 'tickers':tickers}
+    #     '''
+    #     # for each strategy in self.strategies, get the granularity, lookback period, raw data columns and indicators needed and create a dict like above.
+    #     # we also need to get the tickers from each strategy and create a unified list of tickers.
+    #     # This information should get added to the config_dict file, which can then be passed to the DataFeeder class.
+    #     data_inputs = {}
+    #     list_of_symbols = []
+    #     for strategy in strategies.values():
+    #         data_input_temp , list_of_symbols_temp = strategy.datafeeder_inputs()
+    #         print({'data_input_temp':data_input_temp})
+    #         raise AssertionError('MANUALLY STOPPING THE CODE')
+    #         data_inputs = data_inputs | data_input_temp
+    #         list_of_symbols += list_of_symbols_temp
+    #     list_of_symbols = list(set(list_of_symbols))
+        
+    #     datafeeder_config = {'data_inputs':data_inputs, 'list_of_symbols':list_of_symbols}
+    #     config_dict["datafeeder_config"] = datafeeder_config
+        
+    #     return config_dict
+    
+    def create_datafeeder_config(self, config_dict, strategies):
+        def to_lowercase(d):
+            if isinstance(d, dict):
+                return {k.lower(): to_lowercase(v) for k, v in d.items()}
+            elif isinstance(d, list):
+                return [to_lowercase(i) for i in d]
+            elif isinstance(d, str):
+                return d.lower()
+            else:
+                return d
+
         data_inputs = {}
         list_of_symbols = []
         for strategy in strategies.values():
@@ -32,7 +58,8 @@ class Vault:
             list_of_symbols += list_of_symbols_temp
         list_of_symbols = list(set(list_of_symbols))
         
-        datafeeder_config = {'data_inputs':data_inputs, 'list_of_symbols':list_of_symbols}
+        # Convert all the columns to lowercase before returning the datafeeder_config
+        datafeeder_config = {'data_inputs':to_lowercase(data_inputs), 'list_of_symbols':list_of_symbols}
         config_dict["datafeeder_config"] = datafeeder_config
         
         return config_dict

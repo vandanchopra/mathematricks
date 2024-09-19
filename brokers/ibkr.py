@@ -11,7 +11,7 @@ from systems.utils import create_logger
 nest_asyncio.apply()
 
 class IBKR():
-    def __init__(self, ib):
+    def __init__(self, ib=None):
         if ib is None:
             self.ib = IB()
         else:
@@ -146,7 +146,7 @@ class IBKR():
         
         return bars
 
-    def update_price_data(self, stock_symbols,interval_inputs=['1d'], data_folder='db/data/ibkr', throttle_secs=1,back_test_start_date=None,back_test_end_date=None):
+    def update_price_data(self, stock_symbols,interval_inputs=['1d'], data_folder='db/data/ibkr', throttle_secs=1,back_test_start_date=None,back_test_end_date=None, lookback=None):
         data_frames = []
         pbar = tqdm(stock_symbols, desc='Updating data: ')
 
@@ -246,17 +246,19 @@ class IBKR():
 
         # Sort the index
         combined_df.sort_index(inplace=True)  
-        if back_test_start_date is None and back_test_end_date is None:
-            return combined_df
-
-        if back_test_start_date is not None and back_test_end_date is not None:
-            combined_df = combined_df.loc[(combined_df.index.get_level_values(1) >= back_test_start_date) & (combined_df.index.get_level_values(1) <= back_test_end_date),:]
-        
-        if back_test_start_date is not None:
-            combined_df = combined_df.loc[combined_df.index.get_level_values(1) >= back_test_start_date,:]
-    
-        if back_test_end_date is not None:
-            combined_df = combined_df.loc[combined_df.index.get_level_values(1) <= back_test_end_date,:]      
+        # Trim the data to the back_test_start_date and back_test_end_date\
+        if lookback is not None:
+            joined_dict = {}
+            for interval, lookback_value in lookback.items():
+                lookback_value = int(lookback_value*1.5)
+                before = combined_df.loc[interval].loc[:back_test_start_date]
+                after = combined_df.loc[interval].loc[back_test_start_date:back_test_end_date]
+                before_new = before.iloc[-lookback_value:]
+                # join before and after dataframes
+                joined = pd.concat([before_new, after])
+                joined.sort_index(inplace=True)
+                joined_dict[interval] = joined
+            combined_df = pd.concat(joined_dict.values(), keys=joined_dict.keys(), names=['interval', 'date'])
         
         return combined_df
     

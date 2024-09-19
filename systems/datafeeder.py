@@ -19,7 +19,7 @@ class DataFeeder:
         self.config_dict = config_dict
         self.datafetcher = DataFetcher(self.config_dict)
         self.logger = create_logger(log_level=self.config_dict['log_level'], logger_name='datafeeder')
-        self.system_timestamp = None
+        self.next_system_timestamp = None
         self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"1d":86400}
         self.market_data_df = None
         self.indicators = Indicators()
@@ -80,7 +80,7 @@ class DataFeeder:
         now = datetime.datetime.now()
         now_tz = now.astimezone(pytz.timezone('US/Eastern'))
         self.market_data_df = None
-        passed_time = now.astimezone(pytz.utc) - self.system_timestamp
+        passed_time = now.astimezone(pytz.utc) - self.next_system_timestamp
         # self.logger.debug({'passed_time':passed_time, 'system_timestamp':self.system_timestamp, 'sleep_time_old':sleep_time_old})
         
         if self.is_market_open(now_tz):
@@ -99,32 +99,34 @@ class DataFeeder:
         # update data and return the updated data
         # self.logger.debug({'market_data_df':market_data_df})
 
-        if run_mode == "BT":
-            if self.market_data_df is None:
-                self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df)
-
-            if self.system_timestamp is None:
-                self.system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
-            else:
-                self.market_data_df = self.market_data_df.loc[self.market_data_df.index.get_level_values(1) >= self.system_timestamp,:]
-        
         if run_mode == 'LIVE':
-            # use datafetcher to update the data
-            if self.market_data_df is None:
-                self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df, start_date, end_date)
+            # start date is the current date
+            now = datetime.datetime.now()
+            now_tz = now.astimezone(pytz.timezone('US/Eastern'))
+            start_date = now_tz
+            end_date = None
+        
+        # Fix the start_date and end_date to account for the lookback period.
+        lookback_dict = {}
+        for interval in self.config_dict['datafeeder_config']['data_inputs']:
+            lookback = self.config_dict['datafeeder_config']['data_inputs'][interval]['lookback']
+            lookback_dict[interval] = lookback
+        
+        if self.market_data_df is None:
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df, start_date=start_date, end_date=end_date, lookback=lookback_dict)
 
-            if self.system_timestamp is None:
-                self.system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
-            else:
-                self.market_data_df = self.market_data_df.loc[self.market_data_df.index.get_level_values(1) >= self.system_timestamp,:]
+        if self.next_system_timestamp is None:
+            self.next_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
+        else:
+            self.market_data_df = self.market_data_df.loc[self.market_data_df.index.get_level_values(1) >= self.next_system_timestamp,:]
 
         first_rows = []
         for interval in self.market_data_df.index.get_level_values(0).unique():
             first_row = self.market_data_df.loc[interval,:].iloc[0]
             first_df = pd.DataFrame(first_row).T
             first_df.index.names = ['datetime']
-            if first_df.index[0] == self.system_timestamp:
-                self.system_timestamp = first_df.index[0]
+            if first_df.index[0] == self.next_system_timestamp:
+                self.next_system_timestamp = first_df.index[0]
                 first_df.reset_index(drop=False,inplace=True)
                 first_df['interval'] = interval
                 first_df.set_index(['interval','datetime'],inplace=True)
@@ -133,13 +135,17 @@ class DataFeeder:
                 # remove the first row from the DataFrame
                 self.market_data_df = self.market_data_df.drop((interval,first_row.name))
 
-        first_rows = pd.concat(first_rows)
+        if len(first_rows) > 0:
+            first_rows = pd.concat(first_rows)
+        else:
+            first_rows = None
         
         if len(self.market_data_df) < 1 and run_mode == 'LIVE':
             sleep_time = self.calculate_sleep()
             sleeper(sleep_time)
-            
+        elif len(self.market_data_df) < 1 and run_mode == 'BT':
+            pass
         else:
-            self.system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
+            self.next_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
 
         return first_rows

@@ -3,11 +3,24 @@
 vault/*
 !vault/base_strategy.py
 spectre/*
-##### ignore all files in the data directory
-data/*
-!**/AAPL.csv
-!**/MSFT.csv
-!**/^IXIC.csv
+
+##### ignore all files in the data directory except AAPL.csv, MSFT.csv, and ^IXIC.csv
+db/data/ibkr/1d/**
+db/data/ibkr/1m/**
+db/data/yahoo/1d/**
+db/data/yahoo/1m/**
+!db/data/ibkr/1d/AAPL.csv
+!db/data/yahoo/1d/AAPL.csv
+!db/data/ibkr/1d/MSFT.csv
+!db/data/yahoo/1d/MSFT.csv
+!db/data/ibkr/1d/^IXIC.csv
+!db/data/yahoo/1d/^IXIC.csv
+!db/data/ibkr/1m/AAPL.csv
+!db/data/yahoo/1m/AAPL.csv
+!db/data/ibkr/1m/MSFT.csv
+!db/data/yahoo/1m/MSFT.csv
+!db/data/ibkr/1m/^IXIC.csv
+!db/data/yahoo/1m/^IXIC.csv
 
 # ignore all files in the backtests directory except the __init__.py file
 backtests/*

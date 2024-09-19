@@ -54,7 +54,7 @@ class Yahoo():
         
         return pruned_df, stock_symbols
         
-    def update_price_data_single_asset(self, symbol, data_folder='data/yahoo', throttle_secs=1):
+    def update_price_data_single_asset(self, symbol, data_folder='data/yahoo', throttle_secs=0.25):
         os.makedirs(data_folder, exist_ok=True)
         time.sleep(throttle_secs)
         csv_file_path = os.path.join(data_folder, f"{symbol}.csv")
@@ -86,7 +86,7 @@ class Yahoo():
         
         return asset_data_df
     
-    def update_price_data_batch(self, stock_symbols, start_date, pbar, batch_size=75):
+    def update_price_data_batch(self, stock_symbols, start_date, pbar, batch_size=75, throttle_secs=0.25):
         asset_data_df_dict = {}
         for interval in stock_symbols:
             asset_data_df_dict[interval] = {}
@@ -109,11 +109,11 @@ class Yahoo():
                             asset_data_df_dict[interval][ticker]= asset_data_df
                             pbar.update(1)
                             
-                time.sleep(0.25)  # To avoid hitting rate limits
+                time.sleep(throttle_secs)  # To avoid hitting rate limits
                         
         return asset_data_df_dict
     
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder='db/data/yahoo', throttle_secs=1, back_test_start_date=None, back_test_end_date=None):
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder='db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None):
         data_frames = []
         pbar = tqdm(stock_symbols, desc='Updating data: ')
 
@@ -129,7 +129,7 @@ class Yahoo():
                     stock_symbols_with_data[interval].append(symbol)
         
         # Get the data for the ones that don't have data
-        asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, pbar=pbar, batch_size=75)
+        asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, pbar=pbar, batch_size=75, throttle_secs=throttle_secs)
 
         # Extract the data from yahoo batch response and save it to csv
         for interval in asset_data_df_dict:
@@ -163,7 +163,11 @@ class Yahoo():
         for interval in stock_symbols_with_data:
             for symbol in stock_symbols_with_data[interval]:
                 csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
-                existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
+                # self.logger.debug({'csv_file_path': csv_file_path})
+                try:
+                    existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
+                except Exception as e:
+                    raise Exception(f"Error reading {csv_file_path}. Error: {e}")
                 # last_date = existing_data.index.max().tz_localize('UTC') if not existing_data.empty else None
                 last_date = existing_data.index.max().tz_convert('UTC') if not existing_data.empty else None
                 start_date = last_date if start_date is None and last_date is not None else None if last_date is None else min(start_date, last_date)
@@ -218,18 +222,21 @@ class Yahoo():
         # combined_df = combined_df.unstack(level='symbol')
 
         # Sort the index
-        combined_df.sort_index(inplace=True)  
-        if back_test_start_date is None and back_test_end_date is None:
-            return combined_df
-
-        if back_test_start_date is not None and back_test_end_date is not None:
-            combined_df = combined_df.loc[(combined_df.index.get_level_values(1) >= back_test_start_date) & (combined_df.index.get_level_values(1) <= back_test_end_date),:]
+        combined_df.sort_index(inplace=True)
         
-        if back_test_start_date is not None:
-            combined_df = combined_df.loc[combined_df.index.get_level_values(1) >= back_test_start_date,:]
-    
-        if back_test_end_date is not None:
-            combined_df = combined_df.loc[combined_df.index.get_level_values(1) <= back_test_end_date,:]
+        # Trim the data to the back_test_start_date and back_test_end_date\
+        if lookback is not None:
+            joined_dict = {}
+            for interval, lookback_value in lookback.items():
+                lookback_value = int(lookback_value*1.5)
+                before = combined_df.loc[interval].loc[:back_test_start_date]
+                after = combined_df.loc[interval].loc[back_test_start_date:back_test_end_date]
+                before_new = before.iloc[-lookback_value:]
+                # join before and after dataframes
+                joined = pd.concat([before_new, after])
+                joined.sort_index(inplace=True)
+                joined_dict[interval] = joined
+            combined_df = pd.concat(joined_dict.values(), keys=joined_dict.keys(), names=['interval', 'date'])
 
         return combined_df
     

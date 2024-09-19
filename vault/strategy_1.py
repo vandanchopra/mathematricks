@@ -25,7 +25,7 @@ class Strategy (BaseStrategy):
         
     def datafeeder_inputs(self):
         tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
-        tickers = ['NVDA', 'NFLX']
+        tickers = ['NVDA', 'MSFT']
         data_inputs = {'1m': {'columns': ['Open', 'High', 'Close', 'Volume'] , 'lookback':100}, '1d': {'columns': ['Open', 'High', 'Close', 'Volume'] , 'lookback':100}}
         return data_inputs, tickers
         

@@ -7,12 +7,12 @@ from datetime import datetime
 
     
 config_dict = {
-    'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
+    'run_mode': 1, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
     'backtest_inputs': {
-        'start_time': pd.Timestamp(datetime(2024,9,16)).tz_localize('UTC').tz_convert('EST'), 
+        'start_time': pd.Timestamp(datetime(2024,9,15)).tz_localize('UTC').tz_convert('EST'), 
         'end_time': pd.Timestamp(datetime(2024,9,18)).tz_localize('UTC').tz_convert('EST')
         },
-    'data_update_inputs': {'data_sources':['yahoo']},
+    'data_update_inputs': {'data_sources':['ibkr']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'log_level':'DEBUG',
     'strategies':['strategy_1'],
