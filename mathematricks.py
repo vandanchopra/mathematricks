@@ -40,8 +40,8 @@ class Mathematricks:
                         run_mode = 'LIVE'
                     elif run_mode == 3: # backtesting
                         assert 'start_time' in self.config_dict['backtest_inputs'] and 'end_time' in self.config_dict['backtest_inputs'], 'start_time and end_time must be provided in backtest_inputs if run_mode is 3'
-                        start_time = self.config_dict['backtest_inputs']['start_time']
-                        end_time = self.config_dict['backtest_inputs']['end_time']
+                        start_date = self.config_dict['backtest_inputs']['start_time']
+                        end_date = self.config_dict['backtest_inputs']['end_time']
                         run_mode = 'BT'
                         
                     next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode=run_mode, sleep_time=self.sleep_time, start_date=start_date, end_date=end_date)
@@ -50,12 +50,13 @@ class Mathematricks:
                         self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
                         self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
                         for interval, next_datetime in next_rows.index:
-                            self.logger.debug(f"Interval: {interval}, Datetime: {next_datetime}, system_timestamp: {self.system_timestamp}")
+                            # self.logger.debug(f"Interval: {interval}, Datetime: {next_datetime}, system_timestamp: {self.system_timestamp}")
                             # self.logger.debug(next_rows)
-                            # self.logger.debug({'self.market_data_df':self.market_data_df.shape})
-                            # time.sleep(0.25)
-                        # # execute_signals(signals)
-                        # signals_output = self.vault.generate_signals(self.market_data_df)
+                            self.logger.debug({'self.market_data_df':self.market_data_df.shape})
+                            time.sleep(0.25)
+                        # execute_signals(signals)
+                        signals_output = self.vault.generate_signals(self.market_data_df)
+                        self.logger.debug({'system_timestamp':self.system_timestamp, 'signals_output':signals_output})
                         # # Convert signals to orders
                         # orders = self.rms.convert_signals_to_orders(signals_output)
                     else:

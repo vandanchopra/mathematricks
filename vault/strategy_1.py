@@ -34,11 +34,11 @@ class Strategy (BaseStrategy):
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING SIGNALS.
         """
         signals = []
-        for symbol in set(market_data_df["Open"].columns):
+        for symbol in set(market_data_df["Open".lower()].columns):
             asset_data_df = market_data_df.loc[self.granularity].xs(symbol, axis=1, level='Ticker').reset_index()
-            asset_data_df['SMA15'] = asset_data_df['Close'].rolling(window=15).mean()
-            asset_data_df['SMA30'] = asset_data_df['Close'].rolling(window=30).mean()
-            
+            asset_data_df['SMA15'] = asset_data_df['Close'.lower()].rolling(window=15).mean()
+            asset_data_df['SMA30'] = asset_data_df['Close'.lower()].rolling(window=30).mean()
+
             asset_data_df['signal_strength'] = 0
             asset_data_df['signal_strength'][30:] = np.where(asset_data_df['SMA15'][30:] > asset_data_df['SMA30'][30:], 1, 0) 
             asset_data_df['position'] = asset_data_df['signal_strength'].diff() 
