@@ -1,4 +1,4 @@
-from ib_insync import IB, Stock, util
+from ib_insync import *
 import nest_asyncio
 import os
 import pandas as pd
@@ -27,9 +27,10 @@ class IBKR():
 
         # Connect to the IBKR TWS (Trader Workstation) or Gateway
         try:
-            self.ib.connect('127.0.0.1', 7777, clientId=clientId) # can you try client Id 10 or client id 2.
+            self.ib.connect('127.0.0.1', 7497, clientId=10) # can you try client Id 10 or client id 2.
         except:
-            self.ib.connect('127.0.0.1', 7777, clientId=clientId+1)
+            self.ib.connect('127.0.0.1', 7497
+                            , clientId=clientId+1)
 
         # Check if the connection is successful
         if self.ib.isConnected():
@@ -65,25 +66,29 @@ class IBKR():
 
         # Return the stop loss orders
         return stop_loss_orders
+    
 
-    def place_order(self, ticker: str, exchange: str, currency: str, action: str, quantity: int, order_type: str, limit_price: float = 0, stop_price: float = 0):
+    def place_order(self, ticker: str, exchange: str, currency: str, orderSide: str, orderQuantity: int, orderType: str, limit_price: float = 0, stop_price: float = 0):
         # Create a contract for the stock
         ib = self.ib
-        contract = ib.qualifyContracts(Stock(ticker, exchange, currency))
+        contract = ib.qualifyContracts(Stock(ticker, exchange, currency))[0]
 
         # Create an order for the stock
-        if order_type == 'MKT':
-            order = ib.marketOrder(action, quantity)
-        elif order_type == 'LMT':
-            order = ib.LimitOrder(action, quantity, limit_price)
-        elif order_type == 'STP':
-            order = ib.StopOrder(action, quantity, stop_price)
+        if orderType == 'MKT':
+            order = MarketOrder(orderSide, orderQuantity)
+        elif orderType == 'LMT':
+            order = LimitOrder(orderSide, orderQuantity, limit_price)
+        elif orderType == 'STP':
+            order = StopOrder(orderSide, orderQuantity, stop_price)
+        else:
+            raise Exception(f"Order type {orderType} not supported. Use 'MKT', 'LMT', or 'STP'.")
 
         # Place the order
         trade = ib.placeOrder(contract, order)
 
         # Return the trade
         return trade
+
 
     def cancel_order(self, trade):
         # Cancel the order
@@ -98,6 +103,8 @@ class IBKR():
 
         # Return the trade
         return trade
+    
+    
     
     async def update_price_data_batch(self,stock_symbols, start_date=None,batch_size = 75):
         asset_data_df_dict = {}

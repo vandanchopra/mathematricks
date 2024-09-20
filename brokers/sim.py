@@ -11,8 +11,83 @@ class Sim():
         self.execute = Execute()
 
 class Execute():
-    def __ini__(self):
-        self.completed = None
+    def __init__(self):
+        self.open_orders = []  # List of open orders
+        self.open_positions = {}  # Dictionary of open positions by stock symbol
+
+    def place_order(self, symbol, order_type, quantity, price=None, stop_loss=None, limit_price=None):
+        """
+        Place a market or stop-loss-limit order.
+        Parameters:
+        - symbol: stock symbol
+        - order_type: 'market' or 'stop_loss_limit'
+        - quantity: number of shares
+        - price: for market orders
+        - stop_loss: for stop-loss-limit orders
+        - limit_price: for stop-loss-limit orders
+        """
+        order = {
+            'symbol': symbol,
+            'type': order_type,
+            'quantity': quantity,
+            'price': price,
+            'stop_loss': stop_loss,
+            'limit_price': limit_price,
+            'status': 'open'  # 'open', 'executed', or 'canceled'
+        }
+        self.open_orders.append(order)
+        return order
+
+    def execute_orders(self, current_prices):
+        """
+        Execute open orders based on current stock prices.
+        Parameters:
+        - current_prices: Dictionary with symbol as key and current price as value
+        """
+        for order in self.open_orders:
+            symbol = order['symbol']
+            current_price = current_prices.get(symbol)
+
+            if order['status'] == 'open':
+                # Market order: execute immediately
+                if order['type'] == 'market':
+                    self._execute_order(order, current_price)
+
+                # Stop-loss-limit order: execute if conditions are met
+                elif order['type'] == 'stop_loss_limit':
+                    if order['stop_loss'] >= current_price or current_price <= order['limit_price']:
+                        self._execute_order(order, current_price)
+
+        # Clean up executed orders
+        self.open_orders = [order for order in self.open_orders if order['status'] == 'open']
+
+    def _execute_order(self, order, execution_price):
+        """
+        Execute the given order and update positions.
+        Parameters:
+        - order: The order to execute
+        - execution_price: Price at which the order is executed
+        """
+        symbol = order['symbol']
+        quantity = order['quantity']
+
+        # Add position to open_positions
+        if symbol in self.open_positions:
+            self.open_positions[symbol] += quantity
+        else:
+            self.open_positions[symbol] = quantity
+
+        order['status'] = 'executed'
+        order['execution_price'] = execution_price
+        print(f"Executed {order['type']} order for {symbol} at {execution_price}")
+
+    def get_open_orders(self):
+        """Return the list of open orders."""
+        return self.open_orders
+
+    def get_open_positions(self):
+        """Return the current open positions."""
+        return self.open_positions
 
 class Yahoo():
     def __init__(self):
