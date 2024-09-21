@@ -25,20 +25,22 @@ class Strategy (BaseStrategy):
 
     
     def datafeeder_inputs(self):
-        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
-        return { self.granularity : {'columns': ['Open', 'High', 'Low', 'Close', 'Volume'] , 'lookback':100}}, tickers
+        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        return { "1d" : {'columns': ['open', 'high', 'low', 'close', 'volume'] , 'lookback':100}}, tickers
 
     
     def run_strategy(self,market_data_df):
         symbol_scores = {}
         ltp = {}
         scores = []
-        for symbol in set(market_data_df["Open"].columns):
+        for symbol in set(market_data_df["open"].columns):
+            if(self.granularity not in market_data_df.index.levels[0] or len(market_data_df.loc[self.granularity]) <= 100):
+                continue
             # calculate a score for each symbol, and go long on the top 10 and short on the bottom 10, based on 'demo_strategy.py'
-            df = market_data_df.loc[self.granularity].xs(symbol, axis=1, level='Ticker')
-            symbol_scores[symbol] = df.iloc[-1]['Close'] / df.iloc[-200]['Close']
-            scores.append(df.iloc[-1]['Close'] / df.iloc[-200]['Close'])
-            ltp[symbol] = df.iloc[-1]['Close']
+            df = market_data_df.loc[self.granularity].xs(symbol, axis=1, level='symbol')
+            symbol_scores[symbol] = df.iloc[-1]['close'] / df.iloc[-100]['close']
+            scores.append(df.iloc[-1]['close'] / df.iloc[-100]['close'])
+            ltp[symbol] = df.iloc[-1]['close']
         
         sorted_symbols = sorted (symbol_scores, key=symbol_scores.get)
         scores = sorted(scores)
@@ -61,23 +63,29 @@ class Strategy (BaseStrategy):
         """
         #run strategy and get result data
         top_symbols, top_scores, bottom_symbols, bottom_scores, ltp = self.run_strategy(market_data_df)
-
+        signals = False
+        ideal_portfolio = {}
         #above this line was the strategy portion and below is generation of the ideal portfolio signal
-        ideal_portfolio = {
-            'strategy_name':self.strategy_name,
-            'timestamp':market_data_df.loc[self.granularity].xs(top_symbols[0], axis=1, level='Ticker').reset_index().iloc[-1]['Datetime'],
-            'entry_order_type':self.orderType,
-            'exit_order_type':self.exit_order_type,
-            'sl_pct':self.stop_loss_pct,
-            'sl_abs':self.stop_loss_abs,
-            'timeInForce':self.timeInForce,
-            'orderQuantity':self.orderQuantity
-        }
-        ideal_portfolio['symbols'] = {}
-        for i in range(len(top_symbols)):
-            ideal_portfolio['symbols'][top_symbols[i]] = [top_scores[i], ltp[top_symbols[i]]]
-        for i in range(len(bottom_symbols)):
-            ideal_portfolio['symbols'][bottom_symbols[i]] = [bottom_scores[i], ltp[bottom_symbols[i]]]
-        ideal_portfolio["timestamp"] = ideal_portfolio["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
+        if(len(top_symbols) != 0):
+            ideal_portfolio = {
+                'strategy_name':self.strategy_name,
+                'timestamp':market_data_df.loc[self.granularity].xs(top_symbols[0], axis=1, level='symbol').reset_index().iloc[-1]['datetime'],
+                'entry_order_type':self.orderType,
+                'exit_order_type':self.exit_order_type,
+                'sl_pct':self.stop_loss_pct,
+                'sl_abs':self.stop_loss_abs,
+                'timeInForce':self.timeInForce,
+                'orderQuantity':self.orderQuantity
+            }
+            ideal_portfolio['symbols'] = {}
+            for i in range(len(top_symbols)):
+                ideal_portfolio['symbols'][top_symbols[i]] = [top_scores[i], ltp[top_symbols[i]]]
+            for i in range(len(bottom_symbols)):
+                ideal_portfolio['symbols'][bottom_symbols[i]] = [bottom_scores[i], ltp[bottom_symbols[i]]]
+            ideal_portfolio["timestamp"] = ideal_portfolio["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
 
-        return False , ideal_portfolio
+        return signals , [ideal_portfolio]
+
+#['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+#PG, XOM, MSFT, JPM, AAPL, NFLX, GOOGL, TSLA, NVDA, NKE, CRM, UNH, DIS, HD, JNJ, V, AMD, 
+#AMZN, INTC, FB

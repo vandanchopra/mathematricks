@@ -74,12 +74,12 @@ class Vault:
             signal, ideal_portfolio = strategy.generate_signals(market_data_df)
             if(signal):
                 signals_output["signals"] += signal
-            if(ideal_portfolio):
-                signals_output["ideal_portfolios"].append(ideal_portfolio)
+            if(ideal_portfolio and ideal_portfolio != [{}]):
+                signals_output["ideal_portfolios"] += ideal_portfolio
                 
         with open('db/vault/signals.json', 'w') as file:
             json.dump(signals_output, file)
-        # run reach strategy and get either the signals or ideal portforlio from each strategy, based on current data.
+        # run each strategy and get either the signals or ideal portforlio from each strategy, based on current data.
         # combine the signals from all strategies and return the combined signals.
         return signals_output
 
@@ -87,44 +87,78 @@ class RMS:
     def __init__(self,config_dict):
         #initializing constants from config dict
         self.config_dict = config_dict
-        # self.total_portfolio = config_dict["total_portfolio"]
-        # self.total_funds_s_1 = config_dict["total_funds_s_1"]
-        # self.avail_funds_s_1 = config_dict["avail_funds_s_1"]
-        # self.total_funds_s_2 = config_dict["total_funds_s_2"]
-        # self.avail_funds_s_2 = config_dict["avail_funds_s_2"]
-        # self.max_signal_fund = config_dict["max_signal_fund"]
-        # self.max_risk_per = config_dict["max_risk_per"]
-        # with open('db/vault/current_portfolio.json') as file:
-        #     self.current_portfolio = json.load(file)
-        # with open('db/vault/vault.json') as file:
-        #     self.orders = json.load(file)
+        self.total_portfolio = config_dict["risk_management"]["total_portfolio"]
+        self.total_funds_s_1 = config_dict["risk_management"]["total_funds_s_1"]
+        self.avail_funds_s_1 = config_dict["risk_management"]["avail_funds_s_1"]
+        self.total_funds_s_2 = config_dict["risk_management"]["total_funds_s_2"]
+        self.avail_funds_s_2 = config_dict["risk_management"]["avail_funds_s_2"]
+        self.max_signal_fund = config_dict["risk_management"]["max_signal_fund"]
+        self.max_risk_per    = config_dict["risk_management"]["max_risk_per_trade"]
+        with open('db/vault/current_portfolio.json') as file:
+            self.current_portfolio = json.load(file)
+        with open('db/vault/vault.json') as file:
+            self.orders = json.load(file)
+        self.strategy_1_portfolio = {}
+        self.strategy_2_portfolio = {}
+        self.get_strategy_portfolio()
+
+    def get_strategy_portfolio(self) -> None:
+        for order in self.orders:
+            order = order[0]
+            order_qty = order["orderQuantity"]
+            order_sym = order["symbol"]
+            orderSide = order["orderSide"]
+            if orderSide == "BUY":
+                sign = 1
+            else:
+                sign = -1
+            order_stra = order["strategy_name"]
+            if order_stra == "strategy_1":
+                self.strategy_1_portfolio[order_sym] = self.strategy_1_portfolio.get(order_sym, 0) + (sign*order_qty)
+            elif order_stra == "strategy_2":
+                self.strategy_2_portfolio[order_sym] = self.strategy_2_portfolio.get(order_sym, 0) + (sign*order_qty)
+    
+    def RMS_check_ideal_portfolio_margin(self,weighted_ltp,total_order_qty):
+        margin_required = weighted_ltp * total_order_qty
+        if(margin_required > self.avail_funds_s_2):
+            total_order_qty = int(self.avail_funds_s_2/weighted_ltp)
+            print("RMS Message: required margin exceeded 100K, reducing order quantity to",total_order_qty)
+        return total_order_qty
         
-                
-    def RMS_check_signal(self, signal,symbol,avail_funds,total_funds,price,weight):
-        order_qty = int(weight * signal["orderQuantity"])
-        
-        cash_req = price*abs(order_qty)
-        if(cash_req > self.max_signal_fund):
+    def RMS_check_single_order_margin(self,order_qty,price):
+        margin_required = price*abs(order_qty)
+        if(margin_required > self.max_signal_fund):
             order_qty = int((self.max_signal_fund/price)*(order_qty/abs(order_qty)))
             print("RMS Message: required margin exceeded 25K, reducing order quantity to",order_qty)
-            cash_req = price*abs(order_qty)
-            
-        if(cash_req > avail_funds):
+        return order_qty
+
+    def RMS_check_available_funds(self,order_qty,price,strategy_name):
+        if(strategy_name == "strategy_1"):
+            avail_funds = self.avail_funds_s_1
+        elif(strategy_name == "strategy_2"):
+            avail_funds = self.avail_funds_s_2
+        margin_required = price*abs(order_qty)
+        skip_order = False
+        if(margin_required > avail_funds):
             print("RMS Failure: not enough funds")
-            return 0,0,0,True
+            skip_order = True
+        return skip_order
             
-        if(signal["exit_order_type"] == "stoploss_pct"):
-            sl_points = signal["sl_pct"]*0.01*price
-        elif(signal["exit_order_type"] == "stoploss_abs"):
-            sl_points = signal["sl_abs"]
-            
-        max_risk = self.max_risk_per* 0.01 * total_funds
+    def RMS_check_max_risk(self,sl_points,order_qty,strategy_name):
+        if(strategy_name == "strategy_1"):
+            total_funds = self.total_funds_s_1
+        elif(strategy_name == "strategy_2"):
+            total_funds = self.total_funds_s_2        
+        max_risk = self.max_risk_per* total_funds
         order_risk = sl_points*abs(order_qty)
         
         if(order_risk > max_risk):
             order_qty = int((max_risk/sl_points)*(order_qty/abs(order_qty)))
             print("RMS Message: exceeded max risk of 5 percent, reducing order quantity to",order_qty)
-        
+        return order_qty
+
+    def get_order(self,order_qty,sl_points,signal):
+        price = signal["symbol_ltp"]
         if(order_qty > 0):
             orderSide = "BUY"
             SLorderSide = "SELL"
@@ -135,7 +169,7 @@ class RMS:
             SLorderSide = "BUY"
             slPrice = price + sl_points
         
-        order = [{'symbol': symbol, 
+        order = [{'symbol': signal["symbol"], 
                  'timestamp': signal["timestamp"], 
                  "orderSide":orderSide, 
                  "entryPrice":price, 
@@ -143,9 +177,9 @@ class RMS:
                  "timeInForce":signal["timeInForce"], 
                  "orderQuantity":abs(order_qty),
                  "strategy_name":signal["strategy_name"],
-                 "broker":self.config_dict["broker"]
+                 "broker":self.config_dict["account_info"]["broker"]
                 },
-                 {"symbol": symbol, 
+                 {"symbol": signal["symbol"], 
                  "timestamp": signal["timestamp"], 
                  "orderSide":SLorderSide, 
                  "exitPrice":slPrice, 
@@ -153,12 +187,123 @@ class RMS:
                  "timeInForce":signal["timeInForce"], 
                  "orderQuantity":abs(order_qty),
                  "strategy_name":signal["strategy_name"],
-                 "broker":self.config_dict["broker"]
+                 "broker":self.config_dict["account_info"]["broker"]
                 }]
-        return cash_req, order_qty, order, False
-
+        return order
         
-    def convert_signals_to_orders(self, signals):
+    def RMS_check_signal(self, signal):
+        price = signal["symbol_ltp"]
+        strategy_name = signal["strategy_name"]
+        symbol = signal["symbol"]
+        order_qty = int(signal["signal_strength"] * signal["orderQuantity"])
+        if(strategy_name == "strategy_1" and symbol in self.strategy_1_portfolio):
+            order_qty -= self.strategy_1_portfolio[symbol]
+        elif(strategy_name == "strategy_2" and symbol in self.strategy_2_portfolio):
+            order_qty -= self.strategy_2_portfolio[symbol]
+
+        #checking whether the required margin for a single order is below 25K
+        order_qty = self.RMS_check_single_order_margin(order_qty,price)
+        
+        #finding stop loss points
+        if(signal["exit_order_type"] == "stoploss_pct"):
+            sl_points = signal["sl_pct"]*0.01*price
+        elif(signal["exit_order_type"] == "stoploss_abs"):
+            sl_points = signal["sl_abs"]
+        #checking whether the order risk is below the max risk
+        order_qty = self.RMS_check_max_risk(sl_points,order_qty,strategy_name)
+        #doing margin calculations
+        #checking if there is enough available funds for the order
+        skip_order = self.RMS_check_available_funds(order_qty,price,strategy_name)
+
+        order_qty = self.margin_calculations(order_qty,strategy_name,symbol,price,skip_order)
+
+        #creating and getting the order list 
+        order = self.get_order(order_qty,sl_points,signal)
+        
+        return order_qty, order, skip_order
+
+    def ideal_portfolio_to_signals(self,portfolio):
+        weighted_ltp = sum([abs(i[0])*i[1] for i in portfolio["symbols"].values()])
+        total_order_qty = portfolio["orderQuantity"]
+        #checking to see if the margin req for ideal portfolio is under the available margin
+        total_order_qty = self.RMS_check_ideal_portfolio_margin(weighted_ltp,total_order_qty)
+        signals = []
+        for symbol in portfolio["symbols"]:
+            temp = portfolio["symbols"][symbol]
+            weight = temp[0]
+            price = temp[1]  
+            order_qty = total_order_qty * weight
+            signal_strength = order_qty/abs(order_qty)
+            signal = {"symbol": symbol, 
+                    "signal_strength":signal_strength, 
+                    "strategy_name" : portfolio["strategy_name"], 
+                    "timestamp" : portfolio["timestamp"], 
+                    "entry_order_type" : portfolio["entry_order_type"], 
+                    "exit_order_type" : portfolio["exit_order_type"], 
+                    "sl_pct" : portfolio["sl_pct"], 
+                    "sl_abs" : portfolio["sl_abs"], 
+                    "symbol_ltp" : price, 
+                    "timeInForce" : portfolio["timeInForce"] , 
+                    "orderQuantity" : abs(order_qty)
+                    }
+            signals.append(signal)
+        return signals
+
+    def margin_calculations(self,order_qty,strategy_name,symbol,price,skip_order):
+        if(not skip_order):
+            if(strategy_name == "strategy_1" and symbol in self.strategy_1_portfolio):
+                prev_order_qty = self.strategy_1_portfolio[symbol]
+                order_qty += prev_order_qty
+                #if both the prev qty and final qty are either +ve or -ve
+                #and final qty is greater than prev qty the available margin 
+                #is decreased
+                if(order_qty/prev_order_qty > 0 and abs(order_qty) > abs(prev_order_qty)):
+                    self.avail_funds_s_1 -= abs(order_qty - prev_order_qty)*price
+                #if both the prev qty and final qty are either +ve or -ve
+                #and prev qty is greater than final qty the available margin 
+                #is increased
+                elif(order_qty/prev_order_qty > 0 and abs(order_qty) < abs(prev_order_qty)):
+                    self.avail_funds_s_1 += abs(order_qty - prev_order_qty)*price
+                #if both the prev qty and final qty are of opposite signs
+                #the previous qty is booked and new qty is added
+                elif(order_qty/prev_order_qty < 0):
+                    self.avail_funds_s_1 += (abs(prev_order_qty) - abs(order_qty) )*price
+                order_qty -= prev_order_qty
+                
+            elif(strategy_name == "strategy_2" and symbol in self.strategy_2_portfolio):
+                prev_order_qty = self.strategy_2_portfolio[symbol]
+                order_qty += prev_order_qty
+                if(order_qty/prev_order_qty > 0 and abs(order_qty) > abs(prev_order_qty)):
+                    self.avail_funds_s_2 -= abs(order_qty - prev_order_qty)*price
+                elif(order_qty/prev_order_qty > 0 and abs(order_qty) < abs(prev_order_qty)):
+                    self.avail_funds_s_2 += abs(order_qty - prev_order_qty)*price
+                elif(order_qty/prev_order_qty < 0):
+                    self.avail_funds_s_2 += (abs(prev_order_qty) - abs(order_qty) )*price
+                order_qty -= prev_order_qty
+
+        return order_qty
+    
+    def signals_to_orders(self,signals):
+        for signal in signals:
+            symbol = signal["symbol"]
+            
+            order_qty, order, skip_order = self.RMS_check_signal(signal)
+            if(skip_order):
+                #skip the order
+                continue
+            
+            if(symbol in self.current_portfolio):
+                self.current_portfolio[symbol] += order_qty
+            else:
+                self.current_portfolio[symbol] = order_qty
+            self.orders.append(order)
+
+        with open('db/vault/current_portfolio.json', 'w') as file:
+            json.dump(self.current_portfolio, file)
+        with open('db/vault/vault.json', 'w') as file:
+            json.dump(self.orders, file)     
+        
+    def convert_signals_to_orders(self, signals_output):
         '''
         calculate total value of portfolio - 200k
         calculate total cash available - 45k
@@ -166,63 +311,22 @@ class RMS:
         for each signal, calculate the amount of cash to be invested - 25k
         max_risk = 0.05
         for each signal, check if the total risk is above max risk, if yes, then reduce the amount of cash to be invested.
-        if signal is 'ideal portfolio', then calculate the amount of cash to be invested. Then compare it to the current portfolio, and generate the orders to adjust the portfolio.
+        if signal is 'ideal portfolio', then calculate the amount of cash to be invested. Then compare it to the current portfolio, and generate the orders to 
+        adjust the portfolio.
         '''
-        orders = []
+        signals = signals_output["signals"]
+        ideal_portfolio_signals = []
 
-        #signals to orders
-        for signal in signals["signals"]:
-            symbol = signal["symbol"]
-            price = signal["symbol_ltp"]
-            weight = signal["signal_strength"]
-            avail_funds = self.avail_funds_s_1
-            total_funds = self.total_funds_s_1
-
-            cash_req, order_qty, order, check = self.RMS_check_signal(signal,symbol,avail_funds,total_funds,price,weight)
-            if(check):
-                check = False
-                continue
-            
-            self.avail_funds_s_1 -= cash_req
-            if(symbol in self.current_portfolio):
-                self.current_portfolio[symbol] += order_qty
-            else:
-                self.current_portfolio[symbol] = order_qty
-            self.orders.append(order)
+        #strategy 1 signals to orders
+        self.signals_to_orders(signals)
         
-        #ideal portfolio to orders
-        for portfolio in signals["ideal_portfolios"]:
-            weighted_ltp = sum([abs(i[0])*i[1] for i in portfolio["symbols"].values()])
-            cash_req = weighted_ltp * portfolio["orderQuantity"]
-            #checking to see if the margin req for ideal portfolio is under the available margin
-            if(cash_req > self.avail_funds_s_2):
-                portfolio["orderQuantity"] = int(self.avail_funds_s_2/weighted_ltp)
-                print("RMS Message: required margin exceeded 100K, reducing order quantity to",portfolio["orderQuantity"])
-                cash_req = weighted_ltp * portfolio["orderQuantity"]
-            
-            for symbol in portfolio["symbols"]:
-                temp = portfolio["symbols"][symbol]
-                weight = temp[0]
-                price = temp[1]     
-                avail_funds = self.avail_funds_s_2
-                total_funds = self.total_funds_s_2
-                
-                cash_req, order_qty, order, check = self.RMS_check_signal(portfolio,symbol,avail_funds,total_funds,price,weight)
-                if(check):
-                    check = False
-                    continue
-                
-                self.avail_funds_s_2 -= cash_req
-                if(symbol in self.current_portfolio):
-                    self.current_portfolio[symbol] += order_qty
-                else:
-                    self.current_portfolio[symbol] = order_qty
-                self.orders.append(order)
+        #ideal portfolio to signals
+        for portfolio in signals_output["ideal_portfolios"]:
+            ideal_portfolio_signals +=  self.ideal_portfolio_to_signals(portfolio)
 
-        with open('db/vault/current_portfolio.json', 'w') as file:
-            json.dump(self.current_portfolio, file)
-        with open('db/vault/vault.json', 'w') as file:
-            json.dump(self.orders, file)
+        #strategy 2 signals to orders
+        self.signals_to_orders(ideal_portfolio_signals)
+        
         return self.orders
 
 if __name__ == '__main__':

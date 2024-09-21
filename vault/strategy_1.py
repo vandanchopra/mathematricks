@@ -24,9 +24,9 @@ class Strategy (BaseStrategy):
         return self.strategy_name
         
     def datafeeder_inputs(self):
-        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
-        tickers = ['NVDA', 'MSFT']
-        data_inputs = {'1m': {'columns': ['Open', 'High', 'Close', 'Volume'] , 'lookback':100}, '1d': {'columns': ['Open', 'High', 'Close', 'Volume'] , 'lookback':100}}
+        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        #tickers = ['MSFT', 'NVDA']
+        data_inputs = {'1m': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}, '1d': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}}
         return data_inputs, tickers
         
     def generate_signals(self, market_data_df):
@@ -34,10 +34,14 @@ class Strategy (BaseStrategy):
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING SIGNALS.
         """
         signals = []
-        for symbol in set(market_data_df["Open".lower()].columns):
-            asset_data_df = market_data_df.loc[self.granularity].xs(symbol, axis=1, level='Ticker').reset_index()
-            asset_data_df['SMA15'] = asset_data_df['Close'.lower()].rolling(window=15).mean()
-            asset_data_df['SMA30'] = asset_data_df['Close'.lower()].rolling(window=30).mean()
+        ideal_portfolio = False
+
+        for symbol in set(market_data_df["open"].columns):
+            if(self.granularity not in market_data_df.index.levels[0] or len(market_data_df.loc[self.granularity]) <= 30):
+                continue
+            asset_data_df = market_data_df.loc[self.granularity].xs(symbol, axis=1, level='symbol').reset_index()
+            asset_data_df['SMA15'] = asset_data_df['close'].rolling(window=15).mean()
+            asset_data_df['SMA30'] = asset_data_df['close'].rolling(window=30).mean()
 
             asset_data_df['signal_strength'] = 0
             asset_data_df['signal_strength'][30:] = np.where(asset_data_df['SMA15'][30:] > asset_data_df['SMA30'][30:], 1, 0) 
@@ -55,21 +59,21 @@ class Strategy (BaseStrategy):
                 signal_strength = -1
             else:
                 signal_strength = 0
-            
+            #signal_strength = int(asset_data_df.iloc[-1]['position'])
             if signal_strength != 0:
                 signal = {"symbol": symbol, 
                         "signal_strength":signal_strength, 
                         "strategy_name": self.strategy_name, 
-                        "timestamp": asset_data_df.iloc[-1]['Datetime'], 
+                        "timestamp": asset_data_df.iloc[-1]['datetime'], 
                         "entry_order_type": self.orderType, 
                         "exit_order_type":self.exit_order_type, 
                         "sl_pct": self.stop_loss_pct, 
                         "sl_abs": self.stop_loss_abs, 
-                        "symbol_ltp" : asset_data_df.iloc[-1]['Close'], 
+                        "symbol_ltp" : asset_data_df.iloc[-1]['close'], 
                         "timeInForce" : self.timeInForce , 
                         "orderQuantity" : self.orderQuantity
                         }
                 signal["timestamp"] = signal["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
                 signals.append(signal)
             
-        return signals, False
+        return signals, ideal_portfolio

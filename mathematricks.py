@@ -58,7 +58,7 @@ class Mathematricks:
                         signals_output = self.vault.generate_signals(self.market_data_df)
                         self.logger.debug({'system_timestamp':self.system_timestamp, 'signals_output':signals_output})
                         # # Convert signals to orders
-                        # orders = self.rms.convert_signals_to_orders(signals_output)
+                        orders = self.rms.convert_signals_to_orders(signals_output)
                     else:
                         print('Backtest completed.')
                         break
