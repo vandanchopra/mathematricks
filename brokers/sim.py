@@ -1,15 +1,16 @@
 import os, sys, time, json
 import pandas as pd
 import yfinance as yf
-from systems.utils import create_logger
+from utils import create_logger
 import logging
 from tqdm import tqdm
 
+# Main Simulation Class
 class Sim():
     def __init__(self):
-        self.data = Yahoo()
-        self.execute = Execute()
-
+        self.data = Yahoo()  # Yahoo Finance Data Fetcher
+        self.execute = Execute()  # Order Execution
+# Order Execution Class
 class Execute():
     def __init__(self):
         self.open_orders = []  # List of open orders
@@ -37,7 +38,7 @@ class Execute():
         }
         self.open_orders.append(order)
         return order
-
+    
     def execute_orders(self, current_prices):
         """
         Execute open orders based on current stock prices.
@@ -89,14 +90,27 @@ class Execute():
         """Return the current open positions."""
         return self.open_positions
 
+'''
+#testing the code manually.
+execute_instance = Execute()
+
+    # Call the place_order method on the instance
+order = execute_instance.place_order(symbol='AAPL', order_type='market', quantity=10, price=130)
+
+    # Print the result
+print(order)
+print(execute_instance.open_orders)
+'''
+
 class Yahoo():
     def __init__(self):
         self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
         self.asset_data_df_dict = {}
     
     def get_nasdaq_stock_symbols(self, nasdaq_csv_filepath, min_market_cap=10 * 1 * 1000 * 1000 * 1000):
+        nasdaq_csv_filepath = 'E:/mathematricks-main/nasdaq_screener_1725835471552.csv'
         '''
-        nasdaq_csv_filepath = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/data/stocksymbolslists/nasdaq_screener_1725835471552.csv'
+        #nasdaq_csv_filepath = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/data/stocksymbolslists/nasdaq_screener_1725835471552.csv'
         pruned_df, stock_symbols = get_nasdaq_stock_symbols(nasdaq_csv_filepath, min_market_cap=10 * 1 * 1000 * 1000 * 1000)
         print({'stock_symbols':stock_symbols})
         print({'stock_symbols':len(stock_symbols)})
