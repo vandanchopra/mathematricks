@@ -49,16 +49,17 @@ class Mathematricks:
                         self.system_timestamp = next_rows.index.get_level_values(1)[-1]
                         self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
                         self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
-                        for interval, next_datetime in next_rows.index:
-                            # self.logger.debug(f"Interval: {interval}, Datetime: {next_datetime}, system_timestamp: {self.system_timestamp}")
-                            self.logger.debug(next_rows)
-                            # self.logger.debug({'self.market_data_df':self.market_data_df.shape})
-                            time.sleep(1)
+                        # for interval, next_datetime in next_rows.index:
+                        #     # self.logger.debug(f"Interval: {interval}, Datetime: {next_datetime}, system_timestamp: {self.system_timestamp}")
+                        #     self.logger.debug(next_rows)
+                        #     # self.logger.debug({'self.market_data_df':self.market_data_df.shape})
+                        #     time.sleep(1)
+                        
                         # execute_signals(signals)
-                        signals_output = self.vault.generate_signals(self.market_data_df)
-                        self.logger.debug({'system_timestamp':self.system_timestamp, 'signals_output':signals_output})
-                        # # Convert signals to orders
-                        orders = self.rms.convert_signals_to_orders(signals_output)
+                        signals_output = self.vault.generate_signals(self.market_data_df, self.system_timestamp)
+                        
+                        # # # Convert signals to orders
+                        # orders = self.rms.convert_signals_to_orders(signals_output)
                     else:
                         print('Backtest completed.')
                         break

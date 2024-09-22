@@ -49,7 +49,7 @@ def create_logger(log_level, logger_name='mathematricks', print_to_console=True)
     
     return logger
 
-def sleeper(total_seconds):
+def sleeper(total_seconds, message="System Sleeping"):
     # Total time in seconds (e.g., 3 days)
 
     for remaining in range(total_seconds, 0, -1):
@@ -69,10 +69,11 @@ def sleeper(total_seconds):
             time_str += "{:2d} seconds".format(seconds)
         
         sys.stdout.write("\r")
-        sys.stdout.write("System Sleeping: " + time_str + " remaining.")
+        sys.stdout.write(f"{message}: " + time_str + " remaining.")
         sys.stdout.flush()
         time.sleep(1)  # Sleep for 1 second
-
+    sys.stdout.flush()
+    
 if __name__ == '__main__':
     logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks2', print_to_console=True)
     logger.debug('This is a debug message')

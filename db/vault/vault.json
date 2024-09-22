@@ -1,1 +1,1 @@
-[]
+[[{"symbol": "NKE", "timestamp": "2024-09-16 18:02:00", "orderSide": "SELL", "entryPrice": 79.4800033569336, "orderType": "MARKET", "timeInForce": "DAY", "orderQuantity": 10, "strategy_name": "strategy_1", "broker": "ibkr"}, {"symbol": "NKE", "timestamp": "2024-09-16 18:02:00", "orderSide": "BUY", "exitPrice": 79.63896336364746, "orderType": "stoploss_pct", "timeInForce": "DAY", "orderQuantity": 10, "strategy_name": "strategy_1", "broker": "ibkr"}]]

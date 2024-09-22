@@ -4,32 +4,33 @@ Create a simple Single Moving Crossover Strategy as a demo
 
 from vault.base_strategy import BaseStrategy
 import numpy as np
-import sys
+import sys, time
 
 class Strategy (BaseStrategy):
     def __init__(self):
+        super().__init__()
         self.strategy_name = 'strategy_1'
         self.granularity = "1m"
         self.stop_loss_abs = 0.3    #absolute value
         self.stop_loss_pct = 0.2    #percentage
         self.target_abs = 0.3       #absolute value
         self.target_pct = 0.2       #percentage
-        
         self.orderType = "MARKET" #MARKET, STOPLOSS-MARKET
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
         self.timeInForce = "DAY"    #DAY, Expiry, IoC (immediate or cancel) , TTL (Order validity in minutes) 
         self.orderQuantity = 10
+        self.data_inputs, tickers = self.datafeeder_inputs()
         
     def get_name(self):
         return self.strategy_name
         
     def datafeeder_inputs(self):
-        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
-        #tickers = ['MSFT', 'NVDA']
+        # tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        tickers = ['MSFT', 'NVDA']
         data_inputs = {'1m': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}, '1d': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}}
         return data_inputs, tickers
         
-    def generate_signals(self, market_data_df):
+    def generate_signals(self, market_data_df, system_timestamp):
         """
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING SIGNALS.
         """
@@ -37,7 +38,8 @@ class Strategy (BaseStrategy):
         ideal_portfolio = False
 
         for symbol in set(market_data_df["open"].columns):
-            if(self.granularity not in market_data_df.index.levels[0] or len(market_data_df.loc[self.granularity]) <= 30):
+            # If 
+            if(self.granularity not in market_data_df.index.levels[0] or len(market_data_df.loc[self.granularity]) <= self.data_inputs[self.granularity]['lookback']):
                 continue
             asset_data_df = market_data_df.loc[self.granularity].xs(symbol, axis=1, level='symbol').reset_index()
             asset_data_df['SMA15'] = asset_data_df['close'].rolling(window=15).mean()
@@ -53,9 +55,9 @@ class Strategy (BaseStrategy):
             #but for testing purposes I want to generate signals for each instruments 
             
             #long if above sma15 else short
-            if (asset_data_df.iloc[-1]['SMA15'] > asset_data_df.iloc[-1]['SMA30']) and (asset_data_df.iloc[-2]['SMA15'] <= asset_data_df.iloc[-2]['SMA30']):
+            if (round(asset_data_df.iloc[-1]['SMA15'], 2) > round(asset_data_df.iloc[-1]['SMA30'], 2)) and (round(asset_data_df.iloc[-2]['SMA15'], 2) <= round(asset_data_df.iloc[-2]['SMA30'], 2)):
                 signal_strength = 1
-            elif (asset_data_df.iloc[-1]['SMA15'] < asset_data_df.iloc[-1]['SMA30']) and (asset_data_df.iloc[-2]['SMA15'] >= asset_data_df.iloc[-2]['SMA30']):
+            elif (round(asset_data_df.iloc[-1]['SMA15'], 2) < round(asset_data_df.iloc[-1]['SMA30'], 2)) and (round(asset_data_df.iloc[-2]['SMA15'], 2) >= round(asset_data_df.iloc[-2]['SMA30'], 2)):
                 signal_strength = -1
             else:
                 signal_strength = 0
@@ -71,9 +73,13 @@ class Strategy (BaseStrategy):
                         "sl_abs": self.stop_loss_abs, 
                         "symbol_ltp" : asset_data_df.iloc[-1]['close'], 
                         "timeInForce" : self.timeInForce , 
-                        "orderQuantity" : self.orderQuantity
+                        "orderQuantity" : self.orderQuantity,
                         }
                 signal["timestamp"] = signal["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
                 signals.append(signal)
+                # self.logger.debug({'system_timestamp':system_timestamp, 'signal':signal})
+                # self.logger.debug(f"Previous SMA15: {round(asset_data_df.iloc[-2]['SMA15'], 2)}, Current SMA15: {round(asset_data_df.iloc[-1]['SMA15'], 2)}")
+                # self.logger.debug(f"Previous SMA30: {round(asset_data_df.iloc[-2]['SMA30'], 2)}, Current SMA30: {round(asset_data_df.iloc[-1]['SMA30'], 2)}")
+                # self.sleeper(5, "Strategy 1 Manual Sleep")
             
         return signals, ideal_portfolio

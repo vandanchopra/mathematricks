@@ -15,7 +15,7 @@ config_dict = {
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'log_level':'DEBUG',
-    'strategies':['strategy_1','strategy_2'],
+    'strategies':['strategy_1'],
     'account_info':{'account_id': '1234567890', 'account_type': 'client', 'broker':'ibkr', 'account_name':'paper_money_1', 'account_currency':'CAD', 
                      'funding_transactions':[{'transaction_type':'deposit', 'timestamp':pd.Timestamp(datetime(2024,9,12)).tz_localize('UTC').tz_convert('EST'), 'amount':200000, 'currency':'CAD'}], 
                      'current_account_balance':200000},

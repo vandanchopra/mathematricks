@@ -64,14 +64,14 @@ class Vault:
         
         return config_dict
         
-    def generate_signals(self, market_data_df):
+    def generate_signals(self, market_data_df, system_timestamp):
         signals_output = {'signals':[], 'ideal_portfolios':[]}
         ''' 
         for each strategy in self.strategies, get the signals and ideal portfolio.
         combine the signals and ideal portfolio from all strategies and return the combined signals.
         '''
         for strategy in self.strategies.values():
-            signal, ideal_portfolio = strategy.generate_signals(market_data_df)
+            signal, ideal_portfolio = strategy.generate_signals(market_data_df, system_timestamp)
             if(signal):
                 signals_output["signals"] += signal
             if(ideal_portfolio and ideal_portfolio != [{}]):

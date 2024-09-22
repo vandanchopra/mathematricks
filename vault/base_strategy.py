@@ -1,11 +1,14 @@
 import numpy as np
 from datetime import timedelta
 import pandas as pd
+from systems.utils import create_logger, sleeper
 
 class BaseStrategy:
     def __init__(self):
         self.strategy_name = 'BaseStrategy'
-    
+        self.logger = create_logger(log_level='DEBUG', logger_name='datafetcher', print_to_console=True)
+        self.sleeper = sleeper
+        
     def get_name(self):
         return self.strategy_name
     
@@ -140,3 +143,8 @@ class BaseStrategy:
 
 class Strategy(BaseStrategy):
     pass
+
+if __name__ == '__main__':
+    bs = Strategy()
+    bs.logger.debug('STRATEGY object created.')
+    
