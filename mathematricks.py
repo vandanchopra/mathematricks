@@ -51,9 +51,9 @@ class Mathematricks:
                         self.market_data_df = self.market_data_df[~self.market_data_df.index.duplicated(keep='last')]
                         for interval, next_datetime in next_rows.index:
                             # self.logger.debug(f"Interval: {interval}, Datetime: {next_datetime}, system_timestamp: {self.system_timestamp}")
-                            # self.logger.debug(next_rows)
-                            self.logger.debug({'self.market_data_df':self.market_data_df.shape})
-                            time.sleep(0.25)
+                            self.logger.debug(next_rows)
+                            # self.logger.debug({'self.market_data_df':self.market_data_df.shape})
+                            time.sleep(1)
                         # execute_signals(signals)
                         signals_output = self.vault.generate_signals(self.market_data_df)
                         self.logger.debug({'system_timestamp':self.system_timestamp, 'signals_output':signals_output})

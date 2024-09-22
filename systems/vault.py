@@ -1,4 +1,4 @@
-import json
+import json, os
 
 class Vault:
     def __init__(self, config_dict):
@@ -94,14 +94,30 @@ class RMS:
         self.avail_funds_s_2 = config_dict["risk_management"]["avail_funds_s_2"]
         self.max_signal_fund = config_dict["risk_management"]["max_signal_fund"]
         self.max_risk_per    = config_dict["risk_management"]["max_risk_per_trade"]
-        with open('db/vault/current_portfolio.json') as file:
-            self.current_portfolio = json.load(file)
-        with open('db/vault/vault.json') as file:
-            self.orders = json.load(file)
+        self.current_portfolio = self.get_current_portfolio()
+        self.orders = self.get_orders()
         self.strategy_1_portfolio = {}
         self.strategy_2_portfolio = {}
         self.get_strategy_portfolio()
 
+    def get_current_portfolio(self):
+        if os.path.exists('db/vault/current_portfolio.json'):
+            with open('db/vault/current_portfolio.json') as file:
+                self.current_portfolio = json.load(file)
+        else:
+            self.current_portfolio = {}
+        
+        return self.current_portfolio
+    
+    def get_orders(self):
+        if os.path.exists('db/vault/vault.json'):
+            with open('db/vault/vault.json') as file:
+                self.orders = json.load(file)
+        else:
+            self.orders = []
+        
+        return self.orders
+    
     def get_strategy_portfolio(self) -> None:
         for order in self.orders:
             order = order[0]
