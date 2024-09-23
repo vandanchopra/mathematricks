@@ -1,14 +1,19 @@
+
+#from ib_insync import IB, Stock, util, MarketOrder, LimitOrder, StopOrder
 from ib_insync import *
 import nest_asyncio
 import os
+#from networkx import dfs_edges
 import pandas as pd
 from tqdm import tqdm
 from datetime import datetime, timedelta
 import asyncio
-import logging
-from systems.utils import create_logger
+#import logging
+
+from utils import *
 
 nest_asyncio.apply()
+
 
 class IBKR():
     def __init__(self, ib):
@@ -23,7 +28,7 @@ class IBKR():
         
         
     def connect_to_IBKR(self,clientId):
-        '''NOTE: First start the TWS or Gateway software from IBKR'''
+        #NOTE: First start the TWS or Gateway software from IBKR
 
         # Connect to the IBKR TWS (Trader Workstation) or Gateway
         try:
@@ -120,8 +125,8 @@ class IBKR():
                     asset_data_df_dict[interval][batch[i]] = util.df(bars)
                         
         return asset_data_df_dict
-    
-        '''asset_data_df_dict = {}
+    '''
+        asset_data_df_dict = {}
         for interval in stock_symbols:
             asset_data_df_dict[interval] = {}
             for ticker in stock_symbols[interval]:
@@ -287,4 +292,3 @@ if __name__ == '__main__':
         trader.ib.sleep(5)
         print(Ticker.last)
         x += 1
-        

@@ -1,15 +1,16 @@
-from ib_insync import *
+#from ib_insync import *
 import pandas as pd
-from brokers.brokers import Brokers
+#from brokers import Brokers
 import json
+from brokers.ibkr import *
+from vault1 import *
+from brokers.sim import *
 
-
-ib = IB()
 
 class OMS:
     def __init__(self, config_dict):
         self.config_dict = config_dict
-        self.brokers = Brokers()
+        #self.brokers = Brokers()
         self.open_orders = self.load_open_orders()
         
         sync_direction = 'broker-to-oms' if config_dict['run_mode'] == 1 else 'oms-to-broker'
@@ -107,38 +108,66 @@ class OMS:
         # Placeholder for future implementation.
         pass
 
+
+
 # Usage example
 if __name__ == '__main__':
-    from config import config_dict
-    oms = OMS(config_dict)
     
-    # Load orders from the JSON file
-    orders = [[
-        # Entry order
-        {
-            'symbol': "INTC",
-            'timestamp': pd.Timestamp('2023-01-01 01:39:00'),
-            'orderSide': "BUY",
-            'entryPrice': 151.43,
-            'orderType': "MKT",
-            'timeInForce': 'DAY',
-            'orderQuantity': 10,
-            'strategy_name': "SMA15-SMA30",
-            'broker': 'IBKR'
-        },
-        # Exit Order / Trail Stop Order
-        {
-            'symbol': "INTC",
-            'timestamp': pd.Timestamp('2023-01-01 01:39:00'),
-            'orderSide': 'SELL',
-            'exitPrice': 149.43,
-            'orderType': 'STP',
-            'timeInForce': 'DAY',
-            'orderQuantity': 10,
-            'strategy_name': 'SMA15-SMA30',
-            'broker': 'IBKR'
-        }
-    ]]
-    
-    # Execute orders
-    oms.execute_orders(orders)
+    ibkr_trader = IBKR(None)
+    sim_trader = Sim()
+    # Get the orders
+    orders = retOrders()
+
+    # Print the broker from the entry and exit orders
+    for order_pair in orders:
+        for order in order_pair:
+            broker = order['broker']
+            
+            if broker == 'IBKR':
+                # Extract order details for IBKR
+                ticker = order['symbol']
+                orderSide = order['orderSide']
+                orderQuantity = order['orderQuantity']
+                orderType = order['orderType']
+                limit_price = order.get('entryPrice', 0)
+                stop_price = order.get('exitPrice', 0)
+
+                # Place the order using IBKR class
+                trade = ibkr_trader.place_order(
+                    ticker=ticker, 
+                    exchange="SMART", 
+                    currency="USD", 
+                    orderSide=orderSide, 
+                    orderQuantity=orderQuantity, 
+                    orderType=orderType, 
+                    limit_price=limit_price, 
+                    stop_price=stop_price
+                )
+                print(f"Order placed for {ticker} with broker IBKR: {trade}")
+            
+            elif broker == 'SIM':
+                # Extract order details for IBKR
+                ticker = order['symbol']
+                orderSide = order['orderSide']
+                orderQuantity = order['orderQuantity']
+                orderType = order['orderType']
+                limit_price = order.get('entryPrice', 0)
+                stop_price = order.get('exitPrice', 0)
+
+                # Place the order using IBKR class
+                trade = sim_trader.run_simulation(
+                    symbol=ticker, 
+                    order_type='market',
+                    quantity = orderQuantity, 
+                    limit_price=limit_price, 
+                    stop_loss=stop_price
+                )
+                execute_instance = Execute()
+                print(f"Order placed for {ticker} with broker SIM: {execute_instance.get_open_positions()}")
+                print(f"Open orders are: {execute_instance.get_open_orders()}")
+                
+
+            else:
+                # Unsupported broer
+                print(f"Broker {broker} not supported for order placement.")
+            
