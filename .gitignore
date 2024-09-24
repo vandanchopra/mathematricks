@@ -2,6 +2,8 @@
 ##### ignore all files in the vault directory except base_strategy.py
 vault/*
 !vault/base_strategy.py
+!vault/strategy_1.py
+!vault/strategy_2.py
 spectre/*
 
 ##### ignore all files in the data directory except AAPL.csv, MSFT.csv, and ^IXIC.csv
