@@ -57,9 +57,14 @@ class Mathematricks:
                         
                         # execute_signals(signals)
                         signals_output = self.vault.generate_signals(self.market_data_df, self.system_timestamp)
+                        if len(signals_output['signals']) > 0 or len(signals_output['ideal_portfolios']) > 0:
+                            self.logger.debug({'signals_output':signals_output})
+                            raise AssertionError('Signals generated.')
+                        # # Convert signals to orders
+                        orders = self.rms.convert_signals_to_orders(signals_output)
                         
-                        # # # Convert signals to orders
-                        # orders = self.rms.convert_signals_to_orders(signals_output)
+                        # # Execute orders on the market with the OMS
+                        # self.oms.execute_orders(orders)
                     else:
                         print('Backtest completed.')
                         break

@@ -72,7 +72,8 @@ def sleeper(total_seconds, message="System Sleeping"):
         sys.stdout.write(f"{message}: " + time_str + " remaining.")
         sys.stdout.flush()
         time.sleep(1)  # Sleep for 1 second
-    sys.stdout.flush()
+    sys.stdout.write("\r" + " " * 100)  # Clear the line
+    sys.stdout.write("\r")
     
 if __name__ == '__main__':
     logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks2', print_to_console=True)

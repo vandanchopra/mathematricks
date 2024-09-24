@@ -10,10 +10,8 @@ class Strategy (BaseStrategy):
     def __init__(self):
         super().__init__()
         self.strategy_name = 'strategy_1'
-        self.granularity = "1m"
-        self.stop_loss_abs = 0.3    #absolute value
+        self.granularity = "1d"
         self.stop_loss_pct = 0.2    #percentage
-        self.target_abs = 0.3       #absolute value
         self.target_pct = 0.2       #percentage
         self.orderType = "MARKET" #MARKET, STOPLOSS-MARKET
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
@@ -35,7 +33,7 @@ class Strategy (BaseStrategy):
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING SIGNALS.
         """
         signals = []
-        ideal_portfolio = False
+        return_type = None
 
         for symbol in set(market_data_df["open"].columns):
             # If 
@@ -47,7 +45,8 @@ class Strategy (BaseStrategy):
 
             asset_data_df['signal_strength'] = 0
             asset_data_df['signal_strength'][30:] = np.where(asset_data_df['SMA15'][30:] > asset_data_df['SMA30'][30:], 1, 0) 
-            asset_data_df['position'] = asset_data_df['signal_strength'].diff() 
+            asset_data_df['position'] = asset_data_df['signal_strength'].diff()
+            current_price = asset_data_df.iloc[-1]['close']
             #in the above df the position column will have a +1 value in case of a positive sma crossover and -1 in the opposite case
             #otherwise it will have 0 value
             #so we could long if position value is 1 and short when its -1
@@ -57,8 +56,10 @@ class Strategy (BaseStrategy):
             #long if above sma15 else short
             if (round(asset_data_df.iloc[-1]['SMA15'], 2) > round(asset_data_df.iloc[-1]['SMA30'], 2)) and (round(asset_data_df.iloc[-2]['SMA15'], 2) <= round(asset_data_df.iloc[-2]['SMA30'], 2)):
                 signal_strength = 1
+                orderDirection = "BUY"
             elif (round(asset_data_df.iloc[-1]['SMA15'], 2) < round(asset_data_df.iloc[-1]['SMA30'], 2)) and (round(asset_data_df.iloc[-2]['SMA15'], 2) >= round(asset_data_df.iloc[-2]['SMA30'], 2)):
-                signal_strength = -1
+                signal_strength = 1
+                orderDirection = "SELL"
             else:
                 signal_strength = 0
             #signal_strength = int(asset_data_df.iloc[-1]['position'])
@@ -70,16 +71,19 @@ class Strategy (BaseStrategy):
                         "entry_order_type": self.orderType, 
                         "exit_order_type":self.exit_order_type, 
                         "sl_pct": self.stop_loss_pct, 
-                        "sl_abs": self.stop_loss_abs, 
-                        "symbol_ltp" : asset_data_df.iloc[-1]['close'], 
+                        # "sl_abs": (1-self.stop_loss_abs) * current_price, 
+                        "symbol_ltp" : current_price, 
                         "timeInForce" : self.timeInForce , 
                         "orderQuantity" : self.orderQuantity,
+                        'orderDirection': orderDirection
                         }
                 signal["timestamp"] = signal["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
                 signals.append(signal)
                 # self.logger.debug({'system_timestamp':system_timestamp, 'signal':signal})
                 # self.logger.debug(f"Previous SMA15: {round(asset_data_df.iloc[-2]['SMA15'], 2)}, Current SMA15: {round(asset_data_df.iloc[-1]['SMA15'], 2)}")
                 # self.logger.debug(f"Previous SMA30: {round(asset_data_df.iloc[-2]['SMA30'], 2)}, Current SMA30: {round(asset_data_df.iloc[-1]['SMA30'], 2)}")
+                # self.logger.debug("-" * 150)
                 # self.sleeper(5, "Strategy 1 Manual Sleep")
-            
-        return signals, ideal_portfolio
+                return_type = 'signals'
+        
+        return return_type, signals

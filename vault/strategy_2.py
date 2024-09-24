@@ -7,12 +7,11 @@ import numpy as np
 
 class Strategy (BaseStrategy):
     def __init__(self):
+        super().__init__()
         self.strategy_name = 'strategy_2'
         self.granularity = "1d"
-        self.stop_loss_abs = 0.3
-        self.stop_loss_pct = 0.2    #percentage
-        self.target_abs = 0.3
-        self.target_pct = 0.2       #percentage
+        self.stop_loss_pct = 0.2    #percentage in decimals
+        self.target_pct = 0.2       #percentage in decimals
         
         self.orderType = "MARKET" #MARKET, LIMIT, STOPLOSS  
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
@@ -44,47 +43,52 @@ class Strategy (BaseStrategy):
         
         sorted_symbols = sorted (symbol_scores, key=symbol_scores.get)
         scores = sorted(scores)
-        top_symbols = sorted_symbols [-10:]
-        top_scores = np.array(scores[-10:])
+        long_short_symbol_count = 3
+        top_symbols = sorted_symbols [-long_short_symbol_count:]
+        top_scores = np.array(scores[-long_short_symbol_count:])
         # finding mean of each element so the sum of top scores is +1
         top_scores = (top_scores/sum(top_scores)).round(decimals=2) 
         
-        bottom_symbols = sorted_symbols [:10]
-        bottom_scores = np.array(scores[:10])
+        bottom_symbols = sorted_symbols [:long_short_symbol_count]
+        bottom_scores = np.array(scores[:long_short_symbol_count])
         # finding mean of each element so the sum of bottom scores is -1
         bottom_scores = (-1*bottom_scores/sum(bottom_scores)).round(decimals=2)
 
         return top_symbols, top_scores, bottom_symbols, bottom_scores, ltp
 
     
-    def generate_signals (self, market_data_df):
+    def generate_signals (self, market_data_df, system_timestamp):
         """
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING IDEAL PORTFOLIO.
         """
         #run strategy and get result data
         top_symbols, top_scores, bottom_symbols, bottom_scores, ltp = self.run_strategy(market_data_df)
-        signals = False
-        ideal_portfolio = {}
-        #above this line was the strategy portion and below is generation of the ideal portfolio signal
-        if(len(top_symbols) != 0):
-            ideal_portfolio = {
+        ideal_portfolio_entry = {}
+        
+        if len(top_symbols) != 0 or len(bottom_symbols) != 0:  
+            #above this line was the strategy portion and below is generation of the ideal portfolio signal
+            ideal_portfolio_entry = {
                 'strategy_name':self.strategy_name,
-                'timestamp':market_data_df.loc[self.granularity].xs(top_symbols[0], axis=1, level='symbol').reset_index().iloc[-1]['datetime'],
+                'timestamp':system_timestamp.strftime('%Y-%m-%d %H:%M:%S'),
                 'entry_order_type':self.orderType,
                 'exit_order_type':self.exit_order_type,
                 'sl_pct':self.stop_loss_pct,
-                'sl_abs':self.stop_loss_abs,
                 'timeInForce':self.timeInForce,
                 'orderQuantity':self.orderQuantity
             }
-            ideal_portfolio['symbols'] = {}
+            ideal_portfolio_entry['ideal_portfolio'] = {}
+            
             for i in range(len(top_symbols)):
-                ideal_portfolio['symbols'][top_symbols[i]] = [top_scores[i], ltp[top_symbols[i]]]
+                ideal_portfolio_entry['ideal_portfolio'][top_symbols[i]] = {'orderDirection':'BUY', 'signal_strength':abs(top_scores[i]), 'current_price':ltp[top_symbols[i]]}
             for i in range(len(bottom_symbols)):
-                ideal_portfolio['symbols'][bottom_symbols[i]] = [bottom_scores[i], ltp[bottom_symbols[i]]]
-            ideal_portfolio["timestamp"] = ideal_portfolio["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
+                ideal_portfolio_entry['ideal_portfolio'][bottom_symbols[i]] = {'orderDirection':'SELL', 'signal_strength':abs(bottom_scores[i]), 'current_price':ltp[bottom_symbols[i]]}
+            # ideal_portfolio["timestamp"] = ideal_portfolio["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
+            # self.logger.debug({'ideal_portfolio_entry':ideal_portfolio_entry})
+            return_type = 'ideal_portfolios'
+        else:
+            return_type = None
 
-        return signals , [ideal_portfolio]
+        return return_type, ideal_portfolio_entry
 
 #['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
 #PG, XOM, MSFT, JPM, AAPL, NFLX, GOOGL, TSLA, NVDA, NKE, CRM, UNH, DIS, HD, JNJ, V, AMD, 
