@@ -8,7 +8,8 @@ import pandas as pd
 from tqdm import tqdm
 from datetime import datetime, timedelta
 import asyncio
-#import logging
+import logging
+from systems.utils import *
 
 from utils import *
 
@@ -27,15 +28,28 @@ class IBKR():
         self.connect_to_IBKR(0)
         
         
-    def connect_to_IBKR(self,clientId):
+    def connect_to_IBKR(self,client_id):
         #NOTE: First start the TWS or Gateway software from IBKR
 
         # Connect to the IBKR TWS (Trader Workstation) or Gateway
-        try:
-            self.ib.connect('127.0.0.1', 7497, clientId=10) # can you try client Id 10 or client id 2.
-        except:
-            self.ib.connect('127.0.0.1', 7497
-                            , clientId=clientId+1)
+        if client_id is None:
+            client_id = 0  # Default to client_id 0
+        retries = 3  # Number of retries in case of timeout
+        for attempt in range(retries):
+            try:
+                print(f"Connecting to IBKR with clientId: {client_id}, Attempt {attempt + 1}")
+                self.ib.connect('127.0.0.1', 7497, clientId=client_id)
+                break  # Connection successful, exit the retry loop
+            except TimeoutError:
+                print(f"TimeoutError: Attempt {attempt + 1} failed.")
+                client_id += 1  # Increment clientId to avoid conflict
+                if attempt == retries - 1:
+                    raise  # Re-raise the exception after the last attempt
+            except Exception as e:
+                print(f"Error connecting to IBKR: {e}")
+                client_id += 1
+                if attempt == retries - 1:
+                    raise
 
         # Check if the connection is successful
         if self.ib.isConnected():
@@ -109,7 +123,26 @@ class IBKR():
         # Return the trade
         return trade
     
+    def get_order_status(self):
+    # Fetch open orders
+        open_orders = IB().trades()
     
+        if not open_orders:
+            print("No open orders found.")
+            return []
+
+    # Loop through open orders and print their statuses
+        order_status_list = []
+        if open_orders:
+            for order in open_orders:
+                order_status_list.append({
+                    'OrderID': order.orderId,
+                    'Status': order.status,
+                    'Filled': order.filled,
+                    'Remaining': order.remaining
+                })
+
+        return order_status_list
     
     async def update_price_data_batch(self,stock_symbols, start_date=None,batch_size = 75):
         asset_data_df_dict = {}
@@ -276,19 +309,7 @@ class IBKR():
 if __name__ == '__main__':
     ib = None
     trader = IBKR(ib)
-    contract = Stock('AAPL', 'SMART', 'USD')
+    order = trader.get_order_status()
+    print(order)
     
-    stock_symbols = {
-        "1 day": ["AAPL", "GOOG"]
-    }
     
-    # Use asyncio to handle async tasks
-    data = asyncio.run(trader.update_price_data_batch(stock_symbols))
-
-    print(data)
-    Ticker=trader.ib.reqMktData(contract)
-    x = 0
-    while x < 3:
-        trader.ib.sleep(5)
-        print(Ticker.last)
-        x += 1
