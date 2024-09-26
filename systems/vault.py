@@ -48,9 +48,11 @@ class Vault:
         for strategy in self.strategies.values():
             return_type, return_item = strategy.generate_signals(market_data_df, system_timestamp)
             if return_type == 'signals':
-                signals_output["signals"].append(return_item)
+                for signal in return_item:
+                    signals_output["signals"].append(signal)
             if return_type == 'ideal_portfolios':
-                signals_output["ideal_portfolios"].append(return_item)
+                for ideal_portfolio in return_item:
+                    signals_output["ideal_portfolios"].append(ideal_portfolio)
                 
         # with open('db/vault/signals.json', 'w') as file:
         #     json.dump(signals_output, file)
@@ -67,7 +69,7 @@ class RMS:
         self.max_risk_per_bet = self.config_dict["risk_management"]["max_risk_per_bet"]
         self.orders = self.load_orders_from_db()
         self.margin_available = self.update_all_margin_available()
-        self.get_strategy_portfolio()
+        # self.get_strategy_portfolio()
 
     def load_orders_from_db(self):
         if os.path.exists('db/vault/orders.json'):
@@ -187,7 +189,9 @@ class RMS:
                     "timeInForce":signal["timeInForce"],
                     "orderQuantity":abs(int(signal['orderQuantity'])),
                     "strategy_name":signal["strategy_name"],
-                    "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM'
+                    "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM', 
+                    'granularity': signal['granularity'],
+                    "status": 'pending'
                     }
                 order_list.append(order_leg)
             if 'exit_order_type' in signal:
@@ -199,7 +203,9 @@ class RMS:
                     "timeInForce": 'GTC' if signal["exit_order_type"] == 'stoploss_abs' else signal["timeInForce"],
                     "orderQuantity":abs(int(signal['orderQuantity'])),
                     "strategy_name":signal["strategy_name"],
-                    "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM'
+                    "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM',
+                    'granularity': signal['granularity'],
+                    "status": 'pending'
                     }
                 order_list.append(order_leg)
     
@@ -285,6 +291,7 @@ class RMS:
                     "timeInForce" : ideal_portfolio_entry["timeInForce"] , 
                     "orderQuantity" : abs(order_qty),
                     "orderDirection": orderDirection,
+                    "granularity": ideal_portfolio_entry["granularity"],
                     'status': 'pending'
                     }
             signals.append([signal])
@@ -306,35 +313,41 @@ class RMS:
             #     self.current_portfolio[symbol] = order_qty
         else:
             self.logger.debug({'REJECTED: signal_list':signal_list[-1]})
-            
-        return signal_list, order_list
         
-    def convert_signals_to_orders(self, signals_output):
+        order_list_new = []
+        for order in order_list:
+            order_list_new.append(order)
+        signal_list[-1]["status"] = 'completed'
+        
+        return signal_list, order_list_new
+        
+    def convert_signals_to_orders(self, new_signals):
         # Get New Signals Signals
-        signals = []
-
+        all_new_signals = []
+        new_orders = []
         # make each signal a list
-        for signal in signals_output["signals"]:
+        for signal in new_signals["signals"]:
             signal['status'] = 'pending'
-            signals.append([signal])
+            all_new_signals.append([signal])
         
         # Convert ideal portfolio to generate new signals
-        for ideal_portfolio_entry in signals_output["ideal_portfolios"]:
-            signals +=  self.ideal_portfolio_to_signals(ideal_portfolio_entry)
+        # self.logger.debug({'i_p':new_signals["ideal_portfolios"]})
+        for ideal_portfolio_entry in new_signals["ideal_portfolios"]:
+            all_new_signals +=  self.ideal_portfolio_to_signals(ideal_portfolio_entry)
 
         # Convert all signals to orders
-        for signal_list in signals:
-            signal_list, order_list = self.create_order(signal_list)
-            for order in order_list:
-                self.orders.append(order)
+        for count, signal_list in enumerate(all_new_signals):
+            signal_list, new_order_list = self.create_order(signal_list)
+            # Update the signal_list received.
+            all_new_signals[count] = signal_list
+            new_orders.append(new_order_list)
+            
+        if len(new_orders) > 0:
+            self.orders.extend(new_order_list)
+            self.logger.warning(f'NOTE: Saving new recieved signals and portfolios to a json has not yet been implemented. plz implement soon at this point.')
+            self.logger.warning(f'NOTE: Saving new recieved orders to a json has not yet been implemented. plz implement soon at this point.')
         
-        # # Update jsons
-        # with open('db/vault/current_portfolio.json', 'w') as file:
-        #     json.dump(self.current_portfolio, file)
-        # with open('db/vault/orders.json', 'w') as file:
-        #     json.dump(self.orders, file)    
-        
-        return self.orders
+        return new_orders
 
 if __name__ == '__main__':
     from config import config_dict

@@ -1,103 +1,69 @@
-from ib_insync import IB, Stock, util
+
+#from ib_insync import IB, Stock, util, MarketOrder, LimitOrder, StopOrder
+# from ib_insync import *
+from copy import deepcopy
+from urllib import response
+from ib_insync import IB, Stock, MarketOrder, LimitOrder, StopOrder
 import nest_asyncio
 import os
+#from networkx import dfs_edges
 import pandas as pd
 from tqdm import tqdm
-from datetime import datetime, timedelta
+# from datetime import datetime, timedelta
 import asyncio
 import logging
 from systems.utils import create_logger
 
 nest_asyncio.apply()
 
-class IBKR():
-    def __init__(self, ib=None):
-        if ib is None:
-            self.ib = IB()
-        else:
-            self.ib = ib
-        self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
-        self.interval_lookup = {"1m": "1 min", "2m": "2min", "5m":"5 min","1d":"1 day"} # upate this to include all provided interval from yahoo and ibkr
-        self.duration_lookup = {"1m": "1 W", "2m": "2 W", "5m":"1 M","1d":"10 Y"} #update this to get max duration fora each interval
-        self.connect_to_IBKR(0)
-        
-        
-    def connect_to_IBKR(self,clientId):
-        '''NOTE: First start the TWS or Gateway software from IBKR'''
+
+class IBKRConnect:
+    def __init__(self):
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='IBKR-connect', print_to_console=True)
+        self.ib = None
+        self.connected = False
+    
+    def connect_to_IBKR(self, client_id=None):
+        ib = IB()
+        #NOTE: First start the TWS or Gateway software from IBKR
 
         # Connect to the IBKR TWS (Trader Workstation) or Gateway
-        try:
-            self.ib.connect('127.0.0.1', 7777, clientId=clientId) # can you try client Id 10 or client id 2.
-        except:
-            self.ib.connect('127.0.0.1', 7777, clientId=clientId+1)
+        if client_id is None:
+            client_id = 0  # Default to client_id 0
+        retries = 3  # Number of retries in case of timeout
+        for attempt in range(retries):
+            try:
+                print(f"Connecting to IBKR with clientId: {client_id}, Attempt {attempt + 1}")
+                ib.connect('127.0.0.1', 7497, clientId=client_id)
+                break  # Connection successful, exit the retry loop
+            except TimeoutError:
+                print(f"TimeoutError: Attempt {attempt + 1} failed.")
+                client_id += 1  # Increment clientId to avoid conflict
+                if attempt == retries - 1:
+                    raise  # Re-raise the exception after the last attempt
+            except Exception as e:
+                print(f"Error connecting to IBKR: {e}")
+                client_id += 1
+                if attempt == retries - 1:
+                    raise
 
         # Check if the connection is successful
-        if self.ib.isConnected():
+        if ib.isConnected():
             print('Connected to IBKR')
+            connected = True
         else:
             print('Failed to connect to IBKR')
+        return ib
 
-    def get_current_portfolio(self):
-        # Request the current portfolio from IBKR
-        portfolio = self.ib.portfolio()
+class IBKR:
+    def __init__(self):
+        self.data = Data(IBKRConnect)  # Yahoo Finance Data Fetcher
+        self.execute = IBKR_Execute(IBKRConnect)  # Order Execution
 
-        # Return the portfolio
-        return portfolio
-
-    def get_current_price(self, ticker: str, exchange: str, currency: str):
-        # Request the current market data for AAPL
-        contract = self.ib.qualifyContracts(Stock(ticker, exchange, currency))
-        ticker = self.ib.reqTickers(contract)[0]
-
-        # Get the current price
-        current_price = ticker.marketPrice()
-
-        # Return the current price
-        return current_price
-
-    def get_current_stop_loss_orders(self):
-        # Request the current stop loss orders from IBKR
-        all_open_orders = self.ib.openOrders()
-        stop_loss_orders = []
-        for open_order in all_open_orders:
-            if open_order.orderType == 'STP':
-                stop_loss_orders.append(open_order)
-
-        # Return the stop loss orders
-        return stop_loss_orders
-
-    def place_order(self, ticker: str, exchange: str, currency: str, action: str, quantity: int, order_type: str, limit_price: float = 0, stop_price: float = 0):
-        # Create a contract for the stock
-        ib = self.ib
-        contract = ib.qualifyContracts(Stock(ticker, exchange, currency))
-
-        # Create an order for the stock
-        if order_type == 'MKT':
-            order = ib.marketOrder(action, quantity)
-        elif order_type == 'LMT':
-            order = ib.LimitOrder(action, quantity, limit_price)
-        elif order_type == 'STP':
-            order = ib.StopOrder(action, quantity, stop_price)
-
-        # Place the order
-        trade = ib.placeOrder(contract, order)
-
-        # Return the trade
-        return trade
-
-    def cancel_order(self, trade):
-        # Cancel the order
-        self.ib.cancelOrder(trade)
-
-        # Return the trade
-        return trade
-
-    def modify_order(self, trade, new_quantity: int, new_limit_price: float, new_stop_price: float):
-        # Modify the order
-        self.ib.modifyOrder(trade, new_quantity, new_limit_price, new_stop_price)
-
-        # Return the trade
-        return trade
+class Data:
+    def __init__(self, IBKRConnect):
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='IBKR-data', print_to_console=True)
+        self.ib_connect = IBKRConnect()
     
     async def update_price_data_batch(self,stock_symbols, start_date=None,batch_size = 75):
         asset_data_df_dict = {}
@@ -112,9 +78,8 @@ class IBKR():
                         print(f"Error fetching data for batch: {bars}")
                     asset_data_df_dict[interval][batch[i]] = util.df(bars)
                         
-        return asset_data_df_dict
-    
-        '''asset_data_df_dict = {}
+        '''
+        asset_data_df_dict = {}
         for interval in stock_symbols:
             asset_data_df_dict[interval] = {}
             for ticker in stock_symbols[interval]:
@@ -126,6 +91,8 @@ class IBKR():
                     asset_data_df = self.fetch_historical_data(ticker,barSize)
                 asset_data_df_dict[interval][ticker]= asset_data_df
         return asset_data_df_dict'''
+        
+        return asset_data_df_dict
 
     async def fetch_historical_data(self,ticker,barSize,start=None,exchange:str = "SMART", currency:str = "USD"):
         ib = self.ib
@@ -146,7 +113,7 @@ class IBKR():
         
         return bars
 
-    def update_price_data(self, stock_symbols,interval_inputs=['1d'], data_folder='db/data/ibkr', throttle_secs=1,back_test_start_date=None,back_test_end_date=None, lookback=None):
+    def update_price_data(self, stock_symbols,interval_inputs=['1d'], data_folder='db/data/ibkr', throttle_secs=1,back_test_start_date=None,back_test_end_date=None):
         data_frames = []
         pbar = tqdm(stock_symbols, desc='Updating data: ')
 
@@ -246,40 +213,193 @@ class IBKR():
 
         # Sort the index
         combined_df.sort_index(inplace=True)  
-        # Trim the data to the back_test_start_date and back_test_end_date\
-        if lookback is not None:
-            joined_dict = {}
-            for interval, lookback_value in lookback.items():
-                lookback_value = int(lookback_value*1.5)
-                before = combined_df.loc[interval].loc[:back_test_start_date]
-                after = combined_df.loc[interval].loc[back_test_start_date:back_test_end_date]
-                before_new = before.iloc[-lookback_value:]
-                # join before and after dataframes
-                joined = pd.concat([before_new, after])
-                joined.sort_index(inplace=True)
-                joined_dict[interval] = joined
-            combined_df = pd.concat(joined_dict.values(), keys=joined_dict.keys(), names=['interval', 'date'])
+        if back_test_start_date is None and back_test_end_date is None:
+            return combined_df
+
+        if back_test_start_date is not None and back_test_end_date is not None:
+            combined_df = combined_df.loc[(combined_df.index.get_level_values(1) >= back_test_start_date) & (combined_df.index.get_level_values(1) <= back_test_end_date),:]
+        
+        if back_test_start_date is not None:
+            combined_df = combined_df.loc[combined_df.index.get_level_values(1) >= back_test_start_date,:]
+    
+        if back_test_end_date is not None:
+            combined_df = combined_df.loc[combined_df.index.get_level_values(1) <= back_test_end_date,:]      
         
         return combined_df
+
+class IBKR_Execute:
+    def __init__(self, IBKRConnect):
+        self.ib_connect = IBKRConnect()
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='IBKR-execute', print_to_console=True)
+        self.interval_lookup = {"1m": "1 min", "2m": "2min", "5m":"5 min","1d":"1 day"} # update this to include all provided interval from yahoo and ibkr
+        self.duration_lookup = {"1m": "1 W", "2m": "2 W", "5m":"1 M","1d":"10 Y"} #update this to get max duration fora each interval
+        self.ib = None
+        
+    def place_order(self, order, market_data_df):
+        # Create a contract for the stock
+        # ticker: str, exchange: str, currency: str, orderSide: str, orderQuantity: int, orderType: str, limit_price: float = 0, stop_price: float = 0
+        self.logger.debug({'order': order})
+        symbol = order['symbol']
+        currency = 'USD'
+        exchange = 'SMART'
+        orderDirection = order['orderDirection']
+        orderQuantity = order['orderQuantity']
+        
+        if not self.ib_connect.connected:
+            self.ib = self.ib_connect.connect_to_IBKR(0)
+        
+        contract = self.ib.qualifyContracts(Stock(symbol, exchange, currency))[0]
     
+        # Create an order for the stock
+        if order['orderType'].lower() == 'market':
+            IB_order = MarketOrder(orderDirection, orderQuantity)
+        elif order['orderType'].lower() == 'stoploss_abs':
+            exitPrice = order['exitPrice']
+            IB_order = StopOrder(orderDirection, orderQuantity, exitPrice)
+        else:
+            raise Exception(f"Order type {order['orderType']} not supported. Use 'market' or 'stoploss_abs'.")
+        
+        # Place the order
+        IB_order_response = self.ib.placeOrder(contract, IB_order)
+        self.logger.debug({'IB_order_response':IB_order_response})
+        # self.ib.disconnect()
+        # raise AssertionError('MANUALLY STOPPED HERE')
+        response_order = deepcopy(order)
+        
+        # Return the trade
+        return IB_order_response
+        
+    def execute_order(self, order, market_data_df):
+        if order['status'] == 'pending':
+            # Execute the order in the simulator
+            response_order = self.place_order(order, market_data_df=market_data_df)
+        elif order['status'] == 'open':
+            # Update the order status in the simulator and check if it's filled
+            response_order = self.update_order_status(order, market_data_df=market_data_df)
+        
+        return response_order
+
+
+class IBKR_Execute_old:
+    def __init__(self):
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='IBKR-execute', print_to_console=True)
+        self.interval_lookup = {"1m": "1 min", "2m": "2min", "5m":"5 min","1d":"1 day"} # update this to include all provided interval from yahoo and ibkr
+        self.duration_lookup = {"1m": "1 W", "2m": "2 W", "5m":"1 M","1d":"10 Y"} #update this to get max duration fora each interval
+        self.connected = False
+        # self.connect_to_IBKR(0)
+    
+    def place_order(self, order):
+        # Create a contract for the stock
+        # ticker: str, exchange: str, currency: str, orderSide: str, orderQuantity: int, orderType: str, limit_price: float = 0, stop_price: float = 0
+        
+        contract = ib.qualifyContracts(Stock(ticker, exchange, currency))[0]
+
+        # Create an order for the stock
+        if orderType == 'MKT':
+            order = MarketOrder(orderSide, orderQuantity)
+        elif orderType == 'LMT':
+            order = LimitOrder(orderSide, orderQuantity, limit_price)
+        elif orderType == 'STP':
+            order = StopOrder(orderSide, orderQuantity, stop_price)
+        else:
+            raise Exception(f"Order type {orderType} not supported. Use 'MKT', 'LMT', or 'STP'.")
+
+        # Place the order
+        trade = ib.placeOrder(contract, order)
+
+        # Return the trade
+        return trade
+    
+    def execute_order(self, order, market_data_df):
+        if order['status'] == 'pending':
+            # Execute the order in the simulator
+            response_order = self.place_order(order, market_data_df=market_data_df)
+        elif order['status'] == 'open':
+            # Update the order status in the simulator and check if it's filled
+            response_order = self.update_order_status(order, market_data_df=market_data_df)
+        
+        return response_order
+
+
+
+
+
+
+
+        
+    def get_current_portfolio(self):
+        # Request the current portfolio from IBKR
+        portfolio = self.ib.portfolio()
+
+        # Return the portfolio
+        return portfolio
+
+    def get_current_price(self, ticker: str, exchange: str, currency: str):
+        # Request the current market data for AAPL
+        contract = self.ib.qualifyContracts(Stock(ticker, exchange, currency))
+        ticker = self.ib.reqTickers(contract)[0]
+
+        # Get the current price
+        current_price = ticker.marketPrice()
+
+        # Return the current price
+        return current_price
+
+    def get_current_stop_loss_orders(self):
+        # Request the current stop loss orders from IBKR
+        all_open_orders = self.ib.openOrders()
+        stop_loss_orders = []
+        for open_order in all_open_orders:
+            if open_order.orderType == 'STP':
+                stop_loss_orders.append(open_order)
+
+        # Return the stop loss orders
+        return stop_loss_orders
+    
+    def get_open_orders(self):
+        return self.ib.openOrders()
+        
+
+
+    def cancel_order(self, trade):
+        # Cancel the order
+        self.ib.cancelOrder(trade)
+
+        # Return the trade
+        return trade
+
+    def modify_order(self, trade, new_quantity: int, new_limit_price: float, new_stop_price: float):
+        # Modify the order
+        self.ib.modifyOrder(trade, new_quantity, new_limit_price, new_stop_price)
+
+        # Return the trade
+        return trade
+    
+    def get_order_status(self):
+    # Fetch open orders
+        open_orders = IB().trades()
+    
+        if not open_orders:
+            print("No open orders found.")
+            return []
+
+    # Loop through open orders and print their statuses
+        order_status_list = []
+        if open_orders:
+            for order in open_orders:
+                order_status_list.append({
+                    'OrderID': order.orderId,
+                    'Status': order.status,
+                    'Filled': order.filled,
+                    'Remaining': order.remaining
+                })
+
+        return order_status_list
     
 if __name__ == '__main__':
     ib = None
     trader = IBKR(ib)
-    contract = Stock('AAPL', 'SMART', 'USD')
+    order = trader.get_order_status()
+    print(order)
     
-    stock_symbols = {
-        "1 day": ["AAPL", "GOOG"]
-    }
     
-    # Use asyncio to handle async tasks
-    data = asyncio.run(trader.update_price_data_batch(stock_symbols))
-
-    print(data)
-    Ticker=trader.ib.reqMktData(contract)
-    x = 0
-    while x < 3:
-        trader.ib.sleep(5)
-        print(Ticker.last)
-        x += 1
-        

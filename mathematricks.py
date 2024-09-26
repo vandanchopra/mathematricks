@@ -1,4 +1,5 @@
 import sys, os, json, time, logging
+from numpy import sign
 import pandas as pd
 from calendar import c
 from pdb import run
@@ -7,7 +8,8 @@ from config import config_dict
 from systems.datafetcher import DataFetcher
 from systems.datafeeder import DataFeeder
 from systems.vault import Vault, RMS
-from systems.utils import create_logger
+from systems.oms import OMS
+from systems.utils import create_logger, sleeper
 import datetime, pytz
 import warnings
 warnings.filterwarnings("ignore")
@@ -18,16 +20,21 @@ write the software for AAPL, MSFT only.
 
 class Mathematricks:
     def __init__(self, config_dict):
+        self.logger = create_logger(log_level='DEBUG', logger_name='Mathematricks', print_to_console=True)
         self.config_dict = config_dict
         self.sleep_time = self.config_dict['sleep_time']
         self.market_data_df = pd.DataFrame()
-        self.logger = create_logger(log_level=self.config_dict['log_level'], logger_name='datafetcher', print_to_console=True)
+        self.oms = OMS(self.config_dict)
+        # Update the config_dict with the latest values from Vault
+        self.config_dict = self.oms.config_dict
+        
         self.vault = Vault(self.config_dict)
+        # Update the config_dict with the latest values from Vault
         self.config_dict = self.vault.config_dict
+        
         self.rms = RMS(self.config_dict)
         self.datafeeder = DataFeeder(self.config_dict)
         self.datafetcher = DataFetcher(self.config_dict)
-        self.logger.debug({'config_dict': self.config_dict})
     
     def run(self):
         run_mode = config_dict['run_mode']
@@ -56,17 +63,26 @@ class Mathematricks:
                         #     time.sleep(1)
                         
                         # execute_signals(signals)
-                        signals_output = self.vault.generate_signals(self.market_data_df, self.system_timestamp)
-                        if len(signals_output['signals']) > 0 or len(signals_output['ideal_portfolios']) > 0:
-                            self.logger.debug({'signals_output':signals_output})
-                            raise AssertionError('Signals generated.')
-                        # # Convert signals to orders
-                        orders = self.rms.convert_signals_to_orders(signals_output)
+                        new_signals = self.vault.generate_signals(self.market_data_df, self.system_timestamp)
                         
+                        # Convert signals to orders
+                        self.new_orders = self.rms.convert_signals_to_orders(new_signals)
+                        # ## PRINT THE SIGNALS GENERATED IF NEEDED
+                        # if len(self.new_orders) > 0:
+                            # self.logger.debug({'new_orders':self.new_orders})
+                            # input('Press Enter to continue...')
                         # # Execute orders on the market with the OMS
-                        # self.oms.execute_orders(orders)
+                        self.oms.execute_orders(self.new_orders, self.system_timestamp, self.market_data_df)
+                        
+                        # if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
+                        #     symbols = [signal['symbol'] for signal in new_signals['signals']]
+                        #     self.logger.debug(f'{self.system_timestamp} | Signals generated: {len(new_signals["signals"])} | Symbols: {symbols}')
+                        #     self.logger.debug({'new_orders':self.new_orders})
+                        #     raise AssertionError('MANUALLY STOPPING HERE')
+                        
                     else:
-                        print('Backtest completed.')
+                        self.logger.info('Backtest completed.')
+                        self.logger.debug('This is where the backtest report would be generated.')
                         break
                     # time.sleep(0.25)
                 

@@ -55,7 +55,7 @@ class DataFetcher:
                 market_data_df = self.broker.sim.data.update_price_data(list_of_symbols,interval_inputs=interval_inputs,back_test_start_date=start_date,back_test_end_date=end_date, lookback=lookback)
                 
             elif data_source == 'ibkr':
-                market_data_df = self.broker.ib.update_price_data(list_of_symbols,interval_inputs=interval_inputs,back_test_start_date=start_date,back_test_end_date=end_date, lookback=lookback) 
+                market_data_df = self.broker.ib.data.update_price_data(list_of_symbols,interval_inputs=interval_inputs,back_test_start_date=start_date,back_test_end_date=end_date, lookback=lookback) 
         
         # market_data_df_final = []
         # for interval in interval_inputs:

@@ -12,7 +12,6 @@ class Strategy (BaseStrategy):
         self.granularity = "1d"
         self.stop_loss_pct = 0.2    #percentage in decimals
         self.target_pct = 0.2       #percentage in decimals
-        
         self.orderType = "MARKET" #MARKET, LIMIT, STOPLOSS  
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
         self.timeInForce = "DAY"    #DAY, Expiry, IoC (immediate or cancel) , TTL (Order validity in minutes) 
@@ -24,7 +23,8 @@ class Strategy (BaseStrategy):
 
     
     def datafeeder_inputs(self):
-        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        # tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        tickers = ['AAPL', 'MSFT']
         return { "1d" : {'columns': ['open', 'high', 'low', 'close', 'volume'] , 'lookback':100}}, tickers
 
     
@@ -74,7 +74,8 @@ class Strategy (BaseStrategy):
                 'exit_order_type':self.exit_order_type,
                 'sl_pct':self.stop_loss_pct,
                 'timeInForce':self.timeInForce,
-                'orderQuantity':self.orderQuantity
+                'orderQuantity':self.orderQuantity,
+                'granularity':self.granularity
             }
             ideal_portfolio_entry['ideal_portfolio'] = {}
             
@@ -87,7 +88,9 @@ class Strategy (BaseStrategy):
             return_type = 'ideal_portfolios'
         else:
             return_type = None
-
+        
+        ideal_portfolio_entry = [ideal_portfolio_entry]
+        
         return return_type, ideal_portfolio_entry
 
 #['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'FB', 'NFLX', 'INTC', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']

@@ -5,6 +5,7 @@ vault/*
 !vault/strategy_1.py
 !vault/strategy_2.py
 spectre/*
+/junk
 
 ##### ignore all files in the data directory except AAPL.csv, MSFT.csv, and ^IXIC.csv
 db/data/ibkr/1d/**

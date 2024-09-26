@@ -1,20 +1,100 @@
-from datetime import tzinfo
-import os, sys, time, json
+import os, hashlib, time, json, logging, sys
 import pandas as pd
 import yfinance as yf
 from systems.utils import create_logger
-import logging
 from tqdm import tqdm
+from copy import deepcopy
 
+# Main Simulation Class
 class Sim():
     def __init__(self):
-        self.data = Yahoo()
-        self.execute = Execute()
+        self.data = Yahoo()  # Yahoo Finance Data Fetcher
+        self.execute = SIM_Execute()  # Order Execution
 
-class Execute():
-    def __ini__(self):
-        self.completed = None
+# Order Execution Class
+class SIM_Execute():
+    def __init__(self):
+        self.logger = create_logger(log_level='DEBUG', logger_name='datafetcher', print_to_console=True)
 
+    def generate_order_id(self, order, system_timestamp):
+        json_str = json.dumps(order, default=str) + str(system_timestamp)
+        json_bytes = json_str.encode('utf-8')
+        order_id = hashlib.sha256(json_bytes).hexdigest()
+        return order_id
+    
+    def place_order(self, order, market_data_df):
+        """
+        Place a market or stop-loss-limit order. All other order types are rejected.
+        """
+        system_timestamp = market_data_df.index.get_level_values(1)[-1]
+        symbol = order['symbol']
+        granularity = order['granularity']
+        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+        
+        if order['orderType'].lower() == 'market':
+            response_order = deepcopy(order)
+            response_order['status'] = 'closed'
+            response_order['fill_price'] = current_price
+            response_order['filled_timestamp'] = system_timestamp
+            response_order['order_id'] = self.generate_order_id(order, system_timestamp)
+            response_order['fresh_update'] = True
+            response_order['message'] = 'Order filled at market price.'
+            
+        elif order['orderType'].lower() == 'stoploss_abs':
+            response_order = deepcopy(order)
+            response_order['status'] = 'open'
+            response_order['order_id'] = self.generate_order_id(order, system_timestamp)
+            response_order['message'] = 'Stop-loss order placed.'
+            response_order['fresh_update'] = True
+            
+        else:
+            response_order = deepcopy(order)
+            response_order['status'] = 'rejected'
+            response_order['order_id'] = self.generate_order_id(order, system_timestamp)
+            response_order['message'] = 'Order Rejected: Order type not supported.'
+            self.logger.warning(f"ORDER REJECTED: Order type {order['orderType']} not supported.")
+            response_order['fresh_update'] = True
+        
+        return response_order
+    
+    def update_order_status(self, order, market_data_df):
+        '''if the order is open, check if it's filled'''
+        system_timestamp = market_data_df.index.get_level_values(1)[-1]
+        symbol = order['symbol']
+        granularity = order['granularity']
+        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+        
+        if order['orderType'].lower() == 'stoploss_abs':
+            if order['orderDirection'].lower() == 'buy' and current_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_price <= order['exitPrice']:
+                response_order = deepcopy(order)
+                response_order['status'] = 'closed'
+                response_order['fill_price'] = current_price
+                response_order['filled_timestamp'] = system_timestamp
+                response_order['fresh_update'] = True
+                response_order['message'] = 'Stop-loss order filled.'
+            else:
+                response_order = deepcopy(order)
+                response_order['status'] = 'open'
+                response_order['fresh_update'] = False
+        else:
+            response_order = deepcopy(order)
+            response_order['status'] = 'rejected'
+            response_order['fresh_update'] = True
+            response_order['message'] = 'Order Rejected: Order type not supported.'
+            self.logger.warning(f"ORDER REJECTED: Order type {order['orderType']} not supported.")
+        
+        return response_order
+        
+    def execute_order(self, order, market_data_df):
+        if order['status'] == 'pending':
+            # Execute the order in the simulator
+            response_order = self.place_order(order, market_data_df=market_data_df)
+        elif order['status'] == 'open':
+            # Update the order status in the simulator and check if it's filled
+            response_order = self.update_order_status(order, market_data_df=market_data_df)
+        
+        return response_order
+    
 class Yahoo():
     def __init__(self):
         self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
