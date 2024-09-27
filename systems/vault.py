@@ -65,7 +65,7 @@ class RMS:
     def __init__(self, config_dict):
         #initializing constants from config dict
         self.config_dict = config_dict
-        self.logger = create_logger(log_level=self.config_dict['log_level'], logger_name='RMS', print_to_console=True)
+        self.logger = create_logger(log_level='INFO', logger_name='RMS', print_to_console=True)
         self.max_risk_per_bet = self.config_dict["risk_management"]["max_risk_per_bet"]
         self.orders = self.load_orders_from_db()
         self.margin_available = self.update_all_margin_available()
@@ -75,6 +75,7 @@ class RMS:
         if os.path.exists('db/vault/orders.json'):
             with open('db/vault/orders.json') as file:
                 self.orders = json.load(file)
+            self.logger.debug(f"Loaded {len(self.orders)} orders from the database.")
         else:
             self.orders = []
         
@@ -208,7 +209,7 @@ class RMS:
                     "status": 'pending'
                     }
                 order_list.append(order_leg)
-    
+        self.logger.debug({'order_list':order_list})
         return order_list
     
     def calculate_sl_price(self, signal_list):
@@ -337,15 +338,18 @@ class RMS:
 
         # Convert all signals to orders
         for count, signal_list in enumerate(all_new_signals):
+            self.logger.info({'signal_list':len(signal_list)})
             signal_list, new_order_list = self.create_order(signal_list)
+            self.logger.info({'signal_list':len(signal_list)})
+            raise AssertionError('MS')
             # Update the signal_list received.
             all_new_signals[count] = signal_list
             new_orders.append(new_order_list)
             
         if len(new_orders) > 0:
             self.orders.extend(new_order_list)
-            self.logger.warning(f'NOTE: Saving new recieved signals and portfolios to a json has not yet been implemented. plz implement soon at this point.')
-            self.logger.warning(f'NOTE: Saving new recieved orders to a json has not yet been implemented. plz implement soon at this point.')
+            self.logger.debug(f'NOTE: Saving new recieved signals and portfolios to a json has not yet been implemented. plz implement soon at this point.')
+            self.logger.debug(f'NOTE: Saving new recieved orders to a json has not yet been implemented. plz implement soon at this point.')
         
         return new_orders
 

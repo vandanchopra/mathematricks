@@ -1,7 +1,6 @@
 # python: Create a logger for my system
 
-import logging
-import os, time, sys
+import os, time, sys, logging, json, hashlib
 
 # def create_logger(log_level, logger_name='mathematricks', print_to_console=True):
 #     logger = logging.getLogger(logger_name)
@@ -74,7 +73,13 @@ def sleeper(total_seconds, message="System Sleeping"):
         time.sleep(1)  # Sleep for 1 second
     sys.stdout.write("\r" + " " * 100)  # Clear the line
     sys.stdout.write("\r")
-    
+
+def generate_order_id(order, system_timestamp):
+    json_str = json.dumps(order, default=str) + str(system_timestamp)
+    json_bytes = json_str.encode('utf-8')
+    order_id = hashlib.sha256(json_bytes).hexdigest()
+    return order_id
+
 if __name__ == '__main__':
     logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks2', print_to_console=True)
     logger.debug('This is a debug message')

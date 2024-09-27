@@ -19,7 +19,7 @@ class CustomJSONEncoder(json.JSONEncoder):
 class OMS:
     def __init__(self, config):
         self.config_dict = config
-        self.logger = create_logger(log_level='DEBUG', logger_name='OMS', print_to_console=True)
+        self.logger = create_logger(log_level='INFO', logger_name='OMS', print_to_console=True)
         self.brokers = Brokers()
         self.open_orders = self.load_json('db/oms/backtests/open_orders.json')
         self.closed_orders = self.load_json('db/oms/backtests/closed_orders.json')
@@ -69,7 +69,6 @@ class OMS:
         """Execute a list of multi-leg orders."""
         updated_open_orders = deepcopy(open_orders)
         
-        
         for level_1_count, multi_leg_order in enumerate(open_orders):
             for level_2_count, order in enumerate(multi_leg_order):
                 order_status = order['status']
@@ -109,7 +108,7 @@ class OMS:
                         updated_order['history'] = []
                     updated_order['history'].append(order)
                     updated_open_orders[level_1_count][level_2_count] = updated_order
-                    self.logger.info(f"System Timestamp: {system_timestamp} | Symbol: {updated_order['symbol']} | order_id: {updated_order['order_id']} | Status: {updated_order['status']} | Message: {updated_order['message']}")
+                    self.logger.info(f"System Timestamp: {system_timestamp} | Symbol: {updated_order['symbol']} | partial order_id: {updated_order['order_id'][-5:]} | Status: {updated_order['status']} | Message: {updated_order['message']}")
                     # self.logger.debug({'updated_open_orders':updated_open_orders})
                 
                 '''Check if the order is closed and move it to closed orders list.'''
@@ -135,12 +134,11 @@ class OMS:
         self.open_orders, self.closed_orders = self.process_open_orders(self.open_orders, self.closed_orders, system_timestamp, market_data_df)
 
         if len(new_orders) > 0:
-            self.logger.warning(f'NOTE NOTE: This is where you save the open orders to a file. len(closed_orders): {len(self.closed_orders)}')
-            self.logger.warning('NOTE NOTE: This is where you save the closed orders to a file.')
-            self.logger.warning('NOTE NOTE: This is where you save the open portfolio to a file.')
+            self.logger.debug(f'NOTE NOTE: This is where you save the open orders to a file. len(closed_orders): {len(self.closed_orders)}')
+            self.logger.debug('NOTE NOTE: This is where you save the closed orders to a file.')
+            self.logger.debug('NOTE NOTE: This is where you save the open portfolio to a file.')
         # self.save_json('open_orders.json', self.open_orders)
         # self.update_order_status()
-
 
 # Usage example
 if __name__ == '__main__':    

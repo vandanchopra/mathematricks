@@ -70,7 +70,7 @@ class Strategy (BaseStrategy):
                         "timestamp": asset_data_df.iloc[-1]['datetime'], 
                         "entry_order_type": self.orderType, 
                         "exit_order_type":self.exit_order_type, 
-                        "sl_pct": self.stop_loss_pct, 
+                        "sl_pct": self.stop_loss_pct,
                         # "sl_abs": (1-self.stop_loss_abs) * current_price, 
                         "symbol_ltp" : current_price, 
                         "timeInForce" : self.timeInForce , 

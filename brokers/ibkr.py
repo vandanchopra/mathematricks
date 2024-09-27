@@ -12,7 +12,7 @@ from tqdm import tqdm
 # from datetime import datetime, timedelta
 import asyncio
 import logging
-from systems.utils import create_logger
+from systems.utils import create_logger, generate_order_id
 
 nest_asyncio.apply()
 
@@ -239,6 +239,7 @@ class IBKR_Execute:
         # Create a contract for the stock
         # ticker: str, exchange: str, currency: str, orderSide: str, orderQuantity: int, orderType: str, limit_price: float = 0, stop_price: float = 0
         self.logger.debug({'order': order})
+        system_timestamp = market_data_df.index.get_level_values(1)[-1]
         symbol = order['symbol']
         currency = 'USD'
         exchange = 'SMART'
@@ -253,22 +254,131 @@ class IBKR_Execute:
         # Create an order for the stock
         if order['orderType'].lower() == 'market':
             IB_order = MarketOrder(orderDirection, orderQuantity)
+            # Place the order
+            IB_order_response = self.ib.placeOrder(contract, IB_order)
+            self.logger.debug({'IB_order_response':IB_order_response})
+            response_order = deepcopy(order)
+            response_order['order_id'] = generate_order_id(order, system_timestamp)
+            response_order['broker_order_id'] = IB_order_response.order.orderId
+            response_order['status'] = IB_order_response.orderStatus.status
+            response_order['filled'] = IB_order_response.orderStatus.filled
+            response_order['remaining'] = IB_order_response.orderStatus.remaining
+            response_order['avgFillPrice'] = IB_order_response.orderStatus.avgFillPrice
+            response_order['tradeLogEntryTime'] = IB_order_response.log[0].time if IB_order_response.log else None
+            response_order['errorCode'] = IB_order_response.log[0].errorCode if IB_order_response.log else None
         elif order['orderType'].lower() == 'stoploss_abs':
             exitPrice = order['exitPrice']
             IB_order = StopOrder(orderDirection, orderQuantity, exitPrice)
+            # Place the order
+            IB_order_response = self.ib.placeOrder(contract, IB_order)
+            self.logger.debug({'IB_order_response':IB_order_response})
+            response_order = deepcopy(order)
+            response_order['order_id'] = generate_order_id(order, system_timestamp)
+            response_order['broker_order_id'] = IB_order_response.order.orderId
+            response_order['status'] = IB_order_response.orderStatus.status
+            response_order['filled'] = IB_order_response.orderStatus.filled
+            response_order['remaining'] = IB_order_response.orderStatus.remaining
+            response_order['avgFillPrice'] = IB_order_response.orderStatus.avgFillPrice
+            response_order['tradeLogEntryTime'] = IB_order_response.log[0].time if IB_order_response.log else None
+            response_order['errorCode'] = IB_order_response.log[0].errorCode if IB_order_response.log else None
+            
         else:
             raise Exception(f"Order type {order['orderType']} not supported. Use 'market' or 'stoploss_abs'.")
         
-        # Place the order
-        IB_order_response = self.ib.placeOrder(contract, IB_order)
-        self.logger.debug({'IB_order_response':IB_order_response})
-        # self.ib.disconnect()
-        # raise AssertionError('MANUALLY STOPPED HERE')
-        response_order = deepcopy(order)
-        
-        # Return the trade
-        return IB_order_response
-        
+        # Return the response_order
+        return response_order
+    
+    def update_order_status(self, order, market_data_df):
+        self.logger.warning('NOTE: NEED TO CHECK IF UPDATE ORDER IBKR IS WORKING CORRECTLY')
+        '''if the order is open, check if it's filled'''
+        system_timestamp = market_data_df.index.get_level_values(1)[-1]
+        symbol = order['symbol']
+        granularity = order['granularity']
+        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+
+        # Check if the order is open
+        if order['status'] in ['PendingSubmit', 'Submitted', 'PreSubmitted']:
+            # Check if the order is filled
+            if order['orderType'].lower() == 'market':
+                # For market orders, assume it's filled immediately at the current price
+                order['status'] = 'Filled'
+                order['filled'] = order['orderQuantity']
+                order['remaining'] = 0
+                order['avgFillPrice'] = current_price
+                order['fillTime'] = system_timestamp
+            elif order['orderType'].lower() == 'stoploss_abs':
+                exit_price = order['exitPrice']
+                if (order['orderDirection'] == 'BUY' and current_price >= exit_price) or \
+                (order['orderDirection'] == 'SELL' and current_price <= exit_price):
+                    # For stop loss orders, check if the current price has reached the exit price
+                    order['status'] = 'Filled'
+                    order['filled'] = order['orderQuantity']
+                    order['remaining'] = 0
+                    order['avgFillPrice'] = exit_price
+                    order['fillTime'] = system_timestamp
+                else:
+                    # If not filled, update the remaining quantity
+                    order['remaining'] = order['orderQuantity']
+                    order['avgFillPrice'] = 0
+            else:
+                # Handle other order types if necessary
+                pass
+
+        return order
+    
+    def modify_order(self, order, new_order, market_data_df):
+        self.logger.warning('NOTE: NEED TO CHECK IF MODIFY ORDER IBKR IS WORKING CORRECTLY')
+        '''Modify an existing order with new parameters'''
+        system_timestamp = market_data_df.index.get_level_values(1)[-1]
+        symbol = order['symbol']
+        granularity = order['granularity']
+        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+
+        # Check if the order is open and can be modified
+        if order['status'] in ['PendingSubmit', 'Submitted', 'PreSubmitted']:
+            # Cancel the existing order
+            self.ib.cancelOrder(order['broker_order_id'])
+            
+            # Create a new contract for the stock
+            currency = 'USD'
+            exchange = 'SMART'
+            contract = self.ib.qualifyContracts(Stock(symbol, exchange, currency))[0]
+            
+            # Create a new order based on the new_order parameters
+            orderDirection = new_order['orderDirection']
+            orderQuantity = new_order['orderQuantity']
+            orderType = new_order['orderType'].lower()
+            
+            if orderType == 'market':
+                IB_order = MarketOrder(orderDirection, orderQuantity)
+            elif orderType == 'stoploss_abs':
+                exitPrice = new_order['exitPrice']
+                IB_order = StopOrder(orderDirection, orderQuantity, exitPrice)
+            elif orderType == 'limit':
+                limitPrice = new_order['limitPrice']
+                IB_order = LimitOrder(orderDirection, orderQuantity, limitPrice)
+            else:
+                raise ValueError(f"Unsupported order type: {orderType}")
+            
+            # Place the new order
+            IB_order_response = self.ib.placeOrder(contract, IB_order)
+            self.logger.debug({'IB_order_response': IB_order_response})
+            
+            # Update the order with the new parameters and status
+            response_order = deepcopy(new_order)
+            response_order['order_id'] = generate_order_id(new_order, system_timestamp)
+            response_order['broker_order_id'] = IB_order_response.order.orderId
+            response_order['status'] = IB_order_response.orderStatus.status
+            response_order['filled'] = IB_order_response.orderStatus.filled
+            response_order['remaining'] = IB_order_response.orderStatus.remaining
+            response_order['avgFillPrice'] = IB_order_response.orderStatus.avgFillPrice
+            response_order['tradeLogEntryTime'] = IB_order_response.log[0].time if IB_order_response.log else None
+            response_order['errorCode'] = IB_order_response.log[0].errorCode if IB_order_response.log else None
+            
+            return response_order
+        else:
+            raise ValueError(f"Order cannot be modified as it is in status: {order['status']}")
+    
     def execute_order(self, order, market_data_df):
         if order['status'] == 'pending':
             # Execute the order in the simulator
@@ -278,7 +388,6 @@ class IBKR_Execute:
             response_order = self.update_order_status(order, market_data_df=market_data_df)
         
         return response_order
-
 
 class IBKR_Execute_old:
     def __init__(self):

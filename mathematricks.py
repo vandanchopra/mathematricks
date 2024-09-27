@@ -64,15 +64,20 @@ class Mathematricks:
                         
                         # execute_signals(signals)
                         new_signals = self.vault.generate_signals(self.market_data_df, self.system_timestamp)
+                        # ## PRINT THE SIGNALS GENERATED IF NEEDED
+                        # if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
+                        #     self.logger.debug({'new_signals':new_signals})
+                        #     input('Press Enter to continue...')
                         
                         # Convert signals to orders
-                        self.new_orders = self.rms.convert_signals_to_orders(new_signals)
+                        new_orders = self.rms.convert_signals_to_orders(new_signals)
                         # ## PRINT THE SIGNALS GENERATED IF NEEDED
-                        # if len(self.new_orders) > 0:
-                            # self.logger.debug({'new_orders':self.new_orders})
-                            # input('Press Enter to continue...')
+                        # if len(new_orders) > 0:
+                        #     self.logger.debug({'new_orders':new_orders})
+                        #     input('Press Enter to continue...')
+                            
                         # # Execute orders on the market with the OMS
-                        self.oms.execute_orders(self.new_orders, self.system_timestamp, self.market_data_df)
+                        self.oms.execute_orders(new_orders, self.system_timestamp, self.market_data_df)
                         
                         # if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
                         #     symbols = [signal['symbol'] for signal in new_signals['signals']]
@@ -105,7 +110,3 @@ class Mathematricks:
         
 if __name__ == '__main__':
     Mathematricks(config_dict).run()
-    
-    
-    
-    
