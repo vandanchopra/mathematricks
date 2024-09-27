@@ -338,10 +338,9 @@ class RMS:
 
         # Convert all signals to orders
         for count, signal_list in enumerate(all_new_signals):
-            self.logger.info({'signal_list':len(signal_list)})
+            # self.logger.info({'signal_list':len(signal_list)})
             signal_list, new_order_list = self.create_order(signal_list)
-            self.logger.info({'signal_list':len(signal_list)})
-            raise AssertionError('MS')
+            # self.logger.info({'signal_list':len(signal_list)})
             # Update the signal_list received.
             all_new_signals[count] = signal_list
             new_orders.append(new_order_list)

@@ -87,10 +87,10 @@ class SIM_Execute():
         pass
        
     def execute_order(self, order, market_data_df):
-        if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
-            self.logger.debug({'order':order})
-            self.logger.debug({'orderType':order['orderType']})
-            raise AssertionError('STOP STOP')
+        # if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
+            # self.logger.debug({'order':order})
+            # self.logger.debug({'orderType':order['orderType']})
+            # raise AssertionError('STOP STOP')
         if order['status'] == 'pending':
             # Execute the order in the simulator
             response_order = self.place_order(order, market_data_df=market_data_df)

@@ -13,7 +13,7 @@ config_dict = {
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'log_level':'DEBUG',
-    'strategies':['strategy_1'], # 'strategy_1'
+    'strategies':['strategy_2'], # 'strategy_1'
     'account_info':[],
     'risk_management':{'max_risk_per_bet':0.05, 'max_margin_utilized':3, 'margin_reserve_pct':0.2},
     'oms': {'funds_available':100000, 'margin_available':100000, 'portfolio':{}}
