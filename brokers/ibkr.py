@@ -326,66 +326,40 @@ class IBKR_Execute:
 
         return order
     
-    def modify_order(self, order, new_order, market_data_df):
-        self.logger.warning('NOTE: NEED TO CHECK IF MODIFY ORDER IBKR IS WORKING CORRECTLY')
-        '''Modify an existing order with new parameters'''
-        system_timestamp = market_data_df.index.get_level_values(1)[-1]
-        symbol = order['symbol']
-        granularity = order['granularity']
-        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+    def modify_stoploss_price(self, order, system_timestamp):
+        # Cancel the existing order
+        contract = Stock(order['symbol'], 'SMART', 'USD')
+        target_order_id = order['broker_order_id']
+        open_orders = ib.reqOpenOrders()
+        for order in open_orders:
+            if order.orderId == target_order_id:
+                new_stop_price = order['exitPrice']  # Set your new stop-loss price here
+                order.auxPrice = new_stop_price  # Update the stop-loss price
+                
+                # Place the updated order
+                ib.placeOrder(contract, order)
+        order['status'] = 'open'
+        order['modified_timestamp'] = system_timestamp
 
-        # Check if the order is open and can be modified
-        if order['status'] in ['PendingSubmit', 'Submitted', 'PreSubmitted']:
-            # Cancel the existing order
-            self.ib.cancelOrder(order['broker_order_id'])
-            
-            # Create a new contract for the stock
-            currency = 'USD'
-            exchange = 'SMART'
-            contract = self.ib.qualifyContracts(Stock(symbol, exchange, currency))[0]
-            
-            # Create a new order based on the new_order parameters
-            orderDirection = new_order['orderDirection']
-            orderQuantity = new_order['orderQuantity']
-            orderType = new_order['orderType'].lower()
-            
-            if orderType == 'market':
-                IB_order = MarketOrder(orderDirection, orderQuantity)
-            elif orderType == 'stoploss_abs':
-                exitPrice = new_order['exitPrice']
-                IB_order = StopOrder(orderDirection, orderQuantity, exitPrice)
-            elif orderType == 'limit':
-                limitPrice = new_order['limitPrice']
-                IB_order = LimitOrder(orderDirection, orderQuantity, limitPrice)
-            else:
-                raise ValueError(f"Unsupported order type: {orderType}")
-            
-            # Place the new order
-            IB_order_response = self.ib.placeOrder(contract, IB_order)
-            self.logger.debug({'IB_order_response': IB_order_response})
-            
-            # Update the order with the new parameters and status
-            response_order = deepcopy(new_order)
-            response_order['order_id'] = generate_order_id(new_order, system_timestamp)
-            response_order['broker_order_id'] = IB_order_response.order.orderId
-            response_order['status'] = IB_order_response.orderStatus.status
-            response_order['filled'] = IB_order_response.orderStatus.filled
-            response_order['remaining'] = IB_order_response.orderStatus.remaining
-            response_order['avgFillPrice'] = IB_order_response.orderStatus.avgFillPrice
-            response_order['tradeLogEntryTime'] = IB_order_response.log[0].time if IB_order_response.log else None
-            response_order['errorCode'] = IB_order_response.log[0].errorCode if IB_order_response.log else None
-            
-            return response_order
-        else:
-            raise ValueError(f"Order cannot be modified as it is in status: {order['status']}")
+        return order
     
-    def execute_order(self, order, market_data_df):
+    def modify_order(self, order, system_timestamp):
+        '''Modify an existing order with new parameters'''
+        if order['modify_reason'] == 'stoploss_update':
+            response_order = self.modify_stoploss_price(order, system_timestamp)
+        else:
+            raise NotImplementedError(f"Modify order reason {order['modify_reason']} not implemented.")
+        return response_order
+    
+    def execute_order(self, order, market_data_df, system_timestamp):
         if order['status'] == 'pending':
             # Execute the order in the simulator
             response_order = self.place_order(order, market_data_df=market_data_df)
         elif order['status'] == 'open':
             # Update the order status in the simulator and check if it's filled
             response_order = self.update_order_status(order, market_data_df=market_data_df)
+        elif order['status'] == 'modify':
+            response_order = self.modify_order(order, system_timestamp=system_timestamp)
         
         return response_order
 

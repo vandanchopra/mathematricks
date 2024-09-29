@@ -23,8 +23,8 @@ class Strategy (BaseStrategy):
 
     
     def datafeeder_inputs(self):
-        # tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
-        tickers = ['AAPL', 'MSFT']
+        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        # tickers = ['AAPL', 'MSFT']
         return { "1d" : {'columns': ['open', 'high', 'low', 'close', 'volume'] , 'lookback':100}}, tickers
 
     
@@ -57,10 +57,11 @@ class Strategy (BaseStrategy):
         return top_symbols, top_scores, bottom_symbols, bottom_scores, ltp
 
     
-    def generate_signals (self, market_data_df, system_timestamp):
+    def generate_signals(self, market_data_df, system_timestamp):
         """
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING IDEAL PORTFOLIO.
         """
+        
         #run strategy and get result data
         top_symbols, top_scores, bottom_symbols, bottom_scores, ltp = self.run_strategy(market_data_df)
         ideal_portfolio_entry = {}

@@ -11,7 +11,7 @@ class Strategy (BaseStrategy):
         super().__init__()
         self.strategy_name = 'strategy_1'
         self.granularity = "1d"
-        self.stop_loss_pct = 0.2    #percentage
+        self.stop_loss_pct = 0.05    #percentage
         self.target_pct = 0.2       #percentage
         self.orderType = "MARKET" #MARKET, STOPLOSS-MARKET
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
@@ -25,7 +25,7 @@ class Strategy (BaseStrategy):
     def datafeeder_inputs(self):
         # tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'MTSI', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
         tickers = ['MSFT', 'NVDA']
-        data_inputs = {'1d': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}} #'1m': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}, 
+        data_inputs = {'1d': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}} #'1m': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}
         return data_inputs, tickers
         
     def generate_signals(self, market_data_df, system_timestamp):
@@ -70,7 +70,7 @@ class Strategy (BaseStrategy):
                         "timestamp": asset_data_df.iloc[-1]['datetime'], 
                         "entry_order_type": self.orderType, 
                         "exit_order_type":self.exit_order_type, 
-                        "sl_pct": self.stop_loss_pct,
+                        "stoploss_pct": self.stop_loss_pct,
                         # "sl_abs": (1-self.stop_loss_abs) * current_price, 
                         "symbol_ltp" : current_price, 
                         "timeInForce" : self.timeInForce , 
@@ -86,5 +86,5 @@ class Strategy (BaseStrategy):
                 # self.logger.debug("-" * 150)
                 # self.sleeper(5, "Strategy 1 Manual Sleep")
                 return_type = 'signals'
-        
+        # self.logger.debug({'signals':signals})
         return return_type, signals

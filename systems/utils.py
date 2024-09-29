@@ -80,6 +80,9 @@ def generate_order_id(order, system_timestamp):
     order_id = hashlib.sha256(json_bytes).hexdigest()
     return order_id
 
+class SystemTemplates:
+    pass
+
 if __name__ == '__main__':
     logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks2', print_to_console=True)
     logger.debug('This is a debug message')

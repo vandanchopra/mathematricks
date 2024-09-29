@@ -7,15 +7,14 @@ from datetime import datetime
 config_dict = {
     'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
     'backtest_inputs': {
-        'start_time': pd.Timestamp(datetime(2020,9,17)).tz_localize('UTC').tz_convert('EST'), 
-        'end_time': pd.Timestamp(datetime(2021,9,17)).tz_localize('UTC').tz_convert('EST')
+        'start_time': pd.Timestamp(datetime(2015,9,17)).tz_localize('UTC').tz_convert('EST'), 
+        'end_time': pd.Timestamp(datetime(2024,9,17)).tz_localize('UTC').tz_convert('EST'),
+        'funds_available':100000, 'margin_available':100000, 'update_data':False
         },
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
-    'log_level':'DEBUG',
-    'strategies':['strategy_2'], # 'strategy_1'
+    'strategies':['strategy_3'], # 'strategy_1'
     'account_info':[],
     'risk_management':{'max_risk_per_bet':0.05, 'max_margin_utilized':3, 'margin_reserve_pct':0.2},
     'oms': {'funds_available':100000, 'margin_available':100000, 'portfolio':{}}
-    
 }

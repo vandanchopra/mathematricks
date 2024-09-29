@@ -4,7 +4,6 @@ vault/*
 !vault/base_strategy.py
 !vault/strategy_1.py
 !vault/strategy_2.py
-!spectre/demo_strategy.py
 spectre/*
 /junk
 

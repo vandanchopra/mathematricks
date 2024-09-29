@@ -35,7 +35,7 @@ class SIM_Execute():
             response_order['fresh_update'] = True
             response_order['message'] = 'Order filled at market price.'
             
-        elif order['orderType'].lower() == 'stoploss_abs':
+        elif order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
             response_order = deepcopy(order)
             response_order['status'] = 'open'
             response_order['order_id'] = generate_order_id(order, system_timestamp)
@@ -49,7 +49,7 @@ class SIM_Execute():
             response_order['order_id'] = generate_order_id(order, system_timestamp)
             response_order['broker_order_id'] = response_order['order_id']
             response_order['message'] = 'Order Rejected: Order type not supported.'
-            self.logger.warning(f"ORDER REJECTED: Order type {order['orderType']} not supported.")
+            self.logger.warning(f"ORDER REJECTED: Order type '{order['orderType']}' not supported.")
             response_order['fresh_update'] = True
         
         return response_order
@@ -61,7 +61,7 @@ class SIM_Execute():
         granularity = order['granularity']
         current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
         
-        if order['orderType'].lower() == 'stoploss_abs':
+        if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
             if order['orderDirection'].lower() == 'buy' and current_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_price <= order['exitPrice']:
                 response_order = deepcopy(order)
                 response_order['status'] = 'closed'
@@ -82,21 +82,21 @@ class SIM_Execute():
         
         return response_order
     
-    def modify_order(self, order, market_data_df):
-        raise NotImplementedError('MODIFY ORDER FOR SIM IS NOT YET WRITTEN')
-        pass
+    def modify_order(self, order, system_timestamp):
+        order['status'] = 'open'
+        order['modified_timestamp'] = system_timestamp
+        
+        return order
        
-    def execute_order(self, order, market_data_df):
-        if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
-            self.logger.debug({'order':order})
-            self.logger.debug({'orderType':order['orderType']})
-            raise AssertionError('STOP STOP')
+    def execute_order(self, order, market_data_df, system_timestamp):
         if order['status'] == 'pending':
             # Execute the order in the simulator
             response_order = self.place_order(order, market_data_df=market_data_df)
         elif order['status'] == 'open':
             # Update the order status in the simulator and check if it's filled
             response_order = self.update_order_status(order, market_data_df=market_data_df)
+        elif order['status'] == 'modify':
+            response_order = self.modify_order(order, system_timestamp=system_timestamp)
         
         return response_order
     
@@ -198,7 +198,7 @@ class Yahoo():
                         
         return asset_data_df_dict
     
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder='db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None):
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder='db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None, update_data=True):
         data_frames = []
         pbar = tqdm(stock_symbols, desc='Updating data: ')
 

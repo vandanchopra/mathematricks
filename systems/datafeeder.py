@@ -18,7 +18,7 @@ class DataFeeder:
     def __init__(self, config_dict):
         self.config_dict = config_dict
         self.datafetcher = DataFetcher(self.config_dict)
-        self.logger = create_logger(log_level=self.config_dict['log_level'], logger_name='datafeeder')
+        self.logger = create_logger(log_level='DEBUG', logger_name='datafeeder')
         self.next_system_timestamp = None
         self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"1d":86400}
         self.market_data_df = None
@@ -95,7 +95,7 @@ class DataFeeder:
             # self.logger.debug({'next_open':next_open, 'sleep_time':sleep_time})
         return sleep_time
     
-    def next(self, market_data_df, run_mode, sleep_time=0,start_date=None,end_date=None):
+    def next(self, market_data_df, run_mode, sleep_time=0,start_date=None,end_date=None, update_data=True):
         # update data and return the updated data
         # self.logger.debug({'market_data_df':market_data_df})
 
@@ -113,7 +113,7 @@ class DataFeeder:
             lookback_dict[interval] = lookback
         
         if self.market_data_df is None:
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df, start_date=start_date, end_date=end_date, lookback=lookback_dict)
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df, start_date=start_date, end_date=end_date, lookback=lookback_dict, update_data=update_data)
 
         if self.next_system_timestamp is None:
             self.next_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])

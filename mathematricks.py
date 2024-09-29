@@ -1,17 +1,13 @@
-import sys, os, json, time, logging
-from numpy import sign
+import os, json, time, logging, sys, pickle, warnings
 import pandas as pd
-from calendar import c
-from pdb import run
-from turtle import update
 from config import config_dict
 from systems.datafetcher import DataFetcher
 from systems.datafeeder import DataFeeder
-from systems.vault import Vault, RMS
+from systems.vault import Vault
+from systems.rms import RMS
 from systems.oms import OMS
 from systems.utils import create_logger, sleeper
 import datetime, pytz
-import warnings
 warnings.filterwarnings("ignore")
 
 '''
@@ -27,11 +23,9 @@ class Mathematricks:
         self.oms = OMS(self.config_dict)
         # Update the config_dict with the latest values from Vault
         self.config_dict = self.oms.config_dict
-        
         self.vault = Vault(self.config_dict)
         # Update the config_dict with the latest values from Vault
         self.config_dict = self.vault.config_dict
-        
         self.rms = RMS(self.config_dict)
         self.datafeeder = DataFeeder(self.config_dict)
         self.datafetcher = DataFetcher(self.config_dict)
@@ -50,8 +44,9 @@ class Mathematricks:
                         start_date = self.config_dict['backtest_inputs']['start_time']
                         end_date = self.config_dict['backtest_inputs']['end_time']
                         run_mode = 'BT'
+                        update_data = self.config_dict['backtest_inputs']['update_data']
                         
-                    next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode=run_mode, sleep_time=self.sleep_time, start_date=start_date, end_date=end_date)
+                    next_rows = self.datafeeder.next(market_data_df=self.market_data_df, run_mode=run_mode, sleep_time=self.sleep_time, start_date=start_date, end_date=end_date, update_data=update_data)
                     if next_rows is not None:
                         self.system_timestamp = next_rows.index.get_level_values(1)[-1]
                         self.market_data_df = pd.concat([self.market_data_df, next_rows], axis=0)
@@ -88,6 +83,18 @@ class Mathematricks:
                     else:
                         self.logger.info('Backtest completed.')
                         self.logger.debug('This is where the backtest report would be generated.')
+                        self.logger.info(f'Final Profit: {self.oms.profit}')
+                        self.oms.close_all_open_orders(self.market_data_df)
+                        backtest_orders = {'open_orders': self.oms.open_orders, 'closed_orders': self.oms.closed_orders}
+                        # save backtest_orders to a json file
+                        backtest_folder_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/junk/backtest_reports'
+                        # Create folder if it doesn't exist
+                        os.makedirs(backtest_folder_path, exist_ok=True)
+                        
+                        # Save the backtest orders to a pickle fil
+                        backtest_orders_path = os.path.join(backtest_folder_path, f'backtest_orders_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.pkl')
+                        with open(backtest_orders_path, 'wb') as file:
+                            pickle.dump(backtest_orders, file)
                         break
                     # time.sleep(0.25)
                 
