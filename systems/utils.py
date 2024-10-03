@@ -1,24 +1,6 @@
 # python: Create a logger for my system
 
-import os, time, sys, logging, json, hashlib
-
-# def create_logger(log_level, logger_name='mathematricks', print_to_console=True):
-#     logger = logging.getLogger(logger_name)
-#     if not logger.hasHandlers():
-#         # add the handlers to the logger
-#         logfile_path = f'./logs/{logger_name}.log'
-#         logging.basicConfig(filename=logfile_path, encoding='utf-8', level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-#         logger = logging.getLogger(logger_name)
-        
-#         # Create console handler and set level to debug
-#         if print_to_console:
-#             ch = logging.StreamHandler()
-#             ch.setLevel(log_level)
-#             # Add ch to logger
-#             logger.addHandler(ch)
-    
-#     return logger
-
+import os, time, sys, logging, json, hashlib, datetime, pytz
 
 def create_logger(log_level, logger_name='mathematricks', print_to_console=True):
     logger = logging.getLogger(logger_name)

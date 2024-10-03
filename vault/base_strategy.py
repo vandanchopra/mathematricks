@@ -6,7 +6,7 @@ from systems.utils import create_logger, sleeper
 class BaseStrategy:
     def __init__(self):
         self.strategy_name = 'BaseStrategy'
-        self.logger = create_logger(log_level='DEBUG', logger_name='datafetcher', print_to_console=True)
+        self.logger = create_logger(log_level='DEBUG', logger_name='Vault-Strategy', print_to_console=True)
         self.sleeper = sleeper
         
     def get_name(self):

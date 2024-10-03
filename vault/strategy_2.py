@@ -76,7 +76,9 @@ class Strategy (BaseStrategy):
                 'sl_pct':self.stop_loss_pct,
                 'timeInForce':self.timeInForce,
                 'orderQuantity':self.orderQuantity,
-                'granularity':self.granularity
+                'granularity':self.granularity,
+                'signal_type':'BUY_SELL',
+                'market_neutral':False,
             }
             ideal_portfolio_entry['ideal_portfolio'] = {}
             

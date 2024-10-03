@@ -5,7 +5,7 @@ class Vault:
     def __init__(self, config_dict):
         self.strategies = self.load_strategies(config_dict['strategies'])
         self.config_dict = self.create_datafeeder_config(config_dict, self.strategies)
-        self.logger = create_logger(log_level='DEBUG', logger_name='Vault', print_to_console=True)
+        self.logger = create_logger(log_level='INFO', logger_name='Vault', print_to_console=True)
 
     def load_strategies(self, strategy_names):
         strategies_dict = {}

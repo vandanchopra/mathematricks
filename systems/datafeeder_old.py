@@ -19,19 +19,18 @@ class DataFeeder:
     def __init__(self, config_dict):
         self.config_dict = config_dict
         self.datafetcher = DataFetcher(self.config_dict)
-        self.logger = create_logger(log_level='DEBUG', logger_name='datafeeder')
+        self.logger = create_logger(log_level='INFO', logger_name='datafeeder')
+        self.next_system_timestamp = None
         self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"1d":86400}
         self.market_data_df = None
-        self.datafeeder_system_timestamp = None
         self.indicators = Indicators()
         self.lookback_dict = self.create_lookback_dict()
     
     def create_lookback_dict(self):
-        lookback_dict = {}
+        self.lookback_dict = {}
         for interval in self.config_dict['datafeeder_config']['data_inputs']:
             lookback = self.config_dict['datafeeder_config']['data_inputs'][interval]['lookback']
-            lookback_dict[interval] = lookback
-        return lookback_dict
+            self.lookback_dict[interval] = lookback
 
     def is_market_open(self, current_datetime):
         # Define market open and close times
@@ -85,7 +84,7 @@ class DataFeeder:
     def previous_market_close(self, current_datetime):
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=current_datetime - datetime.timedelta(days=30), end_date=current_datetime)
-        previous_close = schedule.iloc[-2]['market_close']
+        previous_close = schedule.iloc[-1]['market_close']
         return previous_close    
     
     def calculate_sleep(self):
@@ -93,7 +92,8 @@ class DataFeeder:
         sleep_time_old = min([self.sleep_lookup[interval] for interval in interval_inputs])
         now = datetime.datetime.now()
         now_tz = now.astimezone(pytz.timezone('US/Eastern'))
-        passed_time = now.astimezone(pytz.utc) - self.datafeeder_system_timestamp
+        self.market_data_loaded_df = None
+        passed_time = now.astimezone(pytz.utc) - self.next_system_timestamp
         # self.logger.debug({'passed_time':passed_time, 'system_timestamp':self.system_timestamp, 'sleep_time_old':sleep_time_old})
         
         if self.is_market_open(now_tz):
@@ -121,27 +121,22 @@ class DataFeeder:
         
         # Fix the start_date and end_date to account for the lookback period.            
             
-        if self.market_data_df is None or self.datafeeder_system_timestamp is None:
+        if self.market_data_df is None or self.next_system_timestamp is None:
             self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df_root, start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
             # self.logger.info({'combined_df':self.market_data_df[-3:]})
         
-        while len(self.market_data_df) < 1 and run_mode in [1,2]:
-            sleep_time = self.calculate_sleep()
-            sleeper(sleep_time, 'System Sleeping: Time to next timestamp')
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df_root, start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
-        
-        # if self.datafeeder_system_timestamp is None:
-        self.datafeeder_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
-        # else:
-            # self.market_data_df = self.market_data_df.loc[self.market_data_df.index.get_level_values(1) > self.datafeeder_system_timestamp,:]
+        if self.next_system_timestamp is None:
+            self.next_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
+        else:
+            self.market_data_df = self.market_data_df.loc[self.market_data_df.index.get_level_values(1) >= self.next_system_timestamp,:]
 
         first_rows = []
         for interval in self.market_data_df.index.get_level_values(0).unique():
             first_row = self.market_data_df.loc[interval,:].iloc[0]
             first_df = pd.DataFrame(first_row).T
             first_df.index.names = ['datetime']
-            if first_df.index[0] == self.datafeeder_system_timestamp:
-                self.datafeeder_system_timestamp = first_df.index[0]
+            if first_df.index[0] == self.next_system_timestamp:
+                self.next_system_timestamp = first_df.index[0]
                 first_df.reset_index(drop=False,inplace=True)
                 first_df['interval'] = interval
                 first_df.set_index(['interval','datetime'],inplace=True)
@@ -152,7 +147,13 @@ class DataFeeder:
 
         if len(first_rows) > 0:
             first_rows = pd.concat(first_rows)
+            self.next_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
         else:
             first_rows = None
+            self.next_system_timestamp = None
+        
+        if len(self.market_data_df) < 1 and run_mode in [1,2]:
+            sleep_time = self.calculate_sleep()
+            sleeper(sleep_time, 'System Sleeping: Time to next timestamp')
         
         return first_rows

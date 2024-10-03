@@ -76,7 +76,9 @@ class Strategy (BaseStrategy):
                         "timeInForce" : self.timeInForce , 
                         "orderQuantity" : self.orderQuantity,
                         'orderDirection': orderDirection,
-                        'granularity': self.granularity
+                        'granularity': self.granularity,
+                        'signal_type':'BUY_SELL',
+                        'market_neutral':False,
                         }
                 signal["timestamp"] = signal["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
                 signals.append(signal)
