@@ -27,7 +27,6 @@ db/data/yahoo/1m/**
 
 # ignore all files in the backtests directory except the __init__.py file
 db/vault/backtest_reports/**
-junk/dev/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
