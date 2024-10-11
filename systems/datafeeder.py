@@ -131,24 +131,24 @@ class DataFeeder:
             self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df_root, start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
         
         # if self.datafeeder_system_timestamp is None:
-        self.datafeeder_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()])
+        self.datafeeder_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
         # else:
             # self.market_data_df = self.market_data_df.loc[self.market_data_df.index.get_level_values(1) > self.datafeeder_system_timestamp,:]
-
         first_rows = []
-        for interval in self.market_data_df.index.get_level_values(0).unique():
-            first_row = self.market_data_df.loc[interval,:].iloc[0]
-            first_df = pd.DataFrame(first_row).T
-            first_df.index.names = ['datetime']
-            if first_df.index[0] == self.datafeeder_system_timestamp:
-                self.datafeeder_system_timestamp = first_df.index[0]
-                first_df.reset_index(drop=False,inplace=True)
-                first_df['interval'] = interval
-                first_df.set_index(['interval','datetime'],inplace=True)
-                first_rows.append(first_df)
+        if self.datafeeder_system_timestamp:
+            for interval in self.market_data_df.index.get_level_values(0).unique():
+                first_row = self.market_data_df.loc[interval,:].iloc[0]
+                first_df = pd.DataFrame(first_row).T
+                first_df.index.names = ['datetime']
+                if first_df.index[0] == self.datafeeder_system_timestamp:
+                    self.datafeeder_system_timestamp = first_df.index[0]
+                    first_df.reset_index(drop=False,inplace=True)
+                    first_df['interval'] = interval
+                    first_df.set_index(['interval','datetime'],inplace=True)
+                    first_rows.append(first_df)
 
-                # remove the first row from the DataFrame
-                self.market_data_df = self.market_data_df.drop((interval, first_row.name))
+                    # remove the first row from the DataFrame
+                    self.market_data_df = self.market_data_df.drop((interval, first_row.name))
 
         if len(first_rows) > 0:
             first_rows = pd.concat(first_rows)

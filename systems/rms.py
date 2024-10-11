@@ -1,6 +1,8 @@
 from audioop import mul
 from copy import deepcopy
 import json, os, logging
+
+from matplotlib.pylab import f
 from systems.utils import create_logger, sleeper
 
 class RMS:
@@ -40,52 +42,61 @@ class RMS:
                 self.strategy_2_portfolio[order_sym] = self.strategy_2_portfolio.get(order_sym, 0) + (sign*order_qty)
 
     def RMS_check_available_margin(self, signal_list, margin_available):
+        signal = signal_list[-1]
+        status = signal["status"]
         
-        status = signal_list[-1]["status"]
         if status == 'pending':
-            strategy_name = signal_list[-1]["strategy_name"]
-            current_price = signal_list[-1]["symbol_ltp"]
-            order_qty = signal_list[-1]["orderQuantity"]      
-            
+            strategy_name = signal["strategy_name"]
+            current_price = signal["symbol_ltp"]
+            order_qty = signal["orderQuantity"]      
+            self.logger.debug({'margin_available':margin_available})
             current_margin_available = margin_available[strategy_name]['current_margin_available']
             margin_required = current_price * abs(order_qty)
             # self.logger.debug(f'Symbol: {signal_list[-1]["symbol"]}, Margin Required: {margin_required}, Margin Available: {current_margin_available}')
             
             if(margin_required > current_margin_available) and current_margin_available > 0:
-                msg = "RMS Test Failed: not enough margin. Available margin: ${}, required margin: ${}".format(current_margin_available, margin_required)
-                signal = signal_list[-1]
+                msg = "RMS Test Failed: Symbol: {}, Not enough margin. Available margin: ${}, required margin: ${}".format(signal['symbol'], current_margin_available, margin_required)
                 signal_new = signal.copy()
                 signal_new['status'] = 'rejected'
                 signal_new['signal_update_by'] = 'RMS'
                 signal_new['signal_update_reason'] = msg
                 signal_list.append(signal_new)
+                self.logger.debug(f"RMS Test Failed: Symbol: {signal['symbol']}, Not Enough margin. Available margin: ${margin_available[strategy_name]['current_margin_available']}, required margin: ${margin_required}")
+
             else:
                 # self.logger.debug({'margin_available':margin_available})
+                # self.logger.debug(f"RMS Test Passed: BEFORE: Symbol: {signal['symbol']}, Enough margin. Available margin: ${margin_available[strategy_name]['current_margin_available']}, required margin: ${margin_required}")
                 margin_available[strategy_name]['current_margin_available'] -= margin_required
                 margin_available['all']['current_margin_available'] -= margin_required
+                # self.logger.debug(f"RMS Test Passed - AFTER: Symbol: {signal['symbol']}, Enough margin. Available margin: ${margin_available[strategy_name]['current_margin_available']}, required margin: ${margin_required}")
                 
         return signal_list, margin_available
             
     def RMS_check_max_risk(self, signal_list, margin_available):
-        status = signal_list[-1]["status"]
+        signal = signal_list[-1]
+        status = signal["status"]
         if status != 'rejected':
-            strategy_name = signal_list[-1]["strategy_name"]
-            current_price = signal_list[-1]["symbol_ltp"]
-            sl_price = signal_list[-1]["stoploss_abs"]
-            order_qty = signal_list[-1]["orderQuantity"]
+            strategy_name = signal["strategy_name"]
+            current_price = signal["symbol_ltp"]
+            sl_price = signal["stoploss_abs"]
+            order_qty = signal["orderQuantity"]
             
             if strategy_name in margin_available:
                 total_strategy_margin = margin_available[strategy_name]['total_margin_available']
             else:
                 total_strategy_margin = 0
 
-            max_risk = self.max_risk_per_bet * total_strategy_margin
+            if 'max_risk_per_bet' in signal:
+                max_risk_per_bet_for_this_order = signal['max_risk_per_bet']
+            else:
+                max_risk_per_bet_for_this_order = self.max_risk_per_bet
+                self.logger.warning(f"Max risk per bet not found in signal from Strategy: {signal['strategy_name']}, using default value of {self.max_risk_per_bet}")
+            
+            max_risk = max_risk_per_bet_for_this_order * total_strategy_margin
             order_risk = (current_price - sl_price) * abs(order_qty)
 
-            skip_order = False
             if(order_risk > max_risk):
                 msg = "RMS Test Failed: exceeded max risk of ${}, order_risk was calulated at: ${}".format(max_risk, round(order_risk, 2))
-                signal = signal_list[-1]
                 signal_new = signal.copy()
                 signal_new['status'] = 'rejected'
                 signal_new['signal_update_by'] = 'RMS'
@@ -142,16 +153,17 @@ class RMS:
                 for count_1, multi_leg_order in enumerate(open_orders):
                     updated_multi_leg_order_added = False 
                     for count_2, order in enumerate(multi_leg_order):
-                        order_id = order['order_id']
-                        for cancel_order in orders_to_cancel:
-                            if order_id == cancel_order[-1]['order_id']:
-                                updated_multi_leg_order = deepcopy(multi_leg_order)
-                                updated_multi_leg_order[count_2]['status'] = 'cancelled'
-                                for order_to_add in orders_to_add:
-                                    updated_multi_leg_order.append(order_to_add)
-                                updated_open_orders.append(updated_multi_leg_order)
-                                if not updated_multi_leg_order_added:
-                                    updated_multi_leg_order_added = True
+                        if order['status'] != 'pending':
+                            order_id = order['order_id']
+                            for cancel_order in orders_to_cancel:
+                                if order_id == cancel_order[-1]['order_id']:
+                                    updated_multi_leg_order = deepcopy(multi_leg_order)
+                                    updated_multi_leg_order[count_2]['status'] = 'cancelled'
+                                    for order_to_add in orders_to_add:
+                                        updated_multi_leg_order.append(order_to_add)
+                                    updated_open_orders.append(updated_multi_leg_order)
+                                    if not updated_multi_leg_order_added:
+                                        updated_multi_leg_order_added = True
                     if not updated_multi_leg_order_added:
                         updated_multi_leg_order_added = True
                 open_orders = updated_open_orders
@@ -316,6 +328,8 @@ class RMS:
                     'market_neutral':ideal_portfolio_entry['market_neutral'],
                     'signal_type':'BUY_SELL'
                     }
+            if 'max_risk_per_bet' in ideal_portfolio_entry:
+                signal['max_risk_per_bet'] = ideal_portfolio_entry['max_risk_per_bet']
             # self.logger.debug(f'Adding addition signal for {symbol}, Quantity: {order_qty}, orderDirection: {orderDirection}')
             # self.logger.debug({'ideal_porfolio_new_signal':signal})
             signals.append([signal])
@@ -347,7 +361,7 @@ class RMS:
         return signal_list, order_list_new, margin_available, open_orders
         
     def convert_signals_to_orders(self, new_signals, margin_available, portfolio, open_orders, system_timestamp):
-        margin_available_local = margin_available.copy()
+        margin_available_local = deepcopy(margin_available)
         # Get New Signals Signals
         all_new_signals = []
         new_orders = []
@@ -360,11 +374,11 @@ class RMS:
         # self.logger.debug({'i_p':new_signals["ideal_portfolios"]})
         for ideal_portfolio_entry in new_signals["ideal_portfolios"]:
             all_new_signals += self.ideal_portfolio_to_signals(ideal_portfolio_entry, margin_available_local, portfolio, open_orders, system_timestamp)
-            for signal_list in all_new_signals:
-                if signal_list[-1]['signal_type'] == 'BUY_SELL':
-                    self.logger.debug(f"Signal:: Symbol: {signal_list[-1]['symbol']}, Signal Type: {signal_list[-1]['signal_type']}, Quantity: {signal_list[-1]['orderQuantity']}, Direction: {signal_list[-1]['orderDirection']}, Status: {signal_list[-1]['status']}")
-                else:
-                    self.logger.debug(f"Signal:: Symbol: {signal_list[-1]['symbol']}, Signal Type: {signal_list[-1]['signal_type']}")
+            # for signal_list in all_new_signals:
+            #     if signal_list[-1]['signal_type'] == 'BUY_SELL':
+            #         self.logger.debug(f"Signal:: Symbol: {signal_list[-1]['symbol']}, Signal Type: {signal_list[-1]['signal_type']}, Quantity: {signal_list[-1]['orderQuantity']}, Direction: {signal_list[-1]['orderDirection']}, Status: {signal_list[-1]['status']}")
+            #     else:
+            #         self.logger.debug(f"Signal:: Symbol: {signal_list[-1]['symbol']}, Signal Type: {signal_list[-1]['signal_type']}")
         # self.logger.debug({'all_new_signals':len(all_new_signals)})
         # Convert all signals to orders
         for count, signal_list in enumerate(all_new_signals):

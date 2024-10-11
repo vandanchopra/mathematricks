@@ -6,6 +6,7 @@ from systems.datafeeder import DataFeeder
 from systems.vault import Vault
 from systems.rms import RMS
 from systems.oms import OMS
+from systems.performance_reporter import PerformanceReporter
 from systems.utils import create_logger, sleeper
 import datetime, pytz
 warnings.filterwarnings("ignore")
@@ -58,10 +59,12 @@ class Mathematricks:
             # input('System wants to go live. Press Enter to continue...')
             self.logger.info('System is now live. Syncing OMS with Live Broker.')
             new_orders_from_sync = self.oms.sync_open_orders('oms-to-broker', market_data_df, system_timestamp, brokers=['IBKR'])
-            for count, order in enumerate(new_orders_from_sync):
-                self.logger.info(f"SYNC New Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")
+            
             # self.logger.debug({'new_orders_from_sync':new_orders_from_sync})
             new_orders.extend(new_orders_from_sync)
+            for count, order in enumerate(new_orders):
+                price = order[0]['entryPrice'] if order[0]['orderType'].lower() == 'market' else order[0]['exitPrice']
+                self.logger.info(f"SYNC New Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Price: {price}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")
 
         return live_bool, new_orders
 
@@ -78,7 +81,6 @@ class Mathematricks:
             assert 'start_time' in self.config_dict['backtest_inputs'] and 'end_time' in self.config_dict['backtest_inputs'], 'start_time and end_time must be provided in backtest_inputs if run_mode is 3'
             start_date = self.config_dict['backtest_inputs']['start_time']
             end_date = self.config_dict['backtest_inputs']['end_time']
-            update_data = self.config_dict['backtest_inputs']['update_data']
         
         '''Start Running the System'''
         if run_mode in [1,2,3]:
@@ -100,8 +102,7 @@ class Mathematricks:
                         new_signals = self.vault.generate_signals(self.market_data_df_root, self.system_timestamp)
                         # PRINT THE SIGNALS GENERATED IF NEEDED
                         # if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
-                            # self.logger.debug({'new_signals':new_signals})
-                            # input('Press Enter to continue...')
+                        #     input('Press Enter to continue...')
                         
                         # # Convert signals to orders
                         new_orders, self.oms.open_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.portfolio, self.oms.open_orders, self.system_timestamp)
@@ -113,8 +114,9 @@ class Mathematricks:
                             
                         # # # Execute orders on the market with the OMS
                         self.live_bool, new_orders = self.are_we_live(run_mode, self.system_timestamp, self.market_data_df_root, start_date, self.live_bool, new_orders)
+                        # if self.live_bool:
+                            # self.logger.debug({'open_orders':self.oms.open_orders})
                         self.oms.execute_orders(new_orders, self.system_timestamp, self.market_data_df_root, live_bool=self.live_bool)
-                        
                         
                         # if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
                         #     symbols = [signal['symbol'] for signal in new_signals['signals']]
@@ -124,21 +126,12 @@ class Mathematricks:
                         
                     else:
                         self.logger.info('Backtest completed.')
-                        self.logger.debug('This is where the backtest report would be generated.')
-                        self.logger.info(f'Final Profit: {self.oms.profit}')
-                        self.oms.close_all_open_orders(self.market_data_df_root)
-                        backtest_orders = {'open_orders': self.oms.open_orders, 'closed_orders': self.oms.closed_orders}
-                        # save backtest_orders to a json file
-                        backtest_folder_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/junk/backtest_reports'
-                        # Create folder if it doesn't exist
-                        os.makedirs(backtest_folder_path, exist_ok=True)
-                        
-                        # Save the backtest orders to a pickle fil
-                        backtest_orders_path = os.path.join(backtest_folder_path, f'backtest_orders_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.pkl')
-                        with open(backtest_orders_path, 'wb') as file:
-                            pickle.dump(backtest_orders, file)
+                        self.reporter = PerformanceReporter(self.config_dict, self.oms.open_orders, self.oms.closed_orders, self.market_data_df_root)
+                        self.reporter.calculate_backtest_performance_metrics()
+                        self.reporter.generate_report()
+                        if self.config_dict['backtest_inputs']['save_backtest_results']:
+                            self.test_folder_path = self.reporter.save_backtest()
                         break
-                    # time.sleep(0.25)
                 
                 except KeyboardInterrupt:
                     # self.logger.debug({'self.market_data_df':self.market_data_df})
@@ -156,7 +149,7 @@ class Mathematricks:
             
         else:
             raise AssertionError('Invalid run_mode value: {}'.format(run_mode))
-        
+
 if __name__ == '__main__':
     logs_folder = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/logs'
     # Remove all .log files from logs folder

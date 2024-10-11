@@ -10,7 +10,7 @@ import json
 from config import config_dict
 import pandas as pd  # Assuming you are using pandas Timestamps
 from brokers.brokers import Brokers
-from systems.utils import create_logger, generate_order_id
+from systems.utils import create_logger, generate_hash_id
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -46,6 +46,7 @@ class OMS:
         self.margin_available['all']['current_margin_available'] = self.config_dict["oms"]["funds_available"] * (1 - self.config_dict["risk_management"]["margin_reserve_pct"])
         
         for strategy_name in self.config_dict["strategies"]:
+            strategy_name = strategy_name.split('.')[-1] if '.' in strategy_name else strategy_name
             if strategy_name not in self.margin_available:
                 self.margin_available[strategy_name] = {}
             self.margin_available[strategy_name]['total_margin_available'] = self.get_strategy_margin_available(strategy_name)
@@ -212,7 +213,7 @@ class OMS:
                                 
                                 # order_id = create new order_id
                                 new_order['original_order_id'] = new_order['order_id']
-                                new_order['order_id'] = generate_order_id(new_order, system_timestamp)
+                                new_order['order_id'] = generate_hash_id(new_order, system_timestamp)
                                 new_entry_orders.append([new_order]) # Order is being sent as a single-leg multi-leg order, that's why it's in a list.
                                 # self.logger.debug({'symbol':symbol, 'new_order':new_order})
                                 run_once += 1
@@ -269,7 +270,7 @@ class OMS:
                                 # order_id = create new order_id
                                 if 'order_id' in new_order:
                                     new_order['original_order_id'] = new_order['order_id']
-                                new_order['order_id'] = generate_order_id(new_order, system_timestamp)
+                                new_order['order_id'] = generate_hash_id(new_order, system_timestamp)
                                 new_exit_orders.append([new_order]) # Order is being sent as a single-leg multi-leg order, that's why it's in a list.
                                 run_once += 1
             return new_exit_orders
@@ -345,37 +346,6 @@ class OMS:
                 break
         return order_open
     
-    def calculate_multi_leg_order_profit(self, multi_leg_order):
-        sell_orders = []
-        buy_orders = []
-        quantity = 0
-
-        # Separate out all sell and buy orders
-        for order in multi_leg_order:
-            if order['orderDirection'] == 'SELL' and order['status'] == 'closed':
-                sell_orders.append(order)
-                quantity += order['orderQuantity'] * -1
-            elif order['orderDirection'] == 'BUY' and order['status'] == 'closed':
-                buy_orders.append(order)
-                quantity += order['orderQuantity']
-
-        if quantity == 0:
-            total_profit = 0
-            # Assuming orders are processed in pairs (e.g., first sell with first buy, second sell with second buy)
-            for sell_order, buy_order in zip(sell_orders, buy_orders):
-                sell_price = sell_order.get('fill_price')
-                buy_price = buy_order.get('fill_price')
-                quantity = min(sell_order.get('orderQuantity'), buy_order.get('orderQuantity'))
-
-                # Calculate profit for the matching sell and buy orders
-                profit = (sell_price - buy_price) * quantity
-                total_profit += profit
-                
-            # self.logger.info({'order':multi_leg_order})
-            # self.logger.info(f"Total profit for multi-leg order: {total_profit}")
-            # raise AssertionError('PnL calculation not implemented yet.')        
-            return total_profit
-    
     def remove_closed_orders_from_open_orders_list(self, open_orders, closed_orders):
         updated_open_orders = []
         # check if order is closed
@@ -384,10 +354,10 @@ class OMS:
             # self.logger.debug({f'Symbol: {multi_leg_order[0]["symbol"]}, order_open':order_open})
             if order_open == False:
                 # remove updated_open_orders[level_1_count][level_2_count] from open_orders
-                total_profit = self.calculate_multi_leg_order_profit(multi_leg_order)
+                # total_profit = self.calculate_multi_leg_order_profit(multi_leg_order)
                 # self.logger.debug({'total_profit':total_profit, 'self.profit':self.profit})
-                self.profit += total_profit
-                multi_leg_order.append({'total_profit': total_profit})
+                # self.profit += total_profit
+                # multi_leg_order[0]['total_profit'] = total_profit
                 closed_orders.append(multi_leg_order)
             else:
                 # Remove multi_leg_order from self.open_orders
@@ -469,15 +439,35 @@ class OMS:
             broker = response_order['broker']
             margin_used_by_order = (fill_price * orderQuantity)
             
+            
             if response_order['orderType'].lower() == 'market':
                 self.margin_available['all']['current_margin_available'] -= abs(margin_used_by_order)
                 self.margin_available[strategy_name]['current_margin_available'] -= abs(margin_used_by_order)
+                
             elif response_order['orderType'].lower() in ['stoploss_pct', 'stoploss_abs']:
                 self.margin_available['all']['current_margin_available'] += abs(margin_used_by_order)
                 self.margin_available[strategy_name]['current_margin_available'] += abs(margin_used_by_order)
             else:
                 raise AssertionError('OrderType not supported: {}'.format(response_order['orderType']))
+            # self.logger.debug(f"Margin Available - AFTER: {self.margin_available} | Symbol: {symbol} | Order Direction: {orderDirection} | Order Type: {response_order['orderType']} | Order Quantity: {orderQuantity} | Fill Price: {fill_price} | Margin Used: {margin_used_by_order}")
     
+    def update_order_history(self, order, response_order):
+        # remove 'fresh_update' from order
+        # self.logger.debug({'response_order':response_order})
+        del response_order['fresh_update']
+        updated_order = response_order.copy()
+        if 'history' not in updated_order:
+            updated_order['history'] = []
+        
+        # remove history from order
+        order_history = order['history'] if 'history' in order else []
+        order_history.append(order)
+        if 'history' not in updated_order:
+            updated_order['history'] = []
+        updated_order['history'] = order_history
+        
+        return updated_order
+        
     def process_open_orders(self, open_orders, closed_orders, system_timestamp, market_data_df, live_bool):
         """Execute a list of multi-leg orders."""
         
@@ -485,8 +475,9 @@ class OMS:
             for level_2_count, order in enumerate(multi_leg_order):
                 updated_order = None
                 response_order = None
+                
                 order_status = order['status']
-                if order_status not in ['closed', 'rejected', 'cancelled']: # Basically if status is 'open' or 'pending'
+                if order_status not in ['closed', 'cancelled']: # Basically if status is 'open' or 'pending'
                     # First check if Stoploss needs to be udpated.
                     response_order = self.update_trailing_stop_losses(order, market_data_df)
                     
@@ -495,6 +486,7 @@ class OMS:
                         order['broker'] = 'SIM'
 
                     if order['broker'] == 'IBKR':
+                        # self.logger.debug(f'Order being sent to IBKR: Symbol: {order["symbol"]} | orderType: {order["orderType"]} | Order Direction: {order["orderDirection"]} | orderQuantity: {order["orderQuantity"]} |  Status: {order["status"]}')
                         response_order = self.brokers.ib.execute.execute_order(order, market_data_df=market_data_df, system_timestamp=system_timestamp)
                     
                     elif order['broker'] == 'SIM':
@@ -507,36 +499,23 @@ class OMS:
                 
                 '''Update the response order in oms order lists.'''
                 if response_order and ('fresh_update' in response_order) and (response_order['fresh_update'] == True):
-                    # remove 'fresh_update' from order
-                    # self.logger.debug({'response_order':response_order})
-                    del response_order['fresh_update']
-                    updated_order = response_order.copy()
-                    if 'history' not in updated_order:
-                        updated_order['history'] = []
-                    
-                    # remove history from order
-                    order_history = order['history'] if 'history' in order else []
-                    order_history.append(order)
-                    if 'history' not in updated_order:
-                        updated_order['history'] = []
-                    updated_order['history'] = order_history
+                    updated_order = self.update_order_history(order, response_order)
                     open_orders[level_1_count][level_2_count] = updated_order
                     self.update_porfolio(updated_order)
-                    # self.logger.debug({'system_timestamp':system_timestamp, 'updated_PORFOLIO':self.portfolio})
                     self.update_available_margin(updated_order, system_timestamp)
-                    # self.logger.debug({'system_timestamp':system_timestamp, 'updated_available_margin':self.margin_available})
-                    # self.logger.debug({'updated_order':updated_order})
+                    
+                    # PRINT UPDATE TO LOG
                     if 'entryPrice' in updated_order:
                         price = updated_order['entryPrice']
                     elif 'exitPrice' in updated_order:
                         price = updated_order['exitPrice']
                     else:
                         price = None
-                    self.logger.info(f"OPEN ORDER UPDATE::: Symbol: {updated_order['symbol']} | orderType: {updated_order['orderType']} | Order Direction: {updated_order['orderDirection']} | orderQuantity: {updated_order['orderQuantity']} | Price: {price} | partial order_id: {updated_order['order_id'][-5:]} | Status: {updated_order['status']} | Message: {updated_order['message']}")
-                    # self.logger.debug({'updated_open_orders':updated_open_orders})
+                    fill_price = updated_order['fill_price'] if 'fill_price' in updated_order else 'Not Filled Yet'
+                    self.logger.info(f"OPEN ORDER UPDATE::: Symbol: {updated_order['symbol']} | orderType: {updated_order['orderType']} | Order Direction: {updated_order['orderDirection']} | orderQuantity: {updated_order['orderQuantity']} | Price: {price} | Fill Price: {fill_price} | partial order_id: {updated_order['order_id'][-5:]} | Status: {updated_order['status']} | Message: {updated_order['message']}")
                 
         updated_open_orders, closed_orders = self.remove_closed_orders_from_open_orders_list(open_orders, closed_orders)
-        self.logger.debug({'updated_open_orders':len(updated_open_orders), 'closed_orders':len(closed_orders)})
+        # self.logger.debug({'updated_open_orders':len(updated_open_orders), 'closed_orders':len(closed_orders)})
         
         return updated_open_orders, closed_orders
     
@@ -544,7 +523,7 @@ class OMS:
         """ add the list of new orders to open_orders list """
         if len(new_orders) > 0:
             self.open_orders.extend(new_orders)
-            self.logger.debug({'new_orders':len(new_orders)})
+            # self.logger.debug({'new_orders':len(new_orders)})
         
         # Process all open orders
         self.open_orders, self.closed_orders = self.process_open_orders(self.open_orders, self.closed_orders, system_timestamp, market_data_df, live_bool)

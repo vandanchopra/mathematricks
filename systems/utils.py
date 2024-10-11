@@ -56,11 +56,13 @@ def sleeper(total_seconds, message="System Sleeping"):
     sys.stdout.write("\r" + " " * 100)  # Clear the line
     sys.stdout.write("\r")
 
-def generate_order_id(order, system_timestamp):
-    json_str = json.dumps(order, default=str) + str(system_timestamp)
+def generate_hash_id(input_dict, system_timestamp):
+    json_str = json.dumps(input_dict, default=str) + str(system_timestamp)
     json_bytes = json_str.encode('utf-8')
     order_id = hashlib.sha256(json_bytes).hexdigest()
     return order_id
+
+project_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/'
 
 class SystemTemplates:
     pass

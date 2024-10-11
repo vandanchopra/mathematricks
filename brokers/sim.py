@@ -3,7 +3,7 @@ import os, hashlib, time, json, logging, sys
 from turtle import back
 import pandas as pd
 import yfinance as yf
-from systems.utils import create_logger, generate_order_id
+from systems.utils import create_logger, generate_hash_id
 from tqdm import tqdm
 from copy import deepcopy
 
@@ -18,14 +18,14 @@ class SIM_Execute():
     def __init__(self):
         self.logger = create_logger(log_level='DEBUG', logger_name='SIM_Execute', print_to_console=True)
 
-    def place_order(self, order, market_data_df):
+    def place_order(self, order, market_data_df, system_timestamp):
         """
         Place a market or stop-loss-limit order. All other order types are rejected.
         """
-        system_timestamp = market_data_df.index.get_level_values(1)[-1]
         symbol = order['symbol']
         granularity = order['granularity']
         current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+        current_system_timestamp = market_data_df.index.get_level_values(1)[-1]
         
         if order['orderType'].lower() == 'market':
             response_order = deepcopy(order)
@@ -36,7 +36,7 @@ class SIM_Execute():
                 order_without_history = deepcopy(order)
                 if 'history' in order_without_history:
                     del order_without_history['history']
-                response_order['order_id'] = generate_order_id(order_without_history, system_timestamp)
+                response_order['order_id'] = generate_hash_id(order_without_history, system_timestamp)
             response_order['broker_order_id'] = response_order['order_id']
             response_order['fresh_update'] = True
             response_order['message'] = 'Order filled at market price.'
@@ -44,7 +44,7 @@ class SIM_Execute():
         elif order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
             response_order = deepcopy(order)
             response_order['status'] = 'open'
-            response_order['order_id'] = generate_order_id(order, system_timestamp)
+            response_order['order_id'] = generate_hash_id(order, system_timestamp)
             response_order['broker_order_id'] = response_order['order_id']
             response_order['message'] = 'Stop-loss order placed.'
             response_order['fresh_update'] = True
@@ -52,7 +52,7 @@ class SIM_Execute():
         else:
             response_order = deepcopy(order)
             response_order['status'] = 'rejected'
-            response_order['order_id'] = generate_order_id(order, system_timestamp)
+            response_order['order_id'] = generate_hash_id(order, system_timestamp)
             response_order['broker_order_id'] = response_order['order_id']
             response_order['message'] = 'Order Rejected: Order type not supported.'
             self.logger.warning(f"ORDER REJECTED: Order type '{order['orderType']}' not supported.")
@@ -99,7 +99,7 @@ class SIM_Execute():
     def execute_order(self, order, market_data_df, system_timestamp):
         if order['status'] == 'pending':
             # Execute the order in the simulator
-            response_order = self.place_order(order, market_data_df=market_data_df)
+            response_order = self.place_order(order, market_data_df=market_data_df, system_timestamp=system_timestamp)
         elif order['status'] == 'open':
             # Update the order status in the simulator and check if it's filled
             response_order = self.update_order_status(order, market_data_df=market_data_df)

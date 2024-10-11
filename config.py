@@ -9,11 +9,12 @@ config_dict = {
     'backtest_inputs': {
         'start_time': pd.Timestamp(datetime(2021,9,25)).tz_localize('UTC').tz_convert('EST'), 
         'end_time': pd.Timestamp(datetime(2024,9,27)).tz_localize('UTC').tz_convert('EST'),
-        'funds_available':100000, 'margin_available':100000, 'update_data':False
+        'save_backtest_results':False,
+        'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y'
         },
+    'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
-    'strategies':['strategy_3'], # 'strategy_1'
     'account_info':[],
     'risk_management':{'max_risk_per_bet':0.05, 'max_margin_utilized':3, 'margin_reserve_pct':0.2},
     'oms': {'funds_available':100000, 'margin_available':100000, 'portfolio':{}}

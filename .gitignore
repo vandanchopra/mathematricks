@@ -26,7 +26,7 @@ db/data/yahoo/1m/**
 !db/data/yahoo/1m/^IXIC.csv
 
 # ignore all files in the backtests directory except the __init__.py file
-backtests/*
+db/vault/backtest_reports/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
