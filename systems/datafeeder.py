@@ -123,7 +123,6 @@ class DataFeeder:
             
         if self.market_data_df is None or self.datafeeder_system_timestamp is None:
             self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df_root, start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
-            # self.logger.info({'combined_df':self.market_data_df[-3:]})
         
         while len(self.market_data_df) < 1 and run_mode in [1,2]:
             sleep_time = self.calculate_sleep()

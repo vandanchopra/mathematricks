@@ -27,7 +27,6 @@ class Mathematricks:
         self.vault = Vault(self.config_dict)
         # Update the config_dict with the latest values from Vault
         self.config_dict = self.vault.config_dict
-        raise AssertionError(self.config_dict)
         self.rms = RMS(self.config_dict)
         self.datafeeder = DataFeeder(self.config_dict)
         self.datafetcher = DataFetcher(self.config_dict)

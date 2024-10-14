@@ -24,8 +24,3 @@ class DataFetcher:
                 market_data_df = self.broker.ib.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, back_test_start_date=start_date, back_test_end_date=end_date, lookback=lookback) 
         
         return market_data_df
-        
-if __name__ == '__main__':
-    from config import config_dict
-    datafetcher = DataFetcher(config_dict=config_dict)
-    asset_data = datafetcher.fetch_updated_price_data_single_asset('AAPL')

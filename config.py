@@ -5,10 +5,10 @@ from datetime import datetime
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
     
 config_dict = {
-    'run_mode': 2, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
+    'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
     'backtest_inputs': {
         'start_time': pd.Timestamp(datetime(2021,9,25)).tz_localize('UTC').tz_convert('EST'), 
-        'end_time': pd.Timestamp(datetime(2024,9,27)).tz_localize('UTC').tz_convert('EST'),
+        'end_time': pd.Timestamp(datetime(2024,10,13)).tz_localize('UTC').tz_convert('EST'),
         'save_backtest_results':False,
         'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y'
         },

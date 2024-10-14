@@ -110,7 +110,7 @@ class SIM_Execute():
     
 class Yahoo():
     def __init__(self):
-        self.logger = create_logger(log_level=logging.INFO, logger_name='datafetcher', print_to_console=True)
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
         self.asset_data_df_dict = {}
     
     def get_nasdaq_stock_symbols(self, nasdaq_csv_filepath, min_market_cap=10 * 1 * 1000 * 1000 * 1000):
@@ -373,11 +373,17 @@ class Yahoo():
         combined_df.sort_index(inplace=True)
         self.logger.debug(f'DONE:  Combining all DataFrames into a single DataFrame....Time Taken: {(time.time() - start)/60} minutes.')
 
+        # raise AssertionError('STOP HERE')
         '''STEP 6: Trim the data to the back_test_start_date and back_test_end_date'''
         if lookback is not None:
             joined_dict = {}
             for interval, lookback_value in lookback.items():
+                # If interval is not in the combined_df, skip it
+                if interval not in combined_df.index.get_level_values(0).unique():
+                    continue
+                
                 lookback_value = int(lookback_value*1.5)
+                
                 before = combined_df.loc[interval].loc[:back_test_start_date]
                 after = combined_df.loc[interval].loc[back_test_start_date:back_test_end_date]
                 before_new = before.iloc[-lookback_value:]
