@@ -357,7 +357,7 @@ class Yahoo():
         pbar.close()
         
         '''STEP 5: # Combine all DataFrames into a single DataFrame'''
-        self.logger.debug('Combining all DataFrames into a single DataFrame...')
+        self.logger.info('Combining all DataFrames into a single DataFrame...')
         start = time.time()
         combined_df = pd.concat(data_frames)
         combined_df.reset_index(drop=False,inplace=True)
@@ -371,7 +371,7 @@ class Yahoo():
 
         # Sort the index
         combined_df.sort_index(inplace=True)
-        self.logger.debug(f'DONE:  Combining all DataFrames into a single DataFrame....Time Taken: {(time.time() - start)/60} minutes.')
+        self.logger.info(f'DONE: Combining all DataFrames into a single DataFrame....Time Taken: {(time.time() - start)/60} minutes.')
 
         # raise AssertionError('STOP HERE')
         '''STEP 6: Trim the data to the back_test_start_date and back_test_end_date'''
@@ -396,6 +396,6 @@ class Yahoo():
                 joined_dict[interval] = joined
             combined_df = pd.concat(joined_dict.values(), keys=joined_dict.keys(), names=['interval', 'date'])
             # raise AssertionError('STOP HERE')
-        
+
         return combined_df
     
