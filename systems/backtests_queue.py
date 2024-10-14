@@ -2,7 +2,7 @@ from copy import deepcopy
 from wsgiref import headers
 import gspread
 from google.oauth2.service_account import Credentials
-from systems.utils import generate_hash_id, project_path
+from systems.utils import generate_hash_id, PROJECT_PATH
 import re, json
 import pandas as pd
 from datetime import datetime
@@ -14,7 +14,7 @@ class BacktestQueue:
         self.backtests_queue_worksheet = self.get_worksheet(self.backtests_queue_sheetname, self.spreadsheet_url)
         self.completed_backtests_sheetname = 'Completed Backtests'
         self.completed_backtests_worksheet = self.get_worksheet(self.completed_backtests_sheetname, self.spreadsheet_url)
-        self.path_to_backtests_queue_json = project_path + 'db/vault/backtests_queue.json'
+        self.path_to_backtests_queue_json = PROJECT_PATH + 'db/vault/backtests_queue.json'
     
     def get_worksheet(self, sheet_name, spreadsheet_url):
     # Define the scope

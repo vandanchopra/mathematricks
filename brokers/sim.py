@@ -3,7 +3,7 @@ import os, hashlib, time, json, logging, sys
 from turtle import back
 import pandas as pd
 import yfinance as yf
-from systems.utils import create_logger, generate_hash_id
+from systems.utils import create_logger, generate_hash_id, PROJECT_PATH
 from tqdm import tqdm
 from copy import deepcopy
 
@@ -229,7 +229,7 @@ class Yahoo():
     
     def update_price_data(self, stock_symbols, interval_inputs, data_folder='db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None, update_data=True):
         data_frames = []
-
+        data_folder = os.path.join(PROJECT_PATH, data_folder)
         # Break the list into two lists. ones that don't have data and ones that have data
         stock_symbols_no_data = { k:[] for k in interval_inputs}
         stock_symbols_with_partial_data = { k:[] for k in interval_inputs}
@@ -310,7 +310,6 @@ class Yahoo():
 
         for interval in asset_data_df_dict:
             for symbol in asset_data_df_dict[interval]:
-                
                 # Extract the data from the yahoo batch response
                 asset_data_df = asset_data_df_dict[interval][symbol]
                 asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
@@ -339,15 +338,18 @@ class Yahoo():
                 data_frames.append(updated_data)
         
         '''STEP 4: Get the data for the ones that have full data'''
+        self.logger.debug('REACHED STEP 4')
         for interval in interval_inputs:
             for symbol in existing_data_dict[interval]:
                 asset_data_df = existing_data_dict[interval][symbol]
                 asset_data_df = self.restructure_asset_data_df(asset_data_df)
                 asset_data_df['symbol'] = symbol
                 asset_data_df['interval'] = interval
-                
+                if interval == '1m':
+                    self.logger.debug({'asset_data_df':asset_data_df})
                 # Remove all cols not needed
                 asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
+                
                 
                 # Update it to the data_frames list
                 data_frames.append(asset_data_df)

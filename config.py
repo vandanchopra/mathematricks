@@ -12,7 +12,7 @@ config_dict = {
         'save_backtest_results':False,
         'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y'
         },
-    'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
+    'strategies':['strategy_1'], # 'strategy_1', 'strategy_dev.strategy_3'
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'account_info':[],

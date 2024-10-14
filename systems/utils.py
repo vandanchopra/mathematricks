@@ -62,7 +62,7 @@ def generate_hash_id(input_dict, system_timestamp):
     order_id = hashlib.sha256(json_bytes).hexdigest()
     return order_id
 
-project_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/'
+PROJECT_PATH = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/'
 
 class SystemTemplates:
     pass

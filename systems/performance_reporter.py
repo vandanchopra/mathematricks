@@ -1,4 +1,4 @@
-from systems.utils import project_path
+from systems.utils import PROJECT_PATH
 import os, json, pickle
 
 class PerformanceReporter:
@@ -7,7 +7,7 @@ class PerformanceReporter:
         self.open_orders = open_orders
         self.closed_orders = closed_orders
         self.market_data_df_root = market_data_df_root
-        self.backtest_folder_path = project_path + 'db/vault/backtest_reports'
+        self.backtest_folder_path = PROJECT_PATH + 'db/vault/backtest_reports'
         self.backtest_performance_metrics = None
         self.backtest_report = None
     
