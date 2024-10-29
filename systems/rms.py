@@ -1,9 +1,6 @@
-from audioop import mul
 from copy import deepcopy
 import json, os, logging
-
-from matplotlib.pylab import f
-from systems.utils import create_logger, sleeper
+from systems.utils import create_logger, sleeper, generate_hash_id
 
 class RMS:
     def __init__(self, config_dict):
@@ -13,104 +10,212 @@ class RMS:
         self.max_risk_per_bet = self.config_dict["risk_management"]["max_risk_per_bet"]
         # self.orders = self.load_orders_from_db()
         # self.get_strategy_portfolio()
-
-    def load_orders_from_db(self):
-        if os.path.exists('db/vault/orders.json'):
-            with open('db/vault/orders.json') as file:
-                self.orders = json.load(file)
-            self.logger.debug(f"Loaded {len(self.orders)} orders from the database.")
-        else:
-            self.orders = []
         
-        return self.orders
-    
-    def get_strategy_portfolio(self) -> None:
-        self.logger.warning("NOTE NOTE NOTE: WARNING: RED: CHECK THIS FUNCTION PROPERLY")
-        for order in self.orders:
-            order = order[0]
-            order_qty = order["orderQuantity"]
-            order_sym = order["symbol"]
-            orderSide = order["orderSide"]
-            if orderSide == "BUY":
-                sign = 1
-            else:
-                sign = -1
-            order_stra = order["strategy_name"]
-            if order_stra == "strategy_1":
-                self.strategy_1_portfolio[order_sym] = self.strategy_1_portfolio.get(order_sym, 0) + (sign*order_qty)
-            elif order_stra == "strategy_2":
-                self.strategy_2_portfolio[order_sym] = self.strategy_2_portfolio.get(order_sym, 0) + (sign*order_qty)
-
-    def RMS_check_available_margin(self, signal_list, margin_available):
-        signal = signal_list[-1]
-        status = signal["status"]
-        
-        if status == 'pending':
-            strategy_name = signal["strategy_name"]
-            current_price = signal["symbol_ltp"]
-            order_qty = signal["orderQuantity"]      
-            self.logger.debug({'margin_available':margin_available})
-            current_margin_available = margin_available[strategy_name]['current_margin_available']
-            margin_required = current_price * abs(order_qty)
-            # self.logger.debug(f'Symbol: {signal_list[-1]["symbol"]}, Margin Required: {margin_required}, Margin Available: {current_margin_available}')
-            
-            if(margin_required > current_margin_available) and current_margin_available > 0:
-                msg = "RMS Test Failed: Symbol: {}, Not enough margin. Available margin: ${}, required margin: ${}".format(signal['symbol'], current_margin_available, margin_required)
-                signal_new = signal.copy()
-                signal_new['status'] = 'rejected'
-                signal_new['signal_update_by'] = 'RMS'
-                signal_new['signal_update_reason'] = msg
-                signal_list.append(signal_new)
-                self.logger.debug(f"RMS Test Failed: Symbol: {signal['symbol']}, Not Enough margin. Available margin: ${margin_available[strategy_name]['current_margin_available']}, required margin: ${margin_required}")
-
-            else:
-                # self.logger.debug({'margin_available':margin_available})
-                # self.logger.debug(f"RMS Test Passed: BEFORE: Symbol: {signal['symbol']}, Enough margin. Available margin: ${margin_available[strategy_name]['current_margin_available']}, required margin: ${margin_required}")
-                margin_available[strategy_name]['current_margin_available'] -= margin_required
-                margin_available['all']['current_margin_available'] -= margin_required
-                # self.logger.debug(f"RMS Test Passed - AFTER: Symbol: {signal['symbol']}, Enough margin. Available margin: ${margin_available[strategy_name]['current_margin_available']}, required margin: ${margin_required}")
+    def get_portfolio(self, open_orders):
+        portfolio = {}
+        for multi_leg_order in open_orders:
+            for order in multi_leg_order:
+                symbol = order['symbol']
+                quantity = order['orderQuantity']
+                strategy_name = order['strategy_name']
+                order_status = order['status']
+                order_direction_multiplier = 1 if order['orderDirection'] == 'BUY' else -1
+                if order_status in ['closed']:
+                    if strategy_name not in portfolio:
+                        portfolio[strategy_name] = {}
+                    if symbol not in portfolio[strategy_name]:
+                        portfolio[strategy_name][symbol] = 0
+                    portfolio[strategy_name][symbol] += quantity * order_direction_multiplier
                 
-        return signal_list, margin_available
-            
-    def RMS_check_max_risk(self, signal_list, margin_available):
-        signal = signal_list[-1]
-        status = signal["status"]
-        if status != 'rejected':
-            strategy_name = signal["strategy_name"]
-            current_price = signal["symbol_ltp"]
-            sl_price = signal["stoploss_abs"]
-            order_qty = signal["orderQuantity"]
-            
-            if strategy_name in margin_available:
-                total_strategy_margin = margin_available[strategy_name]['total_margin_available']
-            else:
-                total_strategy_margin = 0
-
-            if 'max_risk_per_bet' in signal:
-                max_risk_per_bet_for_this_order = signal['max_risk_per_bet']
-            else:
-                max_risk_per_bet_for_this_order = self.max_risk_per_bet
-                self.logger.warning(f"Max risk per bet not found in signal from Strategy: {signal['strategy_name']}, using default value of {self.max_risk_per_bet}")
-            
-            max_risk = max_risk_per_bet_for_this_order * total_strategy_margin
-            order_risk = (current_price - sl_price) * abs(order_qty)
-
-            if(order_risk > max_risk):
-                msg = "RMS Test Failed: exceeded max risk of ${}, order_risk was calulated at: ${}".format(max_risk, round(order_risk, 2))
-                signal_new = signal.copy()
-                signal_new['status'] = 'rejected'
-                signal_new['signal_update_by'] = 'RMS'
-                signal_new['signal_update_reason'] = msg
-                signal_list.append(signal_new)
-            
-        return signal_list
+        return portfolio
     
-    def get_order(self, signal_list, open_orders):
-        # self.logger.debug({'signal_list':signal_list[-1]})
-        order_list = []
-        signal = signal_list[-1]
+    def ideal_portfolio_to_signals(self, ideal_portfolio_entry, margin_available, open_orders, system_timestamp, live_bool):
+        def normalize_signal_strength(ideal_portfolio, market_neutral_bool):
+            if market_neutral_bool:
+                '''the total signal strength should be 0, if not, make it zero'''
+                if sum([abs(ideal_portfolio[i]['signal_strength']) for i in ideal_portfolio.keys()]) != 0:
+                    # get all the long orders and short orders
+                    long_symbols = {}
+                    short_symbols = {}
+                    
+                    for i in ideal_portfolio.keys():
+                        if ideal_portfolio[i]['orderDirection'] == 'BUY':
+                            long_symbols[i] = ideal_portfolio[i]
+                        else:
+                            short_symbols[i] = ideal_portfolio[i]
+                    # make the sum of the signal strength for all long orders 1 and for all short orders -1
+                    total_long_signal_strength = sum([abs(long_symbols[i]['signal_strength']) for i in long_symbols.keys()])
+                    total_short_signal_strength = sum([abs(short_symbols[i]['signal_strength']) for i in short_symbols.keys()])
+                    for symbol in ideal_portfolio.keys():
+                        ideal_portfolio[symbol]['signal_strength'] = ideal_portfolio[symbol]['signal_strength'] / total_long_signal_strength
+            else:
+                '''the total signal strength should be 1, if not, make it 1'''
+                if sum([abs(ideal_portfolio[i]['signal_strength']) for i in ideal_portfolio.keys()]) != 1:
+                    total_signal_strength = sum([abs(ideal_portfolio[i]['signal_strength']) for i in ideal_portfolio.keys()])
+                    for i in ideal_portfolio.keys():
+                        ideal_portfolio[i]['signal_strength'] = ideal_portfolio[i]['signal_strength'] / total_signal_strength
+                
+            return ideal_portfolio
+        def orderDirection_reverse(orderDirection):
+            if orderDirection == 'BUY':
+                return 'SELL'
+            else:
+                return 'BUY'
+        def rebalance_portfolio_strategy(current_portfolio, normalized_ideal_portfolio, strategy_name, total_buying_power, open_orders, system_timestamp):
+            # Create a delta portfolio
+            delta_portfolio = {'additions':{}, 'deletions':{}}
+            # Create Deletions
+            # self.logger.debug({'current_portfolio':current_portfolio})
+            if strategy_name in current_portfolio:
+                for symbol in current_portfolio[strategy_name]:
+                    if symbol not in normalized_ideal_portfolio:
+                        delta_portfolio['deletions'][symbol] = current_portfolio[strategy_name][symbol]
+                    
+            # Create Additions
+            for symbol in normalized_ideal_portfolio:
+                maximum_marging_used_pct = self.config_dict['risk_management']['maximum_marging_used_pct']
+                ideal_orderValue = abs(normalized_ideal_portfolio[symbol]['signal_strength'] * ((total_buying_power * maximum_marging_used_pct) /2))
+                
+                ideal_orderQuantity = abs(ideal_orderValue / normalized_ideal_portfolio[symbol]['current_price'])
+                order_direction_multiplier = 1 if normalized_ideal_portfolio[symbol]['orderDirection'] == 'BUY' else -1
+                if strategy_name in current_portfolio and symbol in current_portfolio[strategy_name]:
+                    ''' If a symbol is already present, then don't touch it. Don't add or delete it. Let it die its natural death.'''
+                    # delta_portfolio['additions'][symbol] = (ideal_orderQuantity * order_direction_multiplier) - current_portfolio[strategy_name][symbol]
+                    pass
+                else:
+                    delta_portfolio['additions'][symbol] = ideal_orderQuantity * order_direction_multiplier
+            
+            # self.logger.debug({'delta_portfolio':delta_portfolio})            
+            rebalanced_portfolio = {}
+            return delta_portfolio, rebalanced_portfolio
+        
+        # Get the ideal portfolio
+        ideal_portfolio = ideal_portfolio_entry["ideal_portfolio"]
+        strategy_name = ideal_portfolio_entry["strategy_name"]
+        
+        # Normalize the weights
+        normalized_ideal_portfolio = normalize_signal_strength(ideal_portfolio, ideal_portfolio_entry['market_neutral'])
+        # self.logger.debug({'normalized_ideal_portfolio':normalized_ideal_portfolio})
+        
+        # Create current portfolio from open orders
+        current_portfolio = self.get_portfolio(open_orders)        
+        # self.logger.debug({'open_orders':open_orders})
+        # self.logger.debug({'current_portfolio':current_portfolio})
+        
+        # Total buying power for the strategy
+        broker = 'sim' if not live_bool else 'ibkr'
+        base_account_number = self.config_dict['base_account_numbers'][broker]
+        trading_currency = self.config_dict['trading_currency']
+        # self.logger.debug({'margin_available':margin_available})
+        total_buying_power = margin_available[broker][base_account_number][strategy_name][trading_currency]['total_buying_power']
+        
+        # Create a delta portfolio
+        delta_portfolio, rebalanced_portfolio = rebalance_portfolio_strategy(current_portfolio, normalized_ideal_portfolio, strategy_name, total_buying_power, open_orders, system_timestamp)
+        
+        
+        # Start Creating Signals
+        signal_template = {"symbol": 'symbol',
+                    "strategy_name" : strategy_name, 
+                    "timestamp" : system_timestamp, 
+                    "entry_order_type" : ideal_portfolio_entry["entry_order_type"], 
+                    "exit_order_type" : ideal_portfolio_entry["exit_order_type"], 
+                    "stoploss_pct" : ideal_portfolio_entry["stoploss_pct"], 
+                    "symbol_ltp" : 'current_price',
+                    "timeInForce" : ideal_portfolio_entry["timeInForce"], 
+                    "orderQuantity" : 'abs(order_qty)',
+                    "orderDirection": 'orderDirection',
+                    "granularity": ideal_portfolio_entry["granularity"],
+                    'status': 'pending',
+                    'market_neutral':ideal_portfolio_entry['market_neutral'],
+                    'signal_type':'BUY_SELL'
+                    }
+        
+        ideal_portfolio_signals = []
+        # Start with creating the Deletion Signals
+        for symbol in delta_portfolio['deletions']:
+            # Create the list of open_orders that need to be cancelled
+            orders_to_cancel = []
+            for multi_leg_order in open_orders:
+                for order in multi_leg_order:
+                    if order['symbol'] == symbol and order['status'] == 'open':
+                        orders_to_cancel.append(multi_leg_order)
+                        # self.logger.debug({'order_to_cancel':order})
+
+            signal = deepcopy(signal_template)
+            signal['symbol'] = symbol
+            # self.logger.debug({'symbol':symbol, 'len-orders_to_cancel':len(orders_to_cancel)})
+            signal['orderQuantity'] = abs(delta_portfolio['deletions'][symbol])
+            signal['orderDirection'] = 'BUY' if delta_portfolio['deletions'][symbol] < 0 else 'SELL'
+            signal['orders_to_cancel'] = orders_to_cancel
+            signal['signal_type'] = 'ORDER_CANCELLATION'
+            ideal_portfolio_signals.append(signal)
+        
+        # Create the Addition Signals
+        for symbol in delta_portfolio['additions']:
+            signal = deepcopy(signal_template)
+            signal['symbol'] = symbol
+            signal['symbol_ltp'] = normalized_ideal_portfolio[symbol]['current_price']
+            signal['orderQuantity'] = abs(delta_portfolio['additions'][symbol])
+            signal['orderDirection'] = 'BUY' if delta_portfolio['additions'][symbol] > 0 else 'SELL'
+            signal['signal_type'] = 'BUY_SELL'
+            ideal_portfolio_signals.append(signal)
+            
+        return ideal_portfolio_signals
+
+    def update_signal_history(self, signal, new_signal):
+        old_signal_history = signal['history'] if 'history' in signal else []
+        old_signal_history.append(signal)
+        new_signal['history'] = old_signal_history
+        return new_signal
+    
+    def risk_management_checklist(self, signal, margin_available, live_bool):
+        ''' 
+        1) calculate the stoploss.
+        2) Based on the stoploss, you know the absolute risk per unit.
+        3) Now calculate the total risk being taken. If it is more than the max_risk_per_bet, then reject the signal.
+        '''
+        ''' Calculate the stoploss '''
+        if signal['signal_type'] == 'BUY_SELL':
+            if (signal["exit_order_type"] == "stoploss_pct"):
+                signal_new = signal.copy()
+                current_price = signal["symbol_ltp"]
+                entry_orderDirection = signal["orderDirection"]
+                signal_new["stoploss_abs"] = current_price * (1-signal["stoploss_pct"]) if entry_orderDirection == "BUY" else current_price * (1+signal["stoploss_pct"])
+                # signal_new['exit_order_type'] = 'stoploss_abs'
+                signal_new['signal_update_by'] = 'RMS'
+                signal_new['signal_update_reason'] = 'SL pct converted to SL abs'
+                signal = self.update_signal_history(signal, signal_new)
+        
+        ''' Calculate the total risk being taken '''
+        if signal['signal_type'] == 'BUY_SELL':
+            if signal["exit_order_type"] in ["stoploss_abs", "stoploss_pct"]:
+                current_price = signal["symbol_ltp"]
+                entry_orderDirection = signal["orderDirection"]
+                stoploss_abs = signal["stoploss_abs"]
+                stoploss_pct = signal["stoploss_pct"]
+                orderQuantity = signal["orderQuantity"]
+                total_risk = abs(current_price - stoploss_abs) * orderQuantity if entry_orderDirection == 'BUY' else abs(stoploss_abs - current_price) * orderQuantity
+                broker = 'sim' if not live_bool else 'ibkr'
+                base_account_number = self.config_dict['base_account_numbers'][broker]
+                trading_currency = self.config_dict['trading_currency']
+                strategy_name = signal['strategy_name']
+                total_buying_power_strategy = margin_available[broker][base_account_number][strategy_name][trading_currency]['total_buying_power']
+                max_risk_per_bet_abs = self.max_risk_per_bet * total_buying_power_strategy
+                # self.logger.debug({'total_risk':total_risk, 'max_risk_per_bet_abs':max_risk_per_bet_abs})
+                if total_risk > max_risk_per_bet_abs:
+                    signal['status'] = 'rejected'
+                    signal['rejection_reason'] = 'Risk exceeds max risk per bet'
+                    signal['signal_update_by'] = 'RMS'
+                    signal['signal_update_reason'] = 'Risk exceeds max risk per bet'
+                    signal = self.update_signal_history(signal, signal)
+        
+        return signal
+    
+    def create_order(self, signal):
+        signal_orders = []
         signal_type = signal['signal_type']
         status = signal["status"]
+        symbol = signal["symbol"]
         
         if status != 'rejected':
             if signal_type == 'BUY_SELL':
@@ -125,9 +230,10 @@ class RMS:
                         "strategy_name":signal["strategy_name"],
                         "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM', 
                         'granularity': signal['granularity'],
-                        "status": 'pending'
+                        "status": 'pending',
+                        "signal_id": signal["signal_id"]
                         }
-                    order_list.append(order_leg)
+                    signal_orders.append(order_leg)
                 if 'exit_order_type' in signal:
                     # raise AssertionError('exit_order_type in signal')
                     order_leg = {'symbol': signal["symbol"], 
@@ -142,250 +248,74 @@ class RMS:
                         "strategy_name":signal["strategy_name"],
                         "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM',
                         'granularity': signal['granularity'],
-                        "status": 'pending'
+                        "status": 'pending',
+                        "signal_id": signal["signal_id"]
                         }
-                    order_list.append(order_leg)
+                    signal_orders.append(order_leg)
             if signal_type == 'ORDER_CANCELLATION':
-                orders_to_cancel = signal['orders_to_cancel']
-                orders_to_add = signal['orders_to_add']
-                
-                updated_open_orders = []
-                for count_1, multi_leg_order in enumerate(open_orders):
-                    updated_multi_leg_order_added = False 
-                    for count_2, order in enumerate(multi_leg_order):
-                        if order['status'] != 'pending':
-                            order_id = order['order_id']
-                            for cancel_order in orders_to_cancel:
-                                if order_id == cancel_order[-1]['order_id']:
-                                    updated_multi_leg_order = deepcopy(multi_leg_order)
-                                    updated_multi_leg_order[count_2]['status'] = 'cancelled'
-                                    for order_to_add in orders_to_add:
-                                        updated_multi_leg_order.append(order_to_add)
-                                    updated_open_orders.append(updated_multi_leg_order)
-                                    if not updated_multi_leg_order_added:
-                                        updated_multi_leg_order_added = True
-                    if not updated_multi_leg_order_added:
-                        updated_multi_leg_order_added = True
-                open_orders = updated_open_orders
-
-                    # Now find the order to update, and update that order.
-        # self.logger.debug({'order_list':order_list})
-        return order_list, open_orders
-    
-    def calculate_sl_price(self, signal_list):
-        signal = signal_list[-1]
-        signal_new = signal.copy()
-        current_price = signal["symbol_ltp"]
-        entry_orderDirection = signal["orderDirection"]
-        signal_new["stoploss_abs"] = current_price * (1-signal["stoploss_pct"]) if entry_orderDirection == "BUY" else current_price * (1+signal["stoploss_pct"])
-        # signal_new['exit_order_type'] = 'stoploss_abs'
-        signal_new['signal_update_by'] = 'RMS'
-        signal_new['signal_update_reason'] = 'SL pct converted to SL abs'
-        # Remove sl_pct from the signal
-        # signal_new.pop("sl_pct")
-        signal_list.append(signal_new)
-        return signal_list
-    
-    def RMS_check_signal(self, signal_list, margin_available):
-        # finding stop loss points
-        if signal_list[-1]['signal_type'] == 'BUY_SELL':
-            if (signal_list[-1]["exit_order_type"] == "stoploss_pct"):
-                signal_list = self.calculate_sl_price(signal_list)
-            # self.logger.debug({'signal_list':signal_list})
-            #checking whether the order risk is below the max risk
-            signal_list = self.RMS_check_max_risk(signal_list, margin_available)
-            # self.logger.debug({'signal_list':signal_list})
-            
-            #checking if there is enough available funds for the order
-            signal_list, margin_available = self.RMS_check_available_margin(signal_list, margin_available)
-            # self.logger.debug({'signal_list-RMS_check_signal':signal_list})
-        
-        return signal_list, margin_available
-
-    def normalize_signal_strength(self, ideal_portfolio, market_neutral_bool):
-        if market_neutral_bool:
-            '''the total signal strength should be 0, if not, make it zero'''
-            if sum([abs(ideal_portfolio[i]['signal_strength']) for i in ideal_portfolio.keys()]) != 0:
-                # get all the long orders and short orders
-                long_symbols = {}
-                short_symbols = {}
-                
-                for i in ideal_portfolio.keys():
-                    if ideal_portfolio[i]['orderDirection'] == 'BUY':
-                        long_symbols[i] = ideal_portfolio[i]
-                    else:
-                        short_symbols[i] = ideal_portfolio[i]
-                # make the sum of the signal strength for all long orders 1 and for all short orders -1
-                total_long_signal_strength = sum([abs(long_symbols[i]['signal_strength']) for i in long_symbols.keys()])
-                total_short_signal_strength = sum([abs(short_symbols[i]['signal_strength']) for i in short_symbols.keys()])
-                for symbol in ideal_portfolio.keys():
-                    ideal_portfolio[symbol]['signal_strength'] = ideal_portfolio[symbol]['signal_strength'] / total_long_signal_strength
-        else:
-            '''the total signal strength should be 1, if not, make it 1'''
-            if sum([abs(ideal_portfolio[i]['signal_strength']) for i in ideal_portfolio.keys()]) != 1:
-                total_signal_strength = sum([abs(ideal_portfolio[i]['signal_strength']) for i in ideal_portfolio.keys()])
-                for i in ideal_portfolio.keys():
-                    ideal_portfolio[i]['signal_strength'] = ideal_portfolio[i]['signal_strength'] / total_signal_strength
-            
-        return ideal_portfolio
-        
-    
-    def ideal_portfolio_to_signals(self, ideal_portfolio_entry, margin_available, portfolio, open_orders, system_timestamp):
-        
-        ideal_portfolio = ideal_portfolio_entry["ideal_portfolio"]
-
-        # Normalize the weights
-        ideal_portfolio = self.normalize_signal_strength(ideal_portfolio, ideal_portfolio_entry['market_neutral'])
-        # self.logger.debug({'ideal_portfolio':ideal_portfolio})
-        
-        #checking to see if the margin req for ideal portfolio is under the available margin
-        strategy_name = ideal_portfolio_entry["strategy_name"]
-    
-        if strategy_name in margin_available:
-            total_strategy_margin = margin_available[strategy_name]['total_margin_available']
-        else:
-            total_strategy_margin = 0
-        
-        signals = []
-        
-        # Now from ideal portfolio, create ideal_portfolio with absolute positions
-        ideal_portfolio_abs_positions = {}
-        for symbol in ideal_portfolio:
-            margin_multipler = 0.5 if ideal_portfolio_entry['market_neutral'] else 1
-            fund_available_to_symbol = (total_strategy_margin * margin_multipler) * ideal_portfolio[symbol]['signal_strength']
-            current_price = ideal_portfolio[symbol]['current_price']
-            order_qty = int(fund_available_to_symbol / current_price)
-            orderDirection = ideal_portfolio[symbol]['orderDirection']
-            ideal_portfolio_abs_positions[symbol] = {'orderDirection': orderDirection, 'orderQuantity': order_qty, 'current_price':current_price, 'bet_size': order_qty * current_price}
-        
-        # self.logger.debug({'ideal_portfolio_abs_positions':ideal_portfolio_abs_positions})
-        current_portfolio = portfolio[strategy_name] if strategy_name in portfolio else {}
-        # Now compare it to the current ideal portfolio for this strategy and find the delta & Create the signals for additions and deletions
-        # self.logger.debug({'current_portfolio':current_portfolio})
-        # self.logger.debug({'ideal_portfolio_abs_positions':ideal_portfolio_abs_positions})
-        
-        ''' First work on the deletions '''
-        self.logger.debug({'current_portfolio':current_portfolio, 'ideal_portfolio_abs_positions':ideal_portfolio_abs_positions})
-        for symbol in current_portfolio:
-            if symbol not in ideal_portfolio_abs_positions:
-                orders_to_cancel = []
-                # Get all open orders for this symbol
-                for multi_leg_order in open_orders:
+                # validate the total order quantity
+                signal_orderQuantity = signal['orderQuantity']
+                orders_to_cancel_orderQuantity = 0
+                for multi_leg_order in signal['orders_to_cancel']:
                     for order in multi_leg_order:
-                        if order['symbol'] == symbol and order['status'] in ['pending', 'open']:
-                            orders_to_cancel.append(multi_leg_order)
-
-                if len(orders_to_cancel) > 0:
-                    # Create the exit order, based on the SL order
-                    orders_to_add = []
-                    for cancel_order in orders_to_cancel:
-                        order = deepcopy(cancel_order[-1])
-                        # Change order type to market
-                        order['orderType'] = 'MARKET'
-                        # Update status
-                        order['status'] = 'pending'
-                        if 'order_id' in order:
-                            del order['order_id']
-                        if 'broker_id' in order:
-                            del order['broker_id']
-                        orders_to_add.append(order)
-                    # Create tthe order cancellation signal
-                    signal = {"symbol": symbol, 
-                            "strategy_name": ideal_portfolio_entry["strategy_name"], 
-                            "timestamp": system_timestamp,
-                            'orders_to_cancel': orders_to_cancel,
-                            'orders_to_add': orders_to_add,
-                            'signal_type':'ORDER_CANCELLATION',
-                            'status':'pending'
-                            }
-                    signals.append([signal])
+                        if order['status'] == 'closed':
+                            orders_to_cancel_orderQuantity += order['orderQuantity']
+                if signal_orderQuantity != orders_to_cancel_orderQuantity:
+                    self.logger.debug({'signal_orderQuantity':signal_orderQuantity, 'orders_to_cancel_orderQuantity':orders_to_cancel_orderQuantity, 'symbol':symbol})
+                    raise AssertionError('Order Quantity mismatch in Order Cancellation')
                 
-        ''' Now work on the additions '''
-        for symbol in ideal_portfolio_abs_positions:
-            if symbol in current_portfolio:
-                orderQuantity_delta = ideal_portfolio_abs_positions[symbol]['orderQuantity'] - current_portfolio[symbol]['position']
-            else:
-                orderQuantity_delta = ideal_portfolio_abs_positions[symbol]['orderQuantity']
-            
-            current_price = ideal_portfolio_abs_positions[symbol]['current_price']
-            order_qty = int(orderQuantity_delta)
-            orderDirection = ideal_portfolio_abs_positions[symbol]['orderDirection'] if order_qty > 0 else 'SELL' if ideal_portfolio_abs_positions[symbol]['orderDirection'] == 'BUY' else 'BUY'
-            # self.logger.info({'symbol':symbol, 'ideal_portfolio_abs_position':ideal_portfolio_abs_positions[symbol]})
-            # if ideal_portfolio_abs_positions[symbol]['orderDirection'] == 'BUY':
-            # raise AssertionError('Check this part of the code')            
-            signal = {"symbol": symbol,
-                    "strategy_name" : ideal_portfolio_entry["strategy_name"], 
-                    "timestamp" : ideal_portfolio_entry["timestamp"], 
-                    "entry_order_type" : ideal_portfolio_entry["entry_order_type"], 
-                    "exit_order_type" : ideal_portfolio_entry["exit_order_type"], 
-                    "stoploss_pct" : ideal_portfolio_entry["stoploss_pct"], 
-                    "symbol_ltp" : current_price,
-                    "timeInForce" : ideal_portfolio_entry["timeInForce"], 
-                    "orderQuantity" : abs(order_qty),
-                    "orderDirection": orderDirection,
-                    "granularity": ideal_portfolio_entry["granularity"],
-                    'status': 'pending',
-                    'market_neutral':ideal_portfolio_entry['market_neutral'],
-                    'signal_type':'BUY_SELL'
-                    }
-            if 'max_risk_per_bet' in ideal_portfolio_entry:
-                signal['max_risk_per_bet'] = ideal_portfolio_entry['max_risk_per_bet']
-            # self.logger.debug(f'Adding addition signal for {symbol}, Quantity: {order_qty}, orderDirection: {orderDirection}')
-            # self.logger.debug({'ideal_porfolio_new_signal':signal})
-            signals.append([signal])
+                for multi_leg_order in signal['orders_to_cancel']:
+                    # Cancel the pending order and place them as market orders and status == pending
+                    for order in multi_leg_order:
+                        if order['status'] in ['pending', 'open']:
+                            # Send Cancel Rquest for the pending order
+                            order_copy = deepcopy(order)
+                            order_copy['status'] = 'cancel_pending'
+                            signal_orders.append(order_copy)
+                            
+                            # Create a market order for the cancelled order
+                            order_leg = {'symbol': order["symbol"], 
+                                'timestamp': signal["timestamp"], 
+                                "orderDirection": order["orderDirection"], 
+                                # "entryPrice":round(order["fill_price"], 2), 
+                                "orderType":'MARKET_EXIT', 
+                                "timeInForce":'GTC',
+                                "orderQuantity":abs(int(order['orderQuantity'])),
+                                "strategy_name":order["strategy_name"],
+                                "broker": order['broker'],
+                                'granularity': order['granularity'],
+                                "status": 'pending',
+                                "signal_id": signal["signal_id"]
+                                }
+                            
+                            signal_orders.append(order_leg)
+                # self.logger.debug({'cancel_orders':signal_orders})
         
-        return signals
-
-    def create_order(self, signal_list, margin_available, open_orders):
-        order_list = []
-        # self.logger.debug({'signal_listBEFORE':signal_list})
-        signal_list, margin_available = self.RMS_check_signal(signal_list, margin_available)
-        # self.logger.debug({'signal_list-AFTER':signal_list})
-        status = signal_list[-1]["status"]
-        if status != 'rejected':
-            order_list, open_orders = self.get_order(signal_list, open_orders)
-            #     symbol = signal_list[-1]["symbol"]
-            #     order_qty = signal_list[-1]["orderQuantity"]
-            # if symbol in self.current_portfolio:
-            #     self.current_portfolio[symbol] += order_qty
-            # else:
-            #     self.current_portfolio[symbol] = order_qty
-        else:
-            self.logger.critical(f"REJECTED: Symbol: {signal_list[-1]['symbol']}, Quantity: {signal_list[-1]['orderQuantity']}, Reason: signal_list':{signal_list[-1]['signal_update_reason']}")
+        return signal_orders
         
-        order_list_new = []
-        for order in order_list:
-            order_list_new.append(order)
-        signal_list[-1]["status"] = 'completed'
-        
-        return signal_list, order_list_new, margin_available, open_orders
-        
-    def convert_signals_to_orders(self, new_signals, margin_available, portfolio, open_orders, system_timestamp):
-        margin_available_local = deepcopy(margin_available)
-        # Get New Signals Signals
+    def convert_signals_to_orders(self, new_signals, margin_available, portfolio, open_orders, system_timestamp, live_bool):
         all_new_signals = []
-        new_orders = []
-        # make each signal a list
+        '''Step 1: Add Signals to all_new_signals'''
         for signal in new_signals["signals"]:
             signal['status'] = 'pending'
-            all_new_signals.append([signal])
-        
-        # Convert ideal portfolio to generate new signals
-        # self.logger.debug({'i_p':new_signals["ideal_portfolios"]})
+            all_new_signals.append(signal)
+        '''Step 2: Convert Ideal Portfolios to signals and add to all_new_signals'''
         for ideal_portfolio_entry in new_signals["ideal_portfolios"]:
-            all_new_signals += self.ideal_portfolio_to_signals(ideal_portfolio_entry, margin_available_local, portfolio, open_orders, system_timestamp)
-            # for signal_list in all_new_signals:
-            #     if signal_list[-1]['signal_type'] == 'BUY_SELL':
-            #         self.logger.debug(f"Signal:: Symbol: {signal_list[-1]['symbol']}, Signal Type: {signal_list[-1]['signal_type']}, Quantity: {signal_list[-1]['orderQuantity']}, Direction: {signal_list[-1]['orderDirection']}, Status: {signal_list[-1]['status']}")
-            #     else:
-            #         self.logger.debug(f"Signal:: Symbol: {signal_list[-1]['symbol']}, Signal Type: {signal_list[-1]['signal_type']}")
-        # self.logger.debug({'all_new_signals':len(all_new_signals)})
-        # Convert all signals to orders
-        for count, signal_list in enumerate(all_new_signals):
-            signal_list, new_order_list, margin_available_local, open_orders = self.create_order(signal_list, margin_available_local, open_orders)
-            # Update the signal_list received.
-            all_new_signals[count] = signal_list
-            if len(new_order_list) > 0:
-                new_orders.append(new_order_list)
+            new_signals = self.ideal_portfolio_to_signals(ideal_portfolio_entry, margin_available, open_orders, system_timestamp, live_bool)
+            for signal in new_signals:
+                signal['status'] = 'pending'
+                all_new_signals.append(signal)
+                # self.logger.debug({'ideal_portfolio_signal':signal})
+        '''Step 3: Convert all_new_signals to orders'''
+        new_orders = []
+        for signal in all_new_signals:
+            # add signal ids if not present
+            if 'signal_id' not in signal:
+                signal['signal_id'] = generate_hash_id(input_dict=signal, system_timestamp=system_timestamp)
+            signal = self.risk_management_checklist(signal, margin_available, live_bool)
+            signal_orders = self.create_order(signal)
+            new_orders.append(signal_orders)
         
-        return new_orders, open_orders
+        return new_orders
+        
+            

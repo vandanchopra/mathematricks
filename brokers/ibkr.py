@@ -595,6 +595,43 @@ class IBKR_Execute:
         
         return response_order
 
+    def get_account_summary(self, trading_currency, base_currency, account_number):
+        self.check_ib_connection()
+        account_summary = self.ib.accountSummary()
+
+        account_balance_dict = {trading_currency:{}}
+        account_balance_dict_temp = {}
+        for count, item in enumerate(account_summary):
+            if item.account == account_number:
+                account_balance_dict_temp[item.tag] = {'value': item.value, 'currency': item.currency}
+            if item.tag == 'ExchangeRate' and item.currency == trading_currency:
+                ExchangeRate = float(item.value)
+        
+        for key in account_balance_dict_temp:
+            if key in ['NetLiquidation', 'BuyingPower', 'GrossPositionValue', 'Cushion', 'MaintMarginReq', 'AvailableFunds']:
+                value = float(account_balance_dict_temp[key]['value'])
+                currency = account_balance_dict_temp[key]['currency']
+                if currency != trading_currency and currency != '':
+                    value = value / ExchangeRate
+                if key == 'NetLiquidation':
+                    account_balance_dict[trading_currency]['total_account_value'] = value
+                elif key == 'BuyingPower':
+                    account_balance_dict[trading_currency]['buying_power_available'] = value
+                elif key == 'GrossPositionValue':
+                    account_balance_dict[trading_currency]['buying_power_used'] = value
+                elif key == 'Cushion':
+                    account_balance_dict[trading_currency]['cushion'] = value
+                elif key == 'MaintMarginReq':
+                    account_balance_dict[trading_currency]['pledge_to_margin_used'] = value
+                elif key == 'AvailableFunds':
+                    account_balance_dict[trading_currency]['pledge_to_margin_availble'] = value
+        
+        account_balance_dict[trading_currency]['margin_multipler'] = (float(account_balance_dict[trading_currency]['buying_power_available']) + float(account_balance_dict[trading_currency]['buying_power_used'])) / (float(account_balance_dict[trading_currency]['pledge_to_margin_used']) + float(account_balance_dict[trading_currency]['pledge_to_margin_availble']))
+        account_balance_dict[trading_currency]['total_buying_power'] = float(account_balance_dict[trading_currency]['buying_power_available']) + float(account_balance_dict[trading_currency]['buying_power_used'])
+        account_balance_dict[trading_currency]['pct_of_margin_used'] = float(account_balance_dict[trading_currency]['pledge_to_margin_used']) / float(account_balance_dict[trading_currency]['total_account_value'])
+        
+        return account_balance_dict
+    
 if __name__ == '__main__':
     ibkr = IBKR()
     if not ibkr.connected:

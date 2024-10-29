@@ -1,8 +1,7 @@
 from copy import deepcopy
-from wsgiref import headers
 import gspread
 from google.oauth2.service_account import Credentials
-from systems.utils import generate_hash_id, project_path
+from systems.utils import generate_hash_id, project_path, create_logger
 import re, json
 import pandas as pd
 from datetime import datetime
@@ -15,6 +14,8 @@ class BacktestQueue:
         self.completed_backtests_sheetname = 'Completed Backtests'
         self.completed_backtests_worksheet = self.get_worksheet(self.completed_backtests_sheetname, self.spreadsheet_url)
         self.path_to_backtests_queue_json = project_path + 'db/vault/backtests_queue.json'
+        self.logger = create_logger(log_level='DEBUG', logger_name='BACKTEST_QUEUE', print_to_console=True)
+        
     
     def get_worksheet(self, sheet_name, spreadsheet_url):
     # Define the scope
@@ -34,25 +35,13 @@ class BacktestQueue:
                 requested_worksheet = worksheet
         return requested_worksheet
     
-    def get_backtests_queue(self):
+    def get_backtests_queue_from_googlesheets(self):
         backtests_queue = self.backtests_queue_worksheet.get_all_records()
         return backtests_queue
     
-    def update_backtests_queue(self, new_backtest_queue_dict):
-        if len(new_backtest_queue_dict) != 0:
-            # Convert the data to a list of lists format
-            data_list = [list(row.values()) for row in new_backtest_queue_dict]
-            # Add the header back to the worksheet
-            header = list(new_backtest_queue_dict[0].keys())
-            
-        else:
-            data_list = []
-            header = ['Backtest Name', 'Start Date', 'End Date', 'Strategies', 'Data Source', 'Risk Management', 'OMS']
-            
-        data_with_header = [header] + data_list
-        self.backtests_queue_worksheet.clear()
+    def update_backtests_queue(self):
+        self.backtests_queue_worksheet.delete_rows(2)
         # Add the data back to the worksheet
-        self.backtests_queue_worksheet.append_rows(data_with_header)
         
     def add_backtest_to_queue(self, new_backtest_dict):
         print({'new_backtest_dict':new_backtest_dict})
@@ -60,20 +49,24 @@ class BacktestQueue:
         self.backtests_queue_worksheet.append_row(new_backtest_entry)
         
     def create_backtest_entry_from_config_dict(self, config_dict):
+        base_currency = 'CAD'
         backtest_entry_dict = {
                         'start_time': config_dict['backtest_inputs']['start_time'],
                         'end_time': config_dict['backtest_inputs']['end_time'],
                         'strategies': config_dict['strategies'],
                         'data_update_inputs': config_dict['data_update_inputs'],
                         'risk_management': config_dict['risk_management'],
-                        'oms': config_dict['oms'],
+                        'account_info': config_dict['account_info']['sim']['sim_1'][base_currency],
                         'data_source': config_dict['data_update_inputs']['data_sources']
                         }
-        backtest_entry_dict['backtest_name'] = generate_hash_id(backtest_entry_dict, 0)
+        backtest_name = config_dict['backtest_inputs'].get('backtest_name')
+        backtest_name = backtest_name if backtest_name else ''
+        
+        backtest_entry_dict['backtest_name'] = backtest_name + '_' + str(generate_hash_id(backtest_entry_dict, 0))
         
         backtest_entry = {}
         
-        for key in ['backtest_name', 'start_time', 'end_time', 'strategies', 'data_source', 'risk_management', 'oms']:
+        for key in ['backtest_name', 'start_time', 'end_time', 'strategies', 'data_source', 'risk_management', 'account_info']:
             backtest_entry[key] = str(backtest_entry_dict[key])
         
         return backtest_entry
@@ -85,20 +78,40 @@ class BacktestQueue:
             input_str = re.sub(r'(\w+):', r'"\1":', input_str)
             input_dict = json.loads(input_str)
             return input_dict
-
+        start_date = pd.Timestamp(datetime(2021,1,1)).tz_localize('UTC').tz_convert('EST')
+        end_date = start_date + pd.Timedelta(days=120)
+        sim_account_margin_multiplier = 3
+        sim_account_starting_value_base = 100000
+        base_currency = 'CAD'
+        trading_currency = 'USD'
+        base_currency_to_trading_currency_exchange_rate = 1/1.375
+        
         config_dict_template = {
-                            'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
-                            'backtest_inputs': {
-                                'start_time': pd.Timestamp(datetime(2021,9,25)).tz_localize('UTC').tz_convert('EST'), 
-                                'end_time': pd.Timestamp(datetime(2024,9,27)).tz_localize('UTC').tz_convert('EST'),
-                                },
-                            'strategies':['strategy_3'], # 'strategy_1'
-                            'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
-                            'sleep_time':60,
-                            'account_info':[],
-                            'risk_management':{'max_risk_per_bet':0.05, 'max_margin_utilized':3, 'margin_reserve_pct':0.2},
-                            'oms': {'funds_available':100000, 'margin_available':100000, 'portfolio':{}}
-                        }
+                                'run_mode': 3, # 1: live trading - real money, 2: live trading - paper money, 3: backtesting, 4: data update only
+                                'base_currency': base_currency,
+                                'trading_currency': trading_currency,
+                                'base_currency_to_trading_currency_exchange_rate': base_currency_to_trading_currency_exchange_rate,
+                                'backtest_inputs': {
+                                    'start_time': start_date, 
+                                    'end_time': end_date,
+                                    'save_backtest_results':True,
+                                    # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
+                                    },
+                                'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
+                                'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
+                                'sleep_time':60,
+                                'account_info':{'sim':{'sim_1': {base_currency:{'total_account_value': sim_account_starting_value_base, 
+                                                                                'buying_power_available':sim_account_starting_value_base * sim_account_margin_multiplier, 
+                                                                                'buying_power_used':0, 'cushion':0, 'pledge_to_margin_used':0, 
+                                                                                'pledge_to_margin_availble':sim_account_starting_value_base
+                                                                                }
+                                                                }
+                                                    }
+                                                },
+                                'base_account_numbers':{'sim':'sim_1', 'ibkr':'U13152795'},
+                                'risk_management': {'max_risk_per_bet':0.05, 'maximum_marging_used_pct':0.80}
+                                }
+        
         config_dict = deepcopy(config_dict_template)
         config_dict['run_mode'] = 2
         config_dict['backtest_inputs']['start_time'] = pd.Timestamp(backtest_entry['Start Date'])
@@ -106,7 +119,7 @@ class BacktestQueue:
         config_dict['strategies'] = re.findall(r"'(.*?)'", backtest_entry['Strategies'])
         config_dict['data_update_inputs']['data_sources'] = re.findall(r"'(.*?)'", backtest_entry['Data Source'])
         config_dict['risk_management'] = convert_str_to_dict(backtest_entry['Risk Management'])
-        config_dict['oms'] = convert_str_to_dict(backtest_entry['OMS'])
+        config_dict['account_info']['sim']['sim_1'][base_currency] = convert_str_to_dict(backtest_entry['Account Info'])
         config_dict['backtest_inputs']['Backtest Name'] = backtest_entry['Backtest Name']
         
         return config_dict
@@ -120,11 +133,10 @@ class BacktestQueue:
         backtests_queue = backtests_queue_df.to_dict(orient='records')
         return backtests_queue
     
-    def add_completed_backtest_to_google_sheet(self, completed_backtest, backtest_performance_metrics, test_folder_path):
+    def add_completed_backtest_to_google_sheet(self, completed_backtest, backtest_report, test_folder_path):
         del completed_backtest['Data Source']
         completed_backtest_entry = list(completed_backtest.values())
-        for key in ['profit', 'win_pct', 'sharpe_ratio', 'long_count', 'short_count']:
-            completed_backtest_entry.append(backtest_performance_metrics[key])
+        completed_backtest_entry.append(backtest_report)
         completed_backtest_entry.append(test_folder_path)
         self.completed_backtests_worksheet.append_row(completed_backtest_entry)
     

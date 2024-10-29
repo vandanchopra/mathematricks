@@ -3,15 +3,16 @@ from systems.utils import create_logger
 
 class Vault:
     def __init__(self, config_dict):
-        self.strategies = self.load_strategies(config_dict['strategies'])
+        self.strategies = self.load_strategies(config_dict)
         self.config_dict = self.create_datafeeder_config(config_dict, self.strategies)
         self.logger = create_logger(log_level='INFO', logger_name='Vault', print_to_console=True)
 
-    def load_strategies(self, strategy_names):
+    def load_strategies(self, config_dict):
+        strategy_names = config_dict['strategies']
         strategies_dict = {}
         for strategy in strategy_names:
             # import strategy module and get the class
-            strategies_dict[strategy] = getattr(__import__('vault.{}'.format(strategy), fromlist=[strategy]), 'Strategy')()
+            strategies_dict[strategy] = getattr(__import__('vault.{}'.format(strategy), fromlist=[strategy]), 'Strategy')(config_dict)
         return strategies_dict
     
     def create_datafeeder_config(self, config_dict, strategies):
@@ -39,14 +40,14 @@ class Vault:
         
         return config_dict
         
-    def generate_signals(self, market_data_df, system_timestamp):
+    def generate_signals(self, next_rows, market_data_df, system_timestamp):
         signals_output = {'signals':[], 'ideal_portfolios':[]}
         ''' 
         for each strategy in self.strategies, get the signals and ideal portfolio.
         combine the signals and ideal portfolio from all strategies and return the combined signals.
         '''
         for strategy in self.strategies.values():
-            return_type, return_item = strategy.generate_signals(market_data_df, system_timestamp)
+            return_type, return_item = strategy.generate_signals(next_rows, market_data_df, system_timestamp)
             if return_type == 'signals':
                 for signal in return_item:
                     signals_output["signals"].append(signal)
@@ -59,9 +60,12 @@ class Vault:
         # run each strategy and get either the signals or ideal portforlio from each strategy, based on current data.
         # combine the signals from all strategies and return the combined signals.
         # self.logger.debug({'signals_output':signals_output})
+        # if len(signals_output['signals']) > 0:
+            # self.logger.info(f'Signals Generated: {signals_output["signals"]}')
+        # elif len(signals_output['ideal_portfolios']) > 0:
+            # self.logger.info(f'Ideal Portfolio Generated: {signals_output["ideal_portfolios"]}')
+            
         return signals_output
-
-
 
 if __name__ == '__main__':
     from config import config_dict

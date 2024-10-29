@@ -1,4 +1,5 @@
 import os, json, time, logging, sys, pickle, warnings
+from matplotlib.pylab import f
 import pandas as pd
 from config import config_dict
 from systems.datafetcher import DataFetcher
@@ -31,10 +32,10 @@ class Mathematricks:
         self.datafeeder = DataFeeder(self.config_dict)
         self.datafetcher = DataFetcher(self.config_dict)
         self.live_bool = False
+        self.reporter = PerformanceReporter()
     
-    def are_we_live(self, run_mode, system_timestamp, market_data_df, start_date, prev_live_bool, new_orders):
+    def are_we_live(self, run_mode, system_timestamp, start_date):
         # convert system_timestamp and start_date to date only
-        
         system_timestamp = system_timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
         start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -45,10 +46,17 @@ class Mathematricks:
         else:
             live_bool = False
 
+        return live_bool
+    
+    def sync_orders_on_live(self, new_orders):
         # self.logger.debug({'live_bool':live_bool, 'run_mode':run_mode, 'system_timestamp':system_timestamp, 'start_date':start_date, 'prev_live_bool':prev_live_bool})
         if prev_live_bool == False and live_bool == True:
-            for count, order in enumerate(self.oms.open_orders):
-                self.logger.info(f"OPEN Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Status: {order[0]['status']}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")
+            for count, multi_leg_order in enumerate(self.oms.open_orders):
+                for order in multi_leg_order:
+                    self.logger.info(f"OPEN Order {count+1}: Symbol: {order['symbol']}, orderDirection: {order['orderDirection']}, orderType: {order['orderType']}, orderQuantity: {order['orderQuantity']}, Status: {order['status']}, Broker: {order['broker']}")
+            
+            # for count, order in enumerate(self.oms.open_orders):
+            #     self.logger.info(f"OPEN Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Status: {order[0]['status']}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")
             
             # print a series of dashes '-' only as wide as the terminal
             print('*'*os.get_terminal_size().columns)
@@ -65,8 +73,8 @@ class Mathematricks:
             for count, order in enumerate(new_orders):
                 price = order[0]['entryPrice'] if order[0]['orderType'].lower() == 'market' else order[0]['exitPrice']
                 self.logger.info(f"SYNC New Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Price: {price}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")
-
-        return live_bool, new_orders
+            raise AssertionError('MANUALLY STOPPING HERE')
+        return new_orders
 
     def run(self):
         run_mode = config_dict['run_mode']
@@ -91,29 +99,50 @@ class Mathematricks:
                         self.system_timestamp = next_rows.index.get_level_values(1)[-1]
                         self.market_data_df_root = pd.concat([self.market_data_df_root, next_rows], axis=0)
                         self.market_data_df_root = self.market_data_df_root[~self.market_data_df_root.index.duplicated(keep='last')]
+                        
+                        # SYSTEM UPDATE TO CONSOLE
+                        # if self.system_timestamp > config_dict['backtest_inputs']['start_time']:
                         for interval, next_datetime in next_rows.index:
                             print('-'*os.get_terminal_size().columns)
                             self.logger.debug(f"Interval: {interval}, Datetime: {next_datetime}, System Timestamp: {self.system_timestamp}, Live Bool: {self.live_bool}")
+                        
+                        broker = 'IBKR'.lower() if self.live_bool else 'SIM'.lower()
+                        base_account_number = list(self.oms.margin_available[broker].keys())[0]
+                        trading_currency = self.config_dict['trading_currency']
+                        margin_keys_of_interest = ['total_buying_power', 'buying_power_available', 'buying_power_used']
+                        log_msg = ''
+                        for key in margin_keys_of_interest:
+                            current_value = self.oms.margin_available[broker][base_account_number]['combined'][trading_currency][key]
+                            log_msg += f"{key}: {current_value} | "
+                            # self.logger.debug({f"Margin Available: {self.oms.margin_available}"})
+                            if round(current_value, 1) < 0:
+                                raise AssertionError(f"Negative Margin Available: {log_msg}")
+                        self.logger.debug(log_msg)     
+                                
                         #     self.logger.debug(next_rows)
                         #     # self.logger.debug({'self.market_data_df':self.market_data_df.shape})
                         #     time.sleep(1)
                         
                         # # Generate Signals from the Strategies (signals)
-                        new_signals = self.vault.generate_signals(self.market_data_df_root, self.system_timestamp)
+                        new_signals = self.vault.generate_signals(next_rows, self.market_data_df_root, self.system_timestamp)
                         # PRINT THE SIGNALS GENERATED IF NEEDED
-                        # if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
-                        #     input('Press Enter to continue...')
+                        if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
+                            # self.logger.debug({'Margins':self.oms.margin_available})
+                            # input('Press Enter to continue...')
+                            pass
+                        
+                        # Check if we're going live
+                        prev_live_bool = self.live_bool
+                        self.live_bool = self.are_we_live(run_mode, self.system_timestamp, start_date)
                         
                         # # Convert signals to orders
-                        new_orders, self.oms.open_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.portfolio, self.oms.open_orders, self.system_timestamp)
+                        new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.portfolio, self.oms.open_orders, self.system_timestamp, self.live_bool)
                         
-                        # # ## PRINT THE SIGNALS GENERATED IF NEEDED
-                        # if len(new_orders) > 0:
-                        #     self.logger.debug({'new_orders':new_orders})
-                        #     input('Press Enter to continue...')
+                        # If the system is going live, sync the orders with the broker
+                        if prev_live_bool == False and self.live_bool == True:
+                            new_orders = self.sync_orders_on_live(new_orders)
                             
                         # # # Execute orders on the market with the OMS
-                        self.live_bool, new_orders = self.are_we_live(run_mode, self.system_timestamp, self.market_data_df_root, start_date, self.live_bool, new_orders)
                         # if self.live_bool:
                             # self.logger.debug({'open_orders':self.oms.open_orders})
                         self.oms.execute_orders(new_orders, self.system_timestamp, self.market_data_df_root, live_bool=self.live_bool)
@@ -126,11 +155,14 @@ class Mathematricks:
                         
                     else:
                         self.logger.info('Backtest completed.')
-                        self.reporter = PerformanceReporter(self.config_dict, self.oms.open_orders, self.oms.closed_orders, self.market_data_df_root)
-                        self.reporter.calculate_backtest_performance_metrics()
+                        from pprint import pprint
+                        self.logger.info(pprint(self.oms.margin_available))
+                        self.reporter.calculate_backtest_performance_metrics(self.config_dict, self.oms.open_orders, self.oms.closed_orders, self.market_data_df_root)
                         self.reporter.generate_report()
                         if self.config_dict['backtest_inputs']['save_backtest_results']:
-                            self.test_folder_path = self.reporter.save_backtest()
+                            self.test_folder_path, self.test_name = self.reporter.save_backtest(self.config_dict, self.oms.open_orders, self.oms.closed_orders)
+                            self.logger.info(f'Backtest results saved at: {self.test_folder_path}')
+                            self.logger.info(f'Backtest Name: {self.test_name}')
                         break
                 
                 except KeyboardInterrupt:

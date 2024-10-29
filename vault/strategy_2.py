@@ -57,7 +57,7 @@ class Strategy (BaseStrategy):
         return top_symbols, top_scores, bottom_symbols, bottom_scores, ltp
 
     
-    def generate_signals(self, market_data_df, system_timestamp):
+    def generate_signals(self, next_rows, market_data_df, system_timestamp):
         """
         Generate signals based on the strategy. THIS IS DUMMY CODE FOR CREATING IDEAL PORTFOLIO.
         """

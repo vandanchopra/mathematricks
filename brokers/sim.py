@@ -1,3 +1,4 @@
+from email.mime import base
 from re import A
 import os, hashlib, time, json, logging, sys
 from turtle import back
@@ -17,7 +18,8 @@ class Sim():
 class SIM_Execute():
     def __init__(self):
         self.logger = create_logger(log_level='DEBUG', logger_name='SIM_Execute', print_to_console=True)
-
+        self.granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
+        
     def place_order(self, order, market_data_df, system_timestamp):
         """
         Place a market or stop-loss-limit order. All other order types are rejected.
@@ -27,7 +29,7 @@ class SIM_Execute():
         current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
         current_system_timestamp = market_data_df.index.get_level_values(1)[-1]
         
-        if order['orderType'].lower() == 'market':
+        if order['orderType'].lower() in ['market', 'market_exit']:
             response_order = deepcopy(order)
             response_order['status'] = 'closed'
             response_order['fill_price'] = current_price
@@ -71,7 +73,11 @@ class SIM_Execute():
             if order['orderDirection'].lower() == 'buy' and current_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_price <= order['exitPrice']:
                 response_order = deepcopy(order)
                 response_order['status'] = 'closed'
-                response_order['fill_price'] = current_price
+                self.available_granularities = market_data_df.index.get_level_values(0).unique()
+                self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
+                self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
+                fill_price = order['exitPrice'] if self.min_granularity == '1d' else current_price
+                response_order['fill_price'] = fill_price
                 response_order['filled_timestamp'] = system_timestamp
                 response_order['fresh_update'] = True
                 response_order['message'] = 'Stop-loss order filled.'
@@ -89,13 +95,16 @@ class SIM_Execute():
         return response_order
     
     def modify_order(self, order, system_timestamp):
+        
         order['status'] = 'open'
         order['modified_timestamp'] = system_timestamp
-        order['message'] = 'Order modified.'
         order['fresh_update'] = True
         
         return order
-       
+    
+    def cancel_order(self, order, system_timestamp):
+        pass
+           
     def execute_order(self, order, market_data_df, system_timestamp):
         if order['status'] == 'pending':
             # Execute the order in the simulator
@@ -105,8 +114,36 @@ class SIM_Execute():
             response_order = self.update_order_status(order, market_data_df=market_data_df)
         elif order['status'] == 'modify':
             response_order = self.modify_order(order, system_timestamp=system_timestamp)
+        # elif order['status'] == 'cancel':
+        #     response_order = self.cancel_order(order, system_timestamp=system_timestamp)
+        else:
+            self.logger.debug({'order':order})
+            raise ValueError(f"Order status '{order['status']}' not supported.")
         
         return response_order
+    
+    def create_account_summary(self, trading_currency, base_currency, base_currency_to_trading_currency_exchange_rate, starting_account_inputs):
+        account_balance_dict = {trading_currency:{}}
+        for currency in starting_account_inputs:
+            if base_currency != trading_currency and currency == base_currency:
+                base_currency_account_balance_dict = {}
+                base_currency_account_balance_dict[currency] = starting_account_inputs[currency]
+                base_currency_account_balance_dict[currency]['margin_multiplier'] = (float(base_currency_account_balance_dict[currency]['buying_power_available']) + float(base_currency_account_balance_dict[currency]['buying_power_used'])) / (float(base_currency_account_balance_dict[currency]['pledge_to_margin_used']) + float(base_currency_account_balance_dict[currency]['pledge_to_margin_availble']))
+                base_currency_account_balance_dict[currency]['total_buying_power'] = float(base_currency_account_balance_dict[currency]['buying_power_available']) + float(base_currency_account_balance_dict[currency]['buying_power_used'])
+                base_currency_account_balance_dict[currency]['pct_of_margin_used'] = float(base_currency_account_balance_dict[currency]['pledge_to_margin_used']) / float(base_currency_account_balance_dict[currency]['total_account_value'])
+                
+                for key, value in base_currency_account_balance_dict[currency].items():
+                    if key not in ['cushion', 'margin_multipler', 'pct_of_margin_used']:
+                        account_balance_dict[trading_currency][key] = round(value * base_currency_to_trading_currency_exchange_rate, 2)
+                    else:
+                        account_balance_dict[trading_currency][key] = round(value, 2)
+        
+        # account_balance_dict = starting_account_inputs
+        # account_balance_dict['margin_multipler'] = {'value': (float(account_balance_dict['buying_power_available']['value']) + float(account_balance_dict['buying_power_used']['value'])) / (float(account_balance_dict['pledge_to_margin_used']['value']) + float(account_balance_dict['pledge_to_margin_availble']['value'])), 'currency': ''}
+        # account_balance_dict['total_buying_power'] = {'value': float(account_balance_dict['buying_power_available']['value']) + float(account_balance_dict['buying_power_used']['value']), 'currency': 'CAD'}
+        # account_balance_dict['pct_of_margin_used'] = {'value': float(account_balance_dict['pledge_to_margin_used']['value']) / float(account_balance_dict['total_account_value']['value']), 'currency': ''}
+        
+        return account_balance_dict
     
 class Yahoo():
     def __init__(self):
