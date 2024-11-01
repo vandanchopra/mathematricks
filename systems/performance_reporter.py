@@ -63,8 +63,6 @@ class PerformanceReporter:
         short_count = 0
         sharpe = 'NOT COMPUTED'
         for count, multi_leg_order in enumerate(closed_orders):
-            signal_id = multi_leg_order[0]['signal_id']
-            symbol = multi_leg_order[0]['symbol']
             # Implementation for calculating performance metrics
             signal_open_date = multi_leg_order[0]['timestamp']
             if signal_open_date > config_dict['backtest_inputs']['start_time'] and signal_open_date < config_dict['backtest_inputs']['end_time']:

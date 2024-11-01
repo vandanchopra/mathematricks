@@ -392,6 +392,8 @@ class OMS:
             # self.logger.debug({f'Symbol: {multi_leg_order[0]["symbol"]}, order_open':order_open})
             if not order_open:
                 # remove updated_open_orders[level_1_count][level_2_count] from open_orders
+                if len(multi_leg_order) == 0:
+                    raise AssertionError(f"Multi-leg order is empty: {multi_leg_order}")
                 closed_orders.append(multi_leg_order)
             else:
                 # Remove multi_leg_order from self.open_orders
@@ -472,29 +474,46 @@ class OMS:
             fill_price = response_order['fill_price']
             broker = response_order['broker'].lower()
             margin_used_by_order = (fill_price * orderQuantity)
+            self.logger.debug({f"Symbol: {symbol} | Margin Used: {margin_used_by_order}, Fill Price: {fill_price}, Order Quantity: {orderQuantity}, Order Type: {response_order['orderType']}"})
             base_account_number = list(self.config_dict['account_info'][broker].keys())[0]
             trading_currency = self.config_dict['trading_currency']
             # self.logger.debug({f"Symbol: {symbol} | Margin Used: {margin_used_by_order}, Order Type: {response_order['orderType']}"})
-            self.logger.debug({f"Symbol: {symbol} | Margin Available: {self.margin_available}"})
+            # msg = f"BEFORE: Symbol: {symbol} | Total Margin: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']} | Margin Used: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']} | Margin Available: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']}"
+            # prev_margin_available = deepcopy(self.margin_available)
+            # self.logger.debug(msg)
             if response_order['orderType'].lower() == 'market':
                 self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] -= abs(margin_used_by_order)
                 self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] -= abs(margin_used_by_order)
                 self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] += abs(margin_used_by_order)
                 self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] += abs(margin_used_by_order)
+                profit = None
+                # msg = f"Margin MATH: Margin Used Diff: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] - prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']} | Margin Available Diff: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] - prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']}"
+                # self.logger.debug(msg)
                 
             elif response_order['orderType'].lower() in ['stoploss_pct', 'stoploss_abs', 'market_exit']:
                 order_open = self.check_if_all_legs_of_the_order_are_closed(multi_leg_order)
                 if not order_open:
                     profit = self.reporter.calculate_multi_leg_order_profit(multi_leg_order)
-                    self.logger.info(f"Order Closed | Symbol: {symbol} | Profit: {profit} | Order Quantiy: {orderQuantity}")
+                    # self.logger.info(f"Order Closed | Symbol: {symbol} | Profit: {profit} | Order Quantiy: {orderQuantity}")
                 else:
                     profit = 0
-                self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
-                self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
-                self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] -= abs(margin_used_by_order) - profit
-                self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] -= abs(margin_used_by_order) - profit
+                # self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
+                # self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
+                if orderDirection_multiplier == 1:
+                    self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] -= (abs(margin_used_by_order) + (profit * orderDirection_multiplier))
+                    self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] -= (abs(margin_used_by_order) + (profit * orderDirection_multiplier))
+                    
+                    self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += (abs(margin_used_by_order) + (profit * orderDirection_multiplier) + (profit * orderDirection_multiplier))
+                    self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += (abs(margin_used_by_order) + (profit * orderDirection_multiplier) + (profit * orderDirection_multiplier))
+                else:
+                    self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] -= (abs(margin_used_by_order) + (profit * orderDirection_multiplier))
+                    self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] -= (abs(margin_used_by_order) + (profit * orderDirection_multiplier))
+                    self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += abs(margin_used_by_order) 
+                    self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += abs(margin_used_by_order) 
+                # self.logger.debug({f"Symbol: {symbol} | Margin Used by Order: {margin_used_by_order}, Profit: {profit}, Order Type: {response_order['orderType']}"})
                     
             else:
+                profit = None
                 raise AssertionError('OrderType not supported: {}'.format(response_order['orderType']))
             
             self.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power'] = self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] + self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']
@@ -507,7 +526,11 @@ class OMS:
             self.margin_available[broker][base_account_number][strategy_name][trading_currency]['pledge_to_margin_used'] = round(self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] / self.margin_available[broker][base_account_number][strategy_name][trading_currency]['margin_multiplier'], 4)
             self.margin_available[broker][base_account_number]['combined'][trading_currency]['pledge_to_margin_availble'] = round(self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] / self.margin_available[broker][base_account_number]['combined'][trading_currency]['margin_multiplier'], 4)
             self.margin_available[broker][base_account_number][strategy_name][trading_currency]['pledge_to_margin_availble'] = round(self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] / self.margin_available[broker][base_account_number][strategy_name][trading_currency]['margin_multiplier'], 4)
-            self.logger.debug({f"AFTER Symbol: {symbol} | Margin Available: {self.margin_available}"})
+            # msg = f"AFTER: Symbol: {symbol} | Total Margin: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']} | Margin Used: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']} | Margin Available: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']}"
+            # self.logger.debug(msg)
+            # if profit:
+                # msg = f"Margin MATH: Margin Used Diff: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] - prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']} | Margin Available Diff: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] - prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']} | Margin Used + Profit + Profit: {abs(margin_used_by_order) + profit + profit}"
+                # self.logger.debug(msg)
             
             # self.logger.debug(f"Margin Available - AFTER: {self.margin_available} | Symbol: {symbol} | Order Direction: {orderDirection} | Order Type: {response_order['orderType']} | Order Quantity: {orderQuantity} | Fill Price: {fill_price} | Margin Used: {margin_used_by_order}")
     
@@ -537,9 +560,9 @@ class OMS:
                 
                 # Update symbol_ltp to the order
                 if order_status not in ['closed', 'cancelled']:
-                    if 'symbol_ltp_list' in order:
-                        order['symbol_ltp_list'] = []
-                        order['symbol_ltp_list'].append(market_data_df.loc['1d'].xs(order['symbol'], axis=1, level='symbol')['close'][-1])
+                    if 'symbol_ltp' in order:
+                        order['symbol_ltp'] = []
+                        order['symbol_ltp'].append(market_data_df.loc['1d'].xs(order['symbol'], axis=1, level='symbol')['close'][-1])
                 
                 if order_status not in ['closed', 'cancelled']: # Basically if status is 'open' or 'pending'
                     # First check if Stoploss needs to be udpated.

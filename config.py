@@ -3,8 +3,8 @@ import os
 import pandas as pd
 from datetime import datetime
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
-start_date = pd.Timestamp(datetime(2021,1,1)).tz_localize('UTC').tz_convert('EST')
-end_date = start_date + pd.Timedelta(days=120)
+start_date = pd.Timestamp(datetime(1990,1,1)).tz_localize('UTC').tz_convert('EST')
+end_date = start_date + pd.Timedelta(days=365*2)
 sim_account_margin_multiplier = 3
 sim_account_starting_value_base = 100000
 base_currency = 'CAD'
@@ -22,7 +22,7 @@ config_dict = {
         'save_backtest_results':True,
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
-    'strategies':['strategy_dev.strategy_3_2'], # 'strategy_1', 'strategy_dev.strategy_3'
+    'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'account_info':{

@@ -1,11 +1,12 @@
 import json, os
-from systems.utils import create_logger
+from systems.utils import create_logger, sleeper
 
 class Vault:
     def __init__(self, config_dict):
+        self.tickers_dict = {}
+        self.logger = create_logger(log_level='DEBUG', logger_name='Vault', print_to_console=True)
         self.strategies = self.load_strategies(config_dict)
         self.config_dict = self.create_datafeeder_config(config_dict, self.strategies)
-        self.logger = create_logger(log_level='INFO', logger_name='Vault', print_to_console=True)
 
     def load_strategies(self, config_dict):
         strategy_names = config_dict['strategies']
@@ -28,11 +29,13 @@ class Vault:
 
         data_inputs = {}
         list_of_symbols = []
-        for strategy in strategies.values():
+        for strategy_name, strategy in strategies.items():
             data_input_temp , list_of_symbols_temp = strategy.datafeeder_inputs()
+            self.tickers_dict[strategy_name] = list_of_symbols_temp
             data_inputs = data_inputs | data_input_temp
-            list_of_symbols += list_of_symbols_temp
-        list_of_symbols = list(set(list_of_symbols))
+
+        # self.logger.debug({'self.tickers_dict':self.tickers_dict})
+        list_of_symbols = list(set([ticker for ticker_list in self.tickers_dict.values() for ticker in ticker_list]))
         
         # Convert all the columns to lowercase before returning the datafeeder_config
         datafeeder_config = {'data_inputs':to_lowercase(data_inputs), 'list_of_symbols':list_of_symbols}
@@ -47,7 +50,8 @@ class Vault:
         combine the signals and ideal portfolio from all strategies and return the combined signals.
         '''
         for strategy in self.strategies.values():
-            return_type, return_item = strategy.generate_signals(next_rows, market_data_df, system_timestamp)
+            return_type, return_item, list_of_symbols_temp = strategy.generate_signals(next_rows, market_data_df, system_timestamp)
+            self.tickers_dict[strategy.strategy_name] = list_of_symbols_temp
             if return_type == 'signals':
                 for signal in return_item:
                     signals_output["signals"].append(signal)
@@ -55,17 +59,14 @@ class Vault:
                 for ideal_portfolio in return_item:
                     signals_output["ideal_portfolios"].append(ideal_portfolio)
                 
-        # with open('db/vault/signals.json', 'w') as file:
-        #     json.dump(signals_output, file)
-        # run each strategy and get either the signals or ideal portforlio from each strategy, based on current data.
-        # combine the signals from all strategies and return the combined signals.
-        # self.logger.debug({'signals_output':signals_output})
-        # if len(signals_output['signals']) > 0:
-            # self.logger.info(f'Signals Generated: {signals_output["signals"]}')
-        # elif len(signals_output['ideal_portfolios']) > 0:
-            # self.logger.info(f'Ideal Portfolio Generated: {signals_output["ideal_portfolios"]}')
-            
-        return signals_output
+        # Update the config_dict with the latest list of symbols from all the strategies
+        list_of_symbols = list(set([ticker for ticker_list in self.tickers_dict.values() for ticker in ticker_list]))
+        if list_of_symbols != self.config_dict['datafeeder_config']['list_of_symbols']:
+            self.config_dict['datafeeder_config']['list_of_symbols'] = list_of_symbols
+            # self.logger.info(f'Updated list of symbols: {list_of_symbols}')
+            # sleeper(5, 'Sleeping for 5 seconds to update the list of symbols')
+        
+        return signals_output, self.config_dict
 
 if __name__ == '__main__':
     from config import config_dict

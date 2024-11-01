@@ -124,7 +124,8 @@ class Mathematricks:
                         #     time.sleep(1)
                         
                         # # Generate Signals from the Strategies (signals)
-                        new_signals = self.vault.generate_signals(next_rows, self.market_data_df_root, self.system_timestamp)
+                        new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.market_data_df_root, self.system_timestamp)
+                        self.datafeeder.config_dict = self.datafetcher.config_dict = self.rms.config_dict = self.vault.config_dict
                         # PRINT THE SIGNALS GENERATED IF NEEDED
                         if len(new_signals['signals']) > 0 or len(new_signals['ideal_portfolios']) > 0:
                             # self.logger.debug({'Margins':self.oms.margin_available})
@@ -136,7 +137,7 @@ class Mathematricks:
                         self.live_bool = self.are_we_live(run_mode, self.system_timestamp, start_date)
                         
                         # # Convert signals to orders
-                        new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.portfolio, self.oms.open_orders, self.system_timestamp, self.live_bool)
+                        new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.open_orders, self.system_timestamp, self.live_bool)
                         
                         # If the system is going live, sync the orders with the broker
                         if prev_live_bool == False and self.live_bool == True:
