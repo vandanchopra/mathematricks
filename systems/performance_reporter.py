@@ -70,7 +70,7 @@ class PerformanceReporter:
                 
                 total_profit += (exit_order_value + entry_order_value)
                 total_order_value += abs(entry_order_value)
-                self.logger.debug({'Symbol':entry_order['symbol'], 'Entry Order Direction': entry_orderDirection, 'Profit':total_profit, 'Entry Qty':entry_qty, 'Entry Price':entry_price, 'Exit Price':exit_price, 'Entry Value':entry_order_value, 'Exit Value':exit_order_value, 'Total Order Value':total_order_value})
+                # self.logger.debug({'Symbol':entry_order['symbol'], 'Entry Order Direction': entry_orderDirection, 'Profit':total_profit, 'Entry Qty':entry_qty, 'Entry Price':entry_price, 'Exit Price':exit_price, 'Entry Value':entry_order_value, 'Exit Value':exit_order_value, 'Total Order Value':total_order_value})
         
         return round(total_profit, 10), total_profit / total_order_value if total_order_value > 0 else 0
     
