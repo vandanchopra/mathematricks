@@ -10,27 +10,25 @@ class PerformanceReporter:
         self.backtest_report = None
         self.logger = create_logger(log_level='DEBUG', logger_name='REPORTER', print_to_console=True)
     
-    def calculate_unrealized_pnl(self, open_orders):
+    def calculate_unrealized_pnl(self, open_orders, unfilled_orders):
         unrealized_pnl_abs_dict = {}
         unrealized_pnl_pct_dict = {}
     
         for multi_leg_order in open_orders:
             symbol = multi_leg_order[0]['symbol']
-            unrealized_pnl_abs, unrealized_pnl_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, force_close=True)
-            # self.logger.debug({'multi_leg_order':multi_leg_order})
+            unrealized_pnl_abs, unrealized_pnl_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, unfilled_orders, force_close=True)
             unrealized_pnl_abs_dict[symbol] = unrealized_pnl_abs
             unrealized_pnl_pct_dict[symbol] = unrealized_pnl_pct
             
         return unrealized_pnl_abs_dict, unrealized_pnl_pct_dict
     
-    def calculate_multi_leg_order_pnl(self, multi_leg_order, force_close=False):
+    def calculate_multi_leg_order_pnl(self, multi_leg_order, unfilled_orders, force_close=False):
         entry_orders = []
         exit_orders = []
         entry_qty = 0
         exit_qty = 0
         total_profit = 0
         total_order_value = 0
-        
         for order in multi_leg_order:
             if 'entryPrice' in order and order['status'].lower() != 'cancelled':
                 entry_orders.append(order)
@@ -41,29 +39,38 @@ class PerformanceReporter:
                 exit_orders.append(order)
                 if order['status'] == 'closed' or (force_close and order['status'] in ['open', 'pending']):
                     exit_qty += order['orderQuantity']
-
+        
+        if force_close:
+            for unfilled_order in unfilled_orders:
+                # self.logger.debug((unfilled_order.contract.symbol, multi_leg_order[0]['symbol'], unfilled_order.order.orderType.lower()))
+                if unfilled_order.contract.symbol == multi_leg_order[0]['symbol'] and unfilled_order.order.orderType.lower() == 'mkt':
+                    # self.logger.debug((unfilled_order.contract.symbol, multi_leg_order[0]['symbol'], unfilled_order.order.orderType.lower()))
+                    entry_order_direction = multi_leg_order[0]['orderDirection']
+                    # self.logger.debug((unfilled_order.contract.symbol, unfilled_order.order.action.lower(), entry_order_direction.lower(), unfilled_order.order.totalQuantity))
+                    if entry_order_direction.lower() == unfilled_order.order.action.lower():
+                        entry_qty += unfilled_order.order.totalQuantity
+                    else:
+                        exit_qty += unfilled_order.order.totalQuantity
+            
         # self.logger.debug({'symbol':order['symbol'], 'entry_qty':entry_qty, 'exit_qty':exit_qty})
         if float(entry_qty) == float(exit_qty):
+            exit_price = None
             for exit_order in exit_orders:
                 exit_price = exit_order.get('fill_price') if 'fill_price' in exit_order else list(exit_order['symbol_ltp'].values())[-1]
-                exit_qty = exit_order.get('orderQuantity')
-                order_value = exit_price * exit_qty
-                orderDirection = exit_order.get('orderDirection')
-                orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
-                # self.logger.info({'Symbol':exit_order['symbol'], 'Price': exit_price, 'Qty': exit_qty , 'orderDirection':orderDirection, 'Value':order_value * orderDirection_multiplier * -1, 'status':exit_order['status']})
-                total_profit += order_value * orderDirection_multiplier * -1
+                if exit_price:
+                    break
             
             for entry_order in entry_orders:
                 entry_price = entry_order.get('fill_price')
-                entry_qty = entry_order.get('orderQuantity')
-                order_value = entry_price * entry_qty
-                total_order_value += order_value
-                orderDirection = entry_order.get('orderDirection')
-                orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
-                # self.logger.info({'Symbol':entry_order['symbol'], 'Price': entry_price, 'Qty': entry_qty, 'orderDirection':orderDirection, 'Value':order_value * orderDirection_multiplier * -1, 'status':entry_order['status']})
-                total_profit += order_value * orderDirection_multiplier * -1
-            
-        # self.logger.debug({'entry_qty':entry_qty, 'exit_qty':exit_qty, 'total_profit':total_profit})
+                order_entry_qty = entry_order.get('orderQuantity')
+                entry_orderDirection = entry_order['orderDirection']
+                entry_orderDirection_multiplier = 1 if entry_orderDirection == 'BUY' else -1
+                entry_order_value = entry_price * order_entry_qty * entry_orderDirection_multiplier * -1
+                exit_order_value = exit_price * order_entry_qty * entry_orderDirection_multiplier
+                
+                total_profit += (exit_order_value + entry_order_value)
+                total_order_value += abs(entry_order_value)
+                self.logger.debug({'Symbol':entry_order['symbol'], 'Entry Order Direction': entry_orderDirection, 'Profit':total_profit, 'Entry Qty':entry_qty, 'Entry Price':entry_price, 'Exit Price':exit_price, 'Entry Value':entry_order_value, 'Exit Value':exit_order_value, 'Total Order Value':total_order_value})
         
         return round(total_profit, 10), total_profit / total_order_value if total_order_value > 0 else 0
     
@@ -158,7 +165,7 @@ class PerformanceReporter:
             # Implementation for calculating performance metrics
             signal_open_date = multi_leg_order[0]['timestamp']
             if signal_open_date > config_dict['backtest_inputs']['start_time'] and signal_open_date < config_dict['backtest_inputs']['end_time']:
-                signal_profit, signal_profit_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, force_close=False)
+                signal_profit, signal_profit_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, self.oms.unfilled_orders, force_close=False)
                 profit += signal_profit
                 if signal_profit >= 0:
                     win_count += 1

@@ -56,7 +56,7 @@ class DataFeeder:
         # convert current_datetime to 'eastern' timezone
         current_datetime = current_datetime.astimezone(pytz.timezone('US/Eastern'))
         current_time = current_datetime.time()
-        self.logger.warning('is_market_open is not taking into account day of the week and holidays')
+        self.logger.warning('is_market_open is not taking into account day of the week and holidays. Previous market close function is taking it into account. bring that code here')
         sleeper(3, 'Giving you time to read the warning')
         return MARKET_OPEN_TIME <= current_time <= MARKET_CLOSE_TIME
 
@@ -94,7 +94,7 @@ class DataFeeder:
     def previous_market_close(self, current_datetime):
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=current_datetime - datetime.timedelta(days=30), end_date=current_datetime)
-        previous_close = schedule.iloc[-2]['market_close']
+        previous_close = schedule.iloc[-1]['market_close']
         return previous_close    
     
     def get_next_expected_timestamp(self, system_timestamp):

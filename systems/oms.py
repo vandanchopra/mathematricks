@@ -32,6 +32,7 @@ class OMS:
         self.portfolio = {}
         self.reporter = PerformanceReporter()
         self.granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
+        self.unfilled_orders = []
     
     def get_strategy_margin_available(self, strategy_name):
         num_of_strategy_count = len(self.config_dict["strategies"])
@@ -206,6 +207,7 @@ class OMS:
                     total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_prices[-1] # THIS VALUE IS HYPOTHETICAL
                     # Then calculate the closest integer number of stocks that can be bought with the funds available for IBKR
                     total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] = int(total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] / total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'])
+                    # self.logger.info({'symbol':symbol, 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price']})
                 except Exception as e:
                     raise Exception(f"Symbol: {symbol}, availble_funds_for_asset_from_ibkr: {total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr']}, current_price: {total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price']}, Tail Prices: {market_data_df.loc[self.min_granularity].xs(symbol, axis=1, level='symbol')['close'].tail()}")
                 # self.logger.debug({'symbol':symbol, 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy']})
@@ -428,7 +430,6 @@ class OMS:
             self.logger.info("Ideal Position Size: " + ' | '.join(f"{key}: {value}" for key, value in ideal_quantity_to_buy.items()))
             self.logger.info("Actual Qty to Buy:   " + ' | '.join(f"{key}: {value}" for key, value in actual_quantity_to_buy.items()))
             # Create new orders
-            
             new_entry_orders = create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr)
             new_entry_orders, open_orders_ibkr = create_exit_orders_for_sync(sim_open_orders, new_entry_orders, system_timestamp, ideal_quantity_to_buy, unfilled_orders_ibkr, open_orders_ibkr)
             
@@ -613,8 +614,8 @@ class OMS:
             elif response_order['orderType'].lower() in ['stoploss_pct', 'stoploss_abs', 'market_exit']:
                 order_open = self.check_if_all_legs_of_the_order_are_closed(multi_leg_order)
                 if not order_open:
-                    profit, profit_pct = self.reporter.calculate_multi_leg_order_pnl(multi_leg_order, force_close=False)
-                    self.logger.info(f"Order Closed | Symbol: {symbol} | Profit: {round(profit, 2)} | Order Quantiy: {orderQuantity}")
+                    profit, profit_pct = self.reporter.calculate_multi_leg_order_pnl(multi_leg_order, self.unfilled_orders, force_close=False)
+                    # self.logger.info(f"Order Closed | Symbol: {symbol} | Profit: {round(profit, 2)} | Order Quantiy: {orderQuantity}")
                 # self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
                 # self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
                 margin_used_by_entry_order = round((margin_used_by_order - (profit * (orderDirection_multiplier * -1))), 10)
@@ -656,17 +657,18 @@ class OMS:
             margin_math = (change_in_buying_power_available - profit) + change_in_buying_power_used
             # if margin_math != 0:
             # self.logger.debug(f"Margin Math: {margin_math} | Profit: {profit} | Opening Buying Power Available: {opening_buying_power_available} | Opening Buying Power Used: {opening_buying_power_used} | Closing Buying Power Available: {closing_buying_power_available} | Closing Buying Power Used: {closing_buying_power_used} | Change in Buying Power Available: {change_in_buying_power_available} | Change in Buying Power Used: {change_in_buying_power_used}")
+            
+            return profit
     
     def update_order_history(self, order, response_order):
-        updated_order = response_order.copy()
         # remove 'fresh_update' from order
         del response_order['fresh_update']
+        updated_order = response_order.copy()
+        
         # remove 'history' from order and response_order
-        if 'history' in order:
-            order_history = order['history']
+        order_history = order['history'] if 'history' in order else []
+        if 'history' in updated_order:
             del order['history']
-        else:
-            order_history = []
         order_history.append(order)
         updated_order['history'] = order_history
         
@@ -688,7 +690,11 @@ class OMS:
                     self.available_granularities = market_data_df.index.get_level_values(0).unique()
                     self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
                     self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
-                    order['symbol_ltp'][str(system_timestamp)] = market_data_df.loc[self.min_granularity].xs(order['symbol'], axis=1, level='symbol')['close'][-1]
+                    close_prices = market_data_df.loc[self.min_granularity].xs(order['symbol'], axis=1, level='symbol')['close']
+                    # Drop nan values
+                    close_prices = close_prices.dropna()
+                    if len(close_prices) > 0:
+                        order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
                 
                 if order_status not in ['closed', 'cancelled']: # Basically if status is 'open' or 'pending'
                     # First check if Stoploss needs to be udpated.
@@ -720,7 +726,7 @@ class OMS:
                     open_orders[level_1_count][level_2_count] = updated_order
                     multi_leg_order[level_2_count] = updated_order
                     # self.update_porfolio(updated_order)
-                    self.update_available_margin(response_order, open_orders[level_1_count], system_timestamp)
+                    profit = self.update_available_margin(response_order, open_orders[level_1_count], system_timestamp)
                     
                     # PRINT UPDATE TO LOG
                     if 'entryPrice' in updated_order:
@@ -731,10 +737,14 @@ class OMS:
                         price = None
                     fill_price = updated_order['fill_price'] if 'fill_price' in updated_order else 'Not Filled'
                     orderValue = updated_order['orderQuantity'] * fill_price if isinstance(fill_price, float) else None
-                    self.logger.info(f"ORDER UPDATED: Symbol:{updated_order['symbol']} | Type:{updated_order['orderType']} | Dir:{updated_order['orderDirection']} | Qty:{updated_order['orderQuantity']} | Price:{price} | Fill Price:{fill_price} | orderValue: {orderValue} | Status:{updated_order['status']} | Msg:{updated_order['message']}")
-                    # if live_bool:
-                    #     input('Press Enter to continue...')
-                    
+                    if 'fresh_update' in updated_order:
+                        self.logger.info(f"Symbol: {updated_order['symbol']} | Fresh Update: {updated_order['fresh_update']} | Type: {updated_order['orderType']} | Dir: {updated_order['orderDirection']} | Qty: {updated_order['orderQuantity']} | Symbol LTP: {list(updated_order['symbol_ltp'].values())[-5:]}")
+                    msg = f"ORDER UPDATED: Symbol:{updated_order['symbol']} | Type:{updated_order['orderType']} | Dir:{updated_order['orderDirection']} | Qty:{updated_order['orderQuantity']} | Price:{price} | Fill Price:{fill_price} | orderValue: {orderValue} | Status:{updated_order['status']} | Msg:{updated_order['message']}"
+                    if isinstance(profit, float) or isinstance(profit, int):
+                        msg += f" | Profit: {round(profit, 2)}"
+                    else:
+                        msg += f" | Profit: {profit}"
+                    self.logger.info(msg)
         
         updated_open_orders, closed_orders = self.remove_closed_orders_from_open_orders_list(open_orders, closed_orders)
         # self.logger.debug({'updated_open_orders':len(updated_open_orders), 'closed_orders':len(closed_orders)})

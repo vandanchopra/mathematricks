@@ -557,14 +557,37 @@ class IBKR_Execute:
                     if unfilled_order.contract.symbol == order['symbol'] and unfilled_order.order.action != order['orderDirection']:
                         entry_order = unfilled_order
                         break
+                
+            '''If the above didn't work, calculate the position size and create the entry order manually'''
+            if not entry_order:
+                positions = self.ib.positions()
+                position_size = 0
+                for position in positions:
+                    if position.contract.symbol == symbol:
+                        position_size = position.position
+                        break
+                self.unfilled_orders_ibkr = self.ib.reqAllOpenOrders()
+                for unfilled_order in self.unfilled_orders_ibkr:
+                    if unfilled_order.contract.symbol == order['symbol'] and unfilled_order.order.action != order['orderDirection']:
+                        orderDirection = unfilled_order.order.action
+                        orderDirection_multiplier = 1 if orderDirection.lower() == 'buy' else -1
+                        position_size += unfilled_order.order.totalQuantity * orderDirection_multiplier
+                        
+                for open_order in self.ibkr_open_orders['open_orders']:
+                    if open_order.contract.symbol == order['symbol'] and open_order.order.action != order['orderDirection']:
+                        orderDirection = open_order.order.action
+                        orderDirection_multiplier = 1 if orderDirection.lower() == 'buy' else -1
+                        position_size += open_order.order.totalQuantity * orderDirection_multiplier
+                        
+                if float(abs(position_size)) >= float(abs(orderQuantity)):
+                    entry_order = {'symbol': symbol, 'orderQuantity': orderQuantity, 'orderDirection': orderDirection, 'status':'closed'}
+                
             
             # only place the stoploss order if the entry order is closed
             # self.logger.debug({'multi_leg_order':multi_leg_order})
             # self.logger.debug({'entry_order':entry_order})
-            if entry_order:
-                self.logger.debug(f"Entry Order Found: Symbol: {entry_order['symbol']}, OrderDirection: {entry_order['orderDirection']}, Status: {entry_order['status']}, Quantity: {entry_order['orderQuantity']}")
-            else:
-                self.logger.debug(f"Entry Order not found for symbol: {symbol} | Stop Loss order will not be placed for Symbol: {symbol}, OrderDirection: {orderDirection}, OrderQuantity: {orderQuantity}")
+            if not entry_order:
+                self.logger.error(f"Entry Order not found for symbol: {symbol} | Stop Loss order will not be placed for Symbol: {symbol}, OrderDirection: {orderDirection}, OrderQuantity: {orderQuantity}")
             
             if entry_order and entry_order['status'] in ['closed', 'open']:
                 exitPrice = order['exitPrice']

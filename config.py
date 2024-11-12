@@ -23,7 +23,7 @@ config_dict = {
         'save_backtest_results':True,
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
-    'strategies':['strategy_dev.strategy_3_small_set'], # 'strategy_1', 'strategy_dev.strategy_3'
+    'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'account_info':{
@@ -39,5 +39,5 @@ config_dict = {
                            }
                     },
     'base_account_numbers':{'sim':'sim_1', 'ibkr':IBKR_base_account_number},
-    'risk_management': {'max_risk_per_bet':0.05, 'maximum_marging_used_pct':0.80}
+    'risk_management': {'max_risk_per_bet':0.05, 'maximum_marging_used_pct':0.70}
     }

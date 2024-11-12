@@ -42,12 +42,13 @@ class Mathematricks:
         live_bool = False
         # self.logger.info({'run_mode':run_mode, 'system_timestamp':system_timestamp, 'start_date':start_date})
         # now_tz = datetime.datetime.now() - datetime.timedelta(days=5)
+        system_timestamp = system_timestamp + datetime.timedelta(minutes=1)
         start_date_minus_5_days = start_date - datetime.timedelta(days=5)
         if run_mode in [1,2] and system_timestamp >= start_date_minus_5_days:
-            previous_market_close = self.datafeeder.previous_market_close(system_timestamp)
-            # self.logger.info({'run_mode':run_mode, 'system_timestamp':system_timestamp, 'start_date':start_date, 'previous_market_close':previous_market_close})
+            # previous_market_close = self.datafeeder.previous_market_close(system_timestamp)
+            # self.logger.info({'run_mode':run_mode, 'system_timestamp+1':system_timestamp+datetime.timedelta(minutes=1), 'start_date':start_date})
             
-            if '1m' not in self.datafeeder.config_dict['datafeeder_config']['data_inputs'] and system_timestamp >= previous_market_close:
+            if '1m' not in self.datafeeder.config_dict['datafeeder_config']['data_inputs']: #and system_timestamp >= previous_market_close:
                 # Add 1min timestamp to the datafeeder and datafetcher interval_inputs
                 self.datafeeder.config_dict['datafeeder_config']['data_inputs']['1m'] = self.datafeeder.config_dict['datafeeder_config']['data_inputs']['1d']
                 self.datafeeder.datafetcher.config_dict['datafeeder_config']['data_inputs']['1m'] = self.datafeeder.datafetcher.config_dict['datafeeder_config']['data_inputs']['1d']
@@ -62,12 +63,17 @@ class Mathematricks:
                 last_timestamp_tz = last_timestamp_tz.replace(second=0, microsecond=0)
             else:
                 last_timestamp_tz = self.datafeeder.previous_market_close(now_tz)
+                last_timestamp_tz = last_timestamp_tz.astimezone(pytz.timezone('US/Eastern'))
             system_timestamp_tz = system_timestamp.astimezone(pytz.timezone('US/Eastern'))
-            
+            # self.logger.debug({'system_timestamp_tz':system_timestamp_tz, 'last_timestamp_tz':last_timestamp_tz})
             # if next_expected_timestamp <= min_granularity_seconds:
             if system_timestamp_tz >= last_timestamp_tz:
                 live_bool = True
-                self.logger.info({'start_date':start_date, 'market_open_bool':self.market_open_bool, 'system_timestamp':system_timestamp, 'now_tz':now_tz, 'last_timestamp_tz':last_timestamp_tz, 'previous_market_close':previous_market_close, 'live_bool':live_bool})
+                msg = {'start_date':start_date, 'market_open_bool':self.market_open_bool, 'system_timestamp':system_timestamp, 'now_tz':now_tz, 'last_timestamp_tz':last_timestamp_tz, 'live_bool':live_bool}
+                if not self.market_open_bool:
+                    msg['prev_market_close'] = last_timestamp_tz
+                self.logger.info(msg)
+                sleeper(10, 'Going LIVE in: ')
 
         return live_bool
     
@@ -134,7 +140,9 @@ class Mathematricks:
         self.logger.info(log_msg)
         
         '''PRINT 3: Print Unrealized PnL'''
-        unrealized_pnl_abs_dict, unrealized_pnl_pct_dict = self.reporter.calculate_unrealized_pnl(self.oms.open_orders)
+        if self.live_bool:
+            self.oms.unfilled_orders = self.oms.brokers.ib.execute.ib.reqAllOpenOrders()
+        unrealized_pnl_abs_dict, unrealized_pnl_pct_dict = self.reporter.calculate_unrealized_pnl(self.oms.open_orders, self.oms.unfilled_orders)
         # Sort dictionary by values
         unrealized_pnl_abs_dict = dict(sorted(unrealized_pnl_abs_dict.items(), key=lambda item: item[1], reverse=True))
         # Sum of all the values of unrealized_pnl_abs_dict
@@ -192,7 +200,7 @@ class Mathematricks:
                         if prev_live_bool == False:
                             self.live_bool = self.are_we_live(run_mode, self.system_timestamp, start_date)
                         
-                        # Convert signals to orders
+                        # # Convert signals to orders
                         new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.open_orders, self.system_timestamp, self.live_bool)
                         
                         # If the system is going live, sync the orders with the broker
