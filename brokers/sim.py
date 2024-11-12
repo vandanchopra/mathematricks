@@ -4,7 +4,7 @@ import os, hashlib, time, json, logging, sys
 from turtle import back
 import pandas as pd
 import yfinance as yf
-from systems.utils import create_logger, generate_hash_id
+from systems.utils import create_logger, generate_hash_id, sleeper
 from tqdm import tqdm
 from copy import deepcopy
 
@@ -35,10 +35,10 @@ class SIM_Execute():
             response_order['fill_price'] = current_price
             response_order['filled_timestamp'] = system_timestamp
             if 'order_id' not in order or order['order_id'] is None:
-                order_without_history = deepcopy(order)
-                if 'history' in order_without_history:
-                    del order_without_history['history']
-                response_order['order_id'] = generate_hash_id(order_without_history, system_timestamp)
+                order_ = deepcopy(order)
+                if 'history' in order_:
+                    del order_['history']
+                response_order['order_id'] = generate_hash_id(order_, system_timestamp)
             response_order['broker_order_id'] = response_order['order_id']
             response_order['fresh_update'] = True
             response_order['message'] = 'Order filled at market price.'
@@ -66,7 +66,7 @@ class SIM_Execute():
         '''if the order is open, check if it's filled'''
         system_timestamp = market_data_df.index.get_level_values(1)[-1]
         symbol = order['symbol']
-        granularity = order['granularity']
+        granularity = order['granularity'] if ('granularity' in order and order['granularity'].lower() != 'unknown') else '1d'
         current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
         
         if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
@@ -95,7 +95,9 @@ class SIM_Execute():
         return response_order
     
     def modify_order(self, order, system_timestamp):
-        
+        # if order['modify_reason'] in ['new_price', 'new_quantity', 'new_price+new_quantity']:
+        for modify_reason in order['modify_reason']:
+            assert modify_reason.lower() in ['new_price', 'new_quantity']
         order['status'] = 'open'
         order['modified_timestamp'] = system_timestamp
         order['fresh_update'] = True
@@ -216,7 +218,9 @@ class Yahoo():
         
         return asset_data_df
     
-    def update_price_data_batch(self, stock_symbols, start_date, pbar, batch_size=75, throttle_secs=0.25):
+    def update_price_data_batch(self, stock_symbols, start_date, batch_size=75, throttle_secs=0.25):
+        pbar = tqdm(stock_symbols, desc='Downloading data from Yahoo: ')
+        
         asset_data_df_dict = {}
         for interval in stock_symbols:
             asset_data_df_dict[interval] = {}
@@ -226,7 +230,12 @@ class Yahoo():
                     batch.append('AAPL')
                     dummy_addition = True
                 if len(batch) > 1:
+                    msg = {'interval':interval, 'start_date':start_date}
                     if start_date is not None:
+                        msg['start_date_timestamp'] = start_date.timestamp()
+                        msg['timestamp_age_days'] = (time.time() - start_date.timestamp()) / (60*60*24)
+                    self.logger.debug(msg)
+                    if start_date is not None and ((interval == '1m' and time.time() - start_date.timestamp() < 60*60*24*7) or (interval == '1d')):
                         # convert Timestamp to _datetime
                         # start_date = start_date.to_pydatetime()
                         data = yf.download(batch, start=start_date, progress=False,interval=interval)
@@ -240,7 +249,7 @@ class Yahoo():
                             pbar.update(1)
                             
                 time.sleep(throttle_secs)  # To avoid hitting rate limits
-                        
+        pbar.close()
         return asset_data_df_dict
     
     def restructure_asset_data_df(self, asset_data_df):
@@ -301,14 +310,14 @@ class Yahoo():
                 csv_loader_pbar.update(1)
             csv_loader_pbar.close()
 
-        for interval in interval_inputs:
-            self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
+        # for interval in interval_inputs:
+            # self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
         
-        pbar = tqdm(stock_symbols, desc='Updating data: ')
         '''STEP 2: Get the data for the ones that don't have data'''
-        asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, pbar=pbar, batch_size=75, throttle_secs=throttle_secs)
+        asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, batch_size=75, throttle_secs=throttle_secs)
 
         # Extract the data from yahoo batch response and save it to csv
+        self.logger.debug('Starting to save the data to csv...')
         for interval in asset_data_df_dict:
             data_input_folder = os.path.join(data_folder, interval)
             os.makedirs(data_input_folder, exist_ok=True)
@@ -320,19 +329,22 @@ class Yahoo():
                 asset_data_df['symbol'] = symbol
                 asset_data_df['interval'] = interval
                 asset_data_df = asset_data_df.dropna(how='all')
+                asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
                 
-                # Save the data to a csv file
+                # Save it to the csv file
                 csv_file_path = os.path.join(data_input_folder, f"{symbol}.csv")
                 asset_data_df.to_csv(csv_file_path)
-                
+
                 # Remove all cols not needed
                 asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
                 
                 # Update it to the data_frames list
                 data_frames.append(asset_data_df)
-
+        self.logger.debug('DONE:  Saving the data to csv.')
+        
         '''STEP 3: Get the data for the ones that have partial data'''
         # Update the existing data. Get the minimum start date for the ones that have data. Then update the new downloaded data to the existing data
+        self.logger.debug('Starting to update the data for the ones that have partial data...')
         start_date = None
         for interval in stock_symbols_with_partial_data:
             for symbol in stock_symbols_with_partial_data[interval]:
@@ -343,11 +355,13 @@ class Yahoo():
                 # self.logger.debug({'interval':interval, 'symbol': symbol, 'last_date': last_date, 'start_date': start_date})
         # self.logger.debug({'start_date': start_date})
                 
-        asset_data_df_dict = self.update_price_data_batch(stock_symbols_with_partial_data, start_date=start_date,  pbar=pbar, batch_size=75)
-
+        asset_data_df_dict = self.update_price_data_batch(stock_symbols_with_partial_data, start_date=start_date, batch_size=75)
+        self.logger.debug('DONE:  Updating the data for the ones that have partial data.')
+        
+        pbar = tqdm(stock_symbols_with_partial_data, desc='Updating data: ')
         for interval in asset_data_df_dict:
+            data_input_folder = os.path.join(data_folder, interval)
             for symbol in asset_data_df_dict[interval]:
-                
                 # Extract the data from the yahoo batch response
                 asset_data_df = asset_data_df_dict[interval][symbol]
                 asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
@@ -364,24 +378,35 @@ class Yahoo():
                 updated_data = updated_data.dropna(how='all')
                 updated_data['symbol'] = symbol
                 updated_data['interval'] = interval
+                updated_data = updated_data.iloc[:-1] if interval == '1d' else updated_data
                 
                 # Save it to the csv file
                 csv_file_path = os.path.join(data_input_folder, f"{symbol}.csv")
                 updated_data.to_csv(csv_file_path)
+                
+                # if interval == '1m':
+                # self.logger.info({'asset_data_df':asset_data_df})
+                # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
+                # sleeper(5, 'Sleeping for 5 seconds...')
                 
                 # Remove all cols not needed
                 updated_data = self.remove_unwanted_cols(interval_inputs, interval, updated_data)
                 
                 # Update it to the data_frames list
                 data_frames.append(updated_data)
+                pbar.update(1)
+        pbar.close()
         
         '''STEP 4: Get the data for the ones that have full data'''
+        pbar = tqdm(stock_symbols_with_full_data, desc='Get the data for the ones that have full data: ')
         for interval in interval_inputs:
             for symbol in existing_data_dict[interval]:
                 asset_data_df = existing_data_dict[interval][symbol]
                 asset_data_df = self.restructure_asset_data_df(asset_data_df)
                 asset_data_df['symbol'] = symbol
                 asset_data_df['interval'] = interval
+                asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
+                
                 
                 # Remove all cols not needed
                 asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
@@ -392,7 +417,14 @@ class Yahoo():
         pbar.close()
         
         '''STEP 5: # Combine all DataFrames into a single DataFrame'''
-        self.logger.debug('Combining all DataFrames into a single DataFrame...')
+        self.logger.info('Combining all DataFrames into a single DataFrame...')
+        
+        '''Step 5.1: Add 1d timedelta to date'''
+        for dataframe in data_frames:
+            if '1d' in dataframe['interval'].unique():
+                dataframe.index = dataframe.index + pd.Timedelta(hours=23, minutes=59, seconds=59)
+        
+        '''Step 5.2: Combine all DataFrames into a single DataFrame'''
         start = time.time()
         combined_df = pd.concat(data_frames)
         combined_df.reset_index(drop=False,inplace=True)
@@ -406,25 +438,42 @@ class Yahoo():
 
         # Sort the index
         combined_df.sort_index(inplace=True)
-        self.logger.debug(f'DONE:  Combining all DataFrames into a single DataFrame....Time Taken: {(time.time() - start)/60} minutes.')
+        
+        # # timedelta 1 day to the date column for all 1d data
+        # first_timestamp_ = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
+        # self.logger.info({'first_timestamp_':first_timestamp_})
+        
+        
+        
+        # first_timestamp_ = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
+        # self.logger.info({'first_timestamp_':first_timestamp_})
+        
+        # raise AssertionError('STOP')
 
+        
+        self.logger.info(f'DONE:  Combining all DataFrames into a single DataFrame....Time Taken: {(time.time() - start)/60} minutes.')
         '''STEP 6: Trim the data to the back_test_start_date and back_test_end_date'''
         if lookback is not None:
             joined_dict = {}
             for interval, lookback_value in lookback.items():
                 lookback_value = int(lookback_value*1.5)
+                # self.logger.info({'back_test_start_date':back_test_start_date, 'back_test_end_date':back_test_end_date})
                 before = combined_df.loc[interval].loc[:back_test_start_date]
                 after = combined_df.loc[interval].loc[back_test_start_date:back_test_end_date]
+                after = after.iloc[1:]
                 before_new = before.iloc[-lookback_value:]
+                # self.logger.info({'interval':interval, 'before':before.shape, 'after':after.shape, 'before_new':before_new.shape})
                 # self.logger.debug({'interval':interval, 'lookback_value':lookback_value, 'first_row':before_new.index[0], 'last_row':before_new.index[-1]}) 
                 
                 # join before and after dataframes
-                joined = pd.concat([before_new, after])
+                if lookback_value > 0:
+                    joined = pd.concat([before_new, after])
+                else:
+                    joined = after
                 
                 joined.sort_index(inplace=True)
                 joined_dict[interval] = joined
             combined_df = pd.concat(joined_dict.values(), keys=joined_dict.keys(), names=['interval', 'date'])
-            # raise AssertionError('STOP HERE')
         
         return combined_df
     

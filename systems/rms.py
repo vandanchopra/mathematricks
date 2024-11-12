@@ -1,5 +1,6 @@
 from copy import deepcopy
 import json, os, logging
+from xml.dom import NotFoundErr
 from systems.utils import create_logger, sleeper, generate_hash_id
 
 class RMS:
@@ -136,12 +137,13 @@ class RMS:
         for symbol in delta_portfolio['deletions']:
             # Create the list of open_orders that need to be cancelled
             orders_to_cancel = []
+            symbol_ltp = None
             for multi_leg_order in open_orders:
                 for order in multi_leg_order:
                     if order['symbol'] == symbol and order['status'] == 'open':
                         orders_to_cancel.append(multi_leg_order)
                         # self.logger.debug({'order_to_cancel':order})
-                        symbol_ltp = order['symbol_ltp'][-1]
+                        symbol_ltp = list(order['symbol_ltp'].values())[-1]
 
             signal = deepcopy(signal_template)
             signal['symbol'] = symbol
@@ -149,7 +151,14 @@ class RMS:
             signal['orderQuantity'] = abs(delta_portfolio['deletions'][symbol])
             signal['orderDirection'] = 'BUY' if delta_portfolio['deletions'][symbol] < 0 else 'SELL'
             signal['orders_to_cancel'] = orders_to_cancel
-            signal['symbol_ltp'] = [symbol_ltp]
+            if 'symbol_ltp' not in signal:
+                signal['symbol_ltp'] = {}
+            try:
+                signal['symbol_ltp'][str(system_timestamp)] = symbol_ltp
+            except Exception as e:
+                self.logger.debug({'multi_leg_order':multi_leg_order})
+                self.logger.debug({'symbol':symbol, 'symbol_ltp':symbol_ltp, 'system_timestamp':system_timestamp})
+                raise Exception('Symbol LTP not found')
             signal['signal_type'] = 'ORDER_CANCELLATION'
             # self.logger.debug({'orderQuantity':signal['orderQuantity']})
             ideal_portfolio_signals.append(signal)
@@ -158,7 +167,9 @@ class RMS:
         for symbol in delta_portfolio['additions']:
             signal = deepcopy(signal_template)
             signal['symbol'] = symbol
-            signal['symbol_ltp'] = [normalized_ideal_portfolio[symbol]['current_price']]
+            if 'symbol_ltp' not in signal:
+                signal['symbol_ltp'] = {}
+            signal['symbol_ltp'][str(system_timestamp)] = normalized_ideal_portfolio[symbol]['current_price']
             signal['orderQuantity'] = abs(delta_portfolio['additions'][symbol])
             signal['orderDirection'] = 'BUY' if delta_portfolio['additions'][symbol] > 0 else 'SELL'
             signal['signal_type'] = 'BUY_SELL'
@@ -176,7 +187,7 @@ class RMS:
         if signal['signal_type'] == 'BUY_SELL':
             if (signal["exit_order_type"] == "stoploss_pct"):
                 signal_new = signal.copy()
-                current_price = signal["symbol_ltp"][-1]
+                current_price = list(signal["symbol_ltp"].values())[-1]
                 entry_orderDirection = signal["orderDirection"]
                 signal_new["stoploss_abs"] = current_price * (1-signal["stoploss_pct"]) if entry_orderDirection == "BUY" else current_price * (1+signal["stoploss_pct"])
                 # signal_new['exit_order_type'] = 'stoploss_abs'
@@ -189,7 +200,7 @@ class RMS:
     def calculate_total_risk(self, signal, margin_available, live_bool):
         if signal['signal_type'] == 'BUY_SELL':
             if signal["exit_order_type"] in ["stoploss_abs", "stoploss_pct"]:
-                current_price = signal["symbol_ltp"][-1]
+                current_price = list(signal["symbol_ltp"].values())[-1]
                 entry_orderDirection = signal["orderDirection"]
                 stoploss_abs = signal["stoploss_abs"]
                 # stoploss_pct = signal["stoploss_pct"]
@@ -222,7 +233,7 @@ class RMS:
             orderDirection = signal['orderDirection']
             orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
             orderQuantity = float(signal['orderQuantity'])
-            fill_price = float(signal['symbol_ltp'][-1])
+            fill_price = float(list(signal["symbol_ltp"].values())[-1])
             broker = 'sim' if not live_bool else 'ibkr'
             margin_used_by_order = (fill_price * orderQuantity)
             base_account_number = list(self.config_dict['account_info'][broker].keys())[0]
@@ -270,21 +281,25 @@ class RMS:
         if status != 'rejected':
             if signal_type == 'BUY_SELL':
                 if 'entry_order_type' in signal:
-                    order_leg = {'symbol': signal["symbol"], 
-                        'timestamp': signal["timestamp"], 
-                        "orderDirection":signal["orderDirection"], 
-                        "entryPrice":round(signal["symbol_ltp"][-1], 2), 
-                        "orderType":signal["entry_order_type"], 
-                        "timeInForce":signal["timeInForce"],
-                        "orderQuantity":float(abs(int(signal['orderQuantity']))),
-                        "strategy_name":signal["strategy_name"],
-                        "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM', 
-                        'granularity': signal['granularity'],
-                        "status": 'pending',
-                        "signal_id": signal["signal_id"],
-                        "symbol_ltp": signal["symbol_ltp"]
-                        }
-                    signal_orders.append(order_leg)
+                    try:
+                        order_leg = {'symbol': signal["symbol"], 
+                            'timestamp': signal["timestamp"], 
+                            "orderDirection":signal["orderDirection"],
+                            "entryPrice":list(signal["symbol_ltp"].values())[-1], 
+                            "orderType":signal["entry_order_type"], 
+                            "timeInForce":signal["timeInForce"],
+                            "orderQuantity":float(abs(int(signal['orderQuantity']))),
+                            "strategy_name":signal["strategy_name"],
+                            "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM', 
+                            'granularity': signal['granularity'],
+                            "status": 'pending',
+                            "signal_id": signal["signal_id"],
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            }
+                        signal_orders.append(order_leg)
+                    except:
+                        self.logger.debug({'signal':signal})
+                        raise Exception('Error in create_order')
                 if 'exit_order_type' in signal:
                     # raise AssertionError('exit_order_type in signal')
                     order_leg = {'symbol': signal["symbol"], 
@@ -301,7 +316,7 @@ class RMS:
                         'granularity': signal['granularity'],
                         "status": 'pending',
                         "signal_id": signal["signal_id"],
-                        "symbol_ltp": signal["symbol_ltp"]
+                        "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
                         }
                     signal_orders.append(order_leg)
             if signal_type == 'ORDER_CANCELLATION':
@@ -329,7 +344,7 @@ class RMS:
                             order_leg = {'symbol': order["symbol"], 
                                 'timestamp': signal["timestamp"], 
                                 "orderDirection": order["orderDirection"], 
-                                # "entryPrice":round(order["fill_price"], 2), 
+                                "exitPrice":list(order["symbol_ltp"].values())[-1], 
                                 "orderType":'MARKET_EXIT', 
                                 "timeInForce":'GTC',
                                 "orderQuantity":abs(int(order['orderQuantity'])),
@@ -364,7 +379,9 @@ class RMS:
         for signal in all_new_signals:
             # add signal ids if not present
             if 'signal_id' not in signal:
-                signal['signal_id'] = generate_hash_id(input_dict=signal, system_timestamp=system_timestamp)
+                signal_ = deepcopy(signal)
+                del signal_['symbol_ltp']
+                signal['signal_id'] = generate_hash_id(input_dict=signal_, system_timestamp=system_timestamp)
             signal = self.calculate_stoploss(signal)
             signal, margin_available_local = self.risk_management_checklist(signal, margin_available_local, live_bool)
             signal_orders = self.create_order(signal)

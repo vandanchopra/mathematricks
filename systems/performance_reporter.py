@@ -10,44 +10,135 @@ class PerformanceReporter:
         self.backtest_report = None
         self.logger = create_logger(log_level='DEBUG', logger_name='REPORTER', print_to_console=True)
     
-    def calculate_multi_leg_order_profit(self, multi_leg_order):
+    def calculate_unrealized_pnl(self, open_orders):
+        unrealized_pnl_abs_dict = {}
+        unrealized_pnl_pct_dict = {}
+    
+        for multi_leg_order in open_orders:
+            symbol = multi_leg_order[0]['symbol']
+            unrealized_pnl_abs, unrealized_pnl_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, force_close=True)
+            # self.logger.debug({'multi_leg_order':multi_leg_order})
+            unrealized_pnl_abs_dict[symbol] = unrealized_pnl_abs
+            unrealized_pnl_pct_dict[symbol] = unrealized_pnl_pct
+            
+        return unrealized_pnl_abs_dict, unrealized_pnl_pct_dict
+    
+    def calculate_multi_leg_order_pnl(self, multi_leg_order, force_close=False):
+        entry_orders = []
+        exit_orders = []
+        entry_qty = 0
+        exit_qty = 0
+        total_profit = 0
+        total_order_value = 0
+        
+        for order in multi_leg_order:
+            if 'entryPrice' in order and order['status'].lower() != 'cancelled':
+                entry_orders.append(order)
+                if order['status'] == 'closed' or (force_close and order['status'] == 'open'):
+                    entry_qty += order['orderQuantity']
+                    entry_price = order.get('fill_price') if 'fill_price' in order else 0
+            elif 'exitPrice' in order and order['status'].lower() != 'cancelled':
+                exit_orders.append(order)
+                if order['status'] == 'closed' or (force_close and order['status'] in ['open', 'pending']):
+                    exit_qty += order['orderQuantity']
+
+        # self.logger.debug({'symbol':order['symbol'], 'entry_qty':entry_qty, 'exit_qty':exit_qty})
+        if float(entry_qty) == float(exit_qty):
+            for exit_order in exit_orders:
+                exit_price = exit_order.get('fill_price') if 'fill_price' in exit_order else list(exit_order['symbol_ltp'].values())[-1]
+                exit_qty = exit_order.get('orderQuantity')
+                order_value = exit_price * exit_qty
+                orderDirection = exit_order.get('orderDirection')
+                orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
+                # self.logger.info({'Symbol':exit_order['symbol'], 'Price': exit_price, 'Qty': exit_qty , 'orderDirection':orderDirection, 'Value':order_value * orderDirection_multiplier * -1, 'status':exit_order['status']})
+                total_profit += order_value * orderDirection_multiplier * -1
+            
+            for entry_order in entry_orders:
+                entry_price = entry_order.get('fill_price')
+                entry_qty = entry_order.get('orderQuantity')
+                order_value = entry_price * entry_qty
+                total_order_value += order_value
+                orderDirection = entry_order.get('orderDirection')
+                orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
+                # self.logger.info({'Symbol':entry_order['symbol'], 'Price': entry_price, 'Qty': entry_qty, 'orderDirection':orderDirection, 'Value':order_value * orderDirection_multiplier * -1, 'status':entry_order['status']})
+                total_profit += order_value * orderDirection_multiplier * -1
+            
+        # self.logger.debug({'entry_qty':entry_qty, 'exit_qty':exit_qty, 'total_profit':total_profit})
+        
+        return round(total_profit, 10), total_profit / total_order_value if total_order_value > 0 else 0
+    
+    def calculate_multi_leg_order_pnl_old(self, multi_leg_order, force_close=False):
+        total_profit = 0
+        total_order_value = 0
         sell_orders = []
         buy_orders = []
-        signal_id = multi_leg_order[0]['signal_id']
-
         buy_quantity = 0
         sell_quantity = 0
-        # Separate out all sell and buy orders
         for order in multi_leg_order:
-            if order['orderDirection'] == 'SELL' and order['status'] == 'closed':
-                sell_orders.append(order)
-                sell_quantity += order['orderQuantity']
-            elif order['orderDirection'] == 'BUY' and order['status'] == 'closed':
-                buy_orders.append(order)
-                buy_quantity += order['orderQuantity']
-
-        if buy_quantity == sell_quantity:
-            total_profit = 0
-            # Assuming orders are processed in pairs (e.g., first sell with first buy, second sell with second buy)
+            if order['orderDirection'] == 'SELL':
+                if order['status'] == 'closed' or (force_close and order['status'] == 'open'):
+                    sell_orders.append(order)
+                    sell_quantity += order['orderQuantity']
+            elif order['orderDirection'] == 'BUY':
+                if order['status'] == 'closed' or (force_close and order['status'] == 'open'):
+                    buy_orders.append(order)
+                    buy_quantity += order['orderQuantity']
+            
+        if float(buy_quantity) == float(sell_quantity):
             for sell_order, buy_order in zip(sell_orders, buy_orders):
-                sell_price = sell_order.get('fill_price')
-                buy_price = buy_order.get('fill_price')
+                sell_price = sell_order.get('fill_price') if 'fill_price' in sell_order else 0
+                buy_price = buy_order.get('fill_price') if 'fill_price' in buy_order else 0
+                # self.logger.debug({'Symbol':order['symbol'], 'Buy Price':buy_price, 'Sell Price':sell_price})
+                
                 quantity = buy_quantity #min(sell_order.get('orderQuantity'), buy_order.get('orderQuantity'))
-
+                total_order_value += buy_price * quantity
                 # Calculate profit for the matching sell and buy orders
                 profit = (sell_price - buy_price) * quantity
                 total_profit += profit
-                # self.logger.debug({f"Signal ID: {signal_id}, Buy Price: {buy_price}, Sell Price: {sell_price}, Quantity: {quantity}, Profit: {profit}"})
-            # self.logger.debug({f"Signal ID: {signal_id}, Total Profit: {total_profit}"})
-            # print('- ' * 50)
-            # self.logger.info({'order':multi_leg_order})
-            # self.logger.info(f"Total profit for multi-leg order: {total_profit}")
-            # raise AssertionError('PnL calculation not implemented yet.') 
-            return total_profit
-        else:
-            # self.logger.debug({f"Signal ID: {signal_id}, Buy Quantity: {buy_quantity}, Sell Quantity: {sell_quantity}"})
-            # print('- ' * 50)
-            return 0
+        
+        # self.logger.debug({'symbol':order['symbol'], 'buy_quantity':buy_quantity, 'sell_quantity':sell_quantity, 'total_profit':total_profit})
+        
+        
+        return total_profit, total_profit / total_order_value if total_order_value > 0 else 0
+    
+    # def calculate_multi_leg_order_profit_old(self, multi_leg_order, force_close=False):
+    #     sell_orders = []
+    #     buy_orders = []
+    #     signal_id = multi_leg_order[0]['signal_id']
+    #     buy_quantity = 0
+    #     sell_quantity = 0
+    #     # Separate out all sell and buy orders
+    #     for order in multi_leg_order:
+    #         if order['orderDirection'] == 'SELL' and order['status'] == 'closed':
+    #             sell_orders.append(order)
+    #             sell_quantity += order['orderQuantity']
+    #         elif order['orderDirection'] == 'BUY' and order['status'] == 'closed':
+    #             buy_orders.append(order)
+    #             buy_quantity += order['orderQuantity']
+
+    #     self.logger.debug({'symbol':order['symbol'], 'buy_quantity':buy_quantity, 'sell_quantity':sell_quantity})
+    #     if buy_quantity == sell_quantity:
+    #         total_profit = 0
+    #         # Assuming orders are processed in pairs (e.g., first sell with first buy, second sell with second buy)
+    #         for sell_order, buy_order in zip(sell_orders, buy_orders):
+    #             sell_price = sell_order.get('fill_price')
+    #             buy_price = buy_order.get('fill_price')
+    #             quantity = buy_quantity #min(sell_order.get('orderQuantity'), buy_order.get('orderQuantity'))
+
+    #             # Calculate profit for the matching sell and buy orders
+    #             profit = (sell_price - buy_price) * quantity
+    #             total_profit += profit
+    #             # self.logger.debug({f"Signal ID: {signal_id}, Buy Price: {buy_price}, Sell Price: {sell_price}, Quantity: {quantity}, Profit: {profit}"})
+    #         # self.logger.debug({f"Signal ID: {signal_id}, Total Profit: {total_profit}"})
+    #         # print('- ' * 50)
+    #         # self.logger.info({'order':multi_leg_order})
+    #         # self.logger.info(f"Total profit for multi-leg order: {total_profit}")
+    #         # raise AssertionError('PnL calculation not implemented yet.') 
+    #         return total_profit
+    #     else:
+    #         # self.logger.debug({f"Signal ID: {signal_id}, Buy Quantity: {buy_quantity}, Sell Quantity: {sell_quantity}"})
+    #         # print('- ' * 50)
+    #         return 0
     
     def calculate_backtest_performance_metrics(self, config_dict, open_orders, closed_orders, market_data_df_root):
         # Implementation for calculating performance metrics
@@ -62,11 +153,12 @@ class PerformanceReporter:
         long_count = 0
         short_count = 0
         sharpe = 'NOT COMPUTED'
+        
         for count, multi_leg_order in enumerate(closed_orders):
             # Implementation for calculating performance metrics
             signal_open_date = multi_leg_order[0]['timestamp']
             if signal_open_date > config_dict['backtest_inputs']['start_time'] and signal_open_date < config_dict['backtest_inputs']['end_time']:
-                signal_profit = self.calculate_multi_leg_order_profit(multi_leg_order)
+                signal_profit, signal_profit_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, force_close=False)
                 profit += signal_profit
                 if signal_profit >= 0:
                     win_count += 1

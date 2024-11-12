@@ -25,12 +25,19 @@ class DataFeeder:
         self.datafeeder_system_timestamp = None
         self.indicators = Indicators()
         self.lookback_dict = self.create_lookback_dict()
+        self.first_run = True
     
     def create_lookback_dict(self):
         lookback_dict = {}
         for interval in self.config_dict['datafeeder_config']['data_inputs']:
             lookback = self.config_dict['datafeeder_config']['data_inputs'][interval]['lookback']
             lookback_dict[interval] = lookback
+        return lookback_dict
+    
+    def reset_lookback_dict(self):
+        lookback_dict = {}
+        for interval in self.config_dict['datafeeder_config']['data_inputs']:
+            lookback_dict[interval] = 0
         return lookback_dict
 
     def is_market_open(self, current_datetime):
@@ -49,6 +56,8 @@ class DataFeeder:
         # convert current_datetime to 'eastern' timezone
         current_datetime = current_datetime.astimezone(pytz.timezone('US/Eastern'))
         current_time = current_datetime.time()
+        self.logger.warning('is_market_open is not taking into account day of the week and holidays')
+        sleeper(3, 'Giving you time to read the warning')
         return MARKET_OPEN_TIME <= current_time <= MARKET_CLOSE_TIME
 
     def next_market_open(self, current_datetime):
@@ -88,18 +97,40 @@ class DataFeeder:
         previous_close = schedule.iloc[-2]['market_close']
         return previous_close    
     
+    def get_next_expected_timestamp(self, system_timestamp):
+        interval_inputs = self.config_dict['datafeeder_config']['data_inputs']
+        next_expected_timestamp_temp = min([self.sleep_lookup[interval] for interval in interval_inputs])
+        now = datetime.datetime.now()
+        now_tz = now.astimezone(pytz.timezone('US/Eastern'))
+        passed_time = now.astimezone(pytz.utc) - system_timestamp
+        
+        if self.is_market_open(now_tz):
+            next_expected_timestamp = next_expected_timestamp_temp-passed_time.seconds
+            if next_expected_timestamp < 0:
+                next_expected_timestamp = next_expected_timestamp_temp
+                next_expected_timestamp = 0
+        else:
+            # calculate the number of seconds until the next market open
+            next_open = self.next_market_open(now_tz)
+            # self.logger.debug({'next_open':next_open, 'now':now_tz})
+            next_expected_timestamp = int((next_open - now_tz).total_seconds())
+            # self.logger.debug({'next_open':next_open, 'sleep_time':sleep_time})
+        return next_expected_timestamp
+        
     def calculate_sleep(self):
         interval_inputs = self.config_dict['datafeeder_config']['data_inputs']
-        sleep_time_old = min([self.sleep_lookup[interval] for interval in interval_inputs])
+        # self.logger.debug({'interval_inputs':interval_inputs})
+        sleep_time_temp = min([self.sleep_lookup[interval] for interval in interval_inputs])
+        # self.logger.debug({'sleep_time_temp':sleep_time_temp})
         now = datetime.datetime.now()
         now_tz = now.astimezone(pytz.timezone('US/Eastern'))
         passed_time = now.astimezone(pytz.utc) - self.datafeeder_system_timestamp
-        # self.logger.debug({'passed_time':passed_time, 'system_timestamp':self.system_timestamp, 'sleep_time_old':sleep_time_old})
+        # self.logger.debug({'passed_time':passed_time, 'system_timestamp':self.datafeeder_system_timestamp, 'sleep_time_old':sleep_time_temp})
         
         if self.is_market_open(now_tz):
-            sleep_time = sleep_time_old-passed_time.seconds
+            sleep_time = sleep_time_temp-passed_time.seconds
             if sleep_time < 0:
-                sleep_time = sleep_time_old
+                sleep_time = sleep_time_temp
         else:
             # calculate the number of seconds until the next market open
             next_open = self.next_market_open(now_tz)
@@ -108,30 +139,53 @@ class DataFeeder:
             # self.logger.debug({'next_open':next_open, 'sleep_time':sleep_time})
         return sleep_time
     
-    def next(self, market_data_df_root, run_mode, start_date,end_date, sleep_time=0,):
+    def next(self, system_timestamp, run_mode, start_date, end_date, sleep_time=0):
+        # last_timestamp = max([pd.DataFrame(past_market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in past_market_data_df.index.get_level_values(0).unique()]) if len(past_market_data_df) > 0 else None
+        # start_date = last_timestamp if last_timestamp else start_date
+                
         # update data and return the updated data
-        # self.logger.debug({'market_data_df':market_data_df})
-
-        # if run_mode == 'LIVE':
-        #     # start date is the current date
-        #     now = datetime.datetime.now()
-        #     now_tz = now.astimezone(pytz.timezone('US/Eastern'))
-        #     start_date = now_tz
-        #     end_date = None
-        
-        # Fix the start_date and end_date to account for the lookback period.            
-            
         if self.market_data_df is None or self.datafeeder_system_timestamp is None:
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df_root, start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
-            # self.logger.info({'combined_df':self.market_data_df[-3:]})
+            self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date, 'end_date':end_date})
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
+            
+            # self.logger.info({'start_date':start_date, 'end_date':end_date})
+            # msg = 'market_data_df Shape: '
+            # for interval in self.market_data_df.index.get_level_values(0).unique():
+            #     if interval in self.market_data_df.index.get_level_values(0).unique():
+            #         msg +=  f"{interval} : {self.market_data_df.loc[interval].shape} | "
+            # self.logger.info(msg)
+            
+            first_timestamp_ = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
+            last_timestamp_ = max([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[-1]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
+            self.logger.info({'first_timestamp_':first_timestamp_, 'last_timestamp_':last_timestamp_})
+            # sleeper(20, 'Just taking a small break 1')
         
         while len(self.market_data_df) < 1 and run_mode in [1,2]:
-            sleep_time = self.calculate_sleep()
-            sleeper(sleep_time, 'System Sleeping: Time to next timestamp')
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(market_data_df_root, start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
-        
+            start_date = system_timestamp if system_timestamp else start_date
+            self.lookback_dict = self.reset_lookback_dict()
+            # self.logger.info({'self.lookback_dict':self.lookback_dict})
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
+            # self.logger.info({'self.market_data_df':self.market_data_df})
+            if len(self.market_data_df) < 1:
+                sleep_time = self.get_next_expected_timestamp(self.datafeeder_system_timestamp)
+                # self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date})
+                sleeper(sleep_time, 'System Sleeping: Time to next timestamp')
+                
+            # self.logger.info({'start_date':start_date, 'end_date':end_date})
+            # msg = 'market_data_df Shape: '
+            # for interval in self.market_data_df.index.get_level_values(0).unique():
+            #     if interval in self.market_data_df.index.get_level_values(0).unique():
+            #         msg +=  f"{interval} : {self.market_data_df.loc[interval].shape} | "
+            # self.logger.info(msg)
+            
+            # first_timestamp_ = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
+            # self.logger.info({'first_timestamp_':first_timestamp_})
+            # sleeper(20, 'Just taking a small break 2')
+
         # if self.datafeeder_system_timestamp is None:
         self.datafeeder_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
+        # self.logger.debug({'Next System Timestamp':self.datafeeder_system_timestamp, 'Current System Timestamp':system_timestamp})
+        
         # else:
             # self.market_data_df = self.market_data_df.loc[self.market_data_df.index.get_level_values(1) > self.datafeeder_system_timestamp,:]
         first_rows = []
@@ -149,10 +203,12 @@ class DataFeeder:
 
                     # remove the first row from the DataFrame
                     self.market_data_df = self.market_data_df.drop((interval, first_row.name))
-
+                    # self.logger.debug({'market_data_df':len(self.market_data_df)})
+                    
+                
         if len(first_rows) > 0:
             first_rows = pd.concat(first_rows)
         else:
             first_rows = None
-        
+
         return first_rows
