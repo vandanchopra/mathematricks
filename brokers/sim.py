@@ -503,9 +503,9 @@ class Yahoo():
                 csv_loader_pbar.update(1)
             csv_loader_pbar.close()
 
-        # for interval in interval_inputs:
-            # self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
-        
+        for interval in interval_inputs:
+            self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
+        raise AssertionError('STOP')
         '''STEP 2: Get the data for the ones that don't have data'''
         asset_data_df_dict = self.update_price_data_batch(stock_symbols_no_data, start_date=None, batch_size=75, throttle_secs=throttle_secs)
 
@@ -632,14 +632,12 @@ class Yahoo():
         self.logger.info('Combining all DataFrames into a single DataFrame...')
         combined_df = pd.concat(data_frames)
         combined_df.reset_index(drop=False,inplace=True)
-
         # Set multi-index
         combined_df.set_index(['date','symbol'],inplace=True)
         asset_data_df = data_frames[0]
         pass_cols = list(asset_data_df.columns)
         combined_df = combined_df.reset_index().pivot_table(values=pass_cols, index=['interval', 'date'], columns=['symbol'], aggfunc='mean')
         # combined_df = combined_df.unstack(level='symbol')
-
         # Sort the index
         combined_df.sort_index(inplace=True)
         

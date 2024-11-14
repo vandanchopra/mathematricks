@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
 start_date = pd.Timestamp(datetime(2000,3,1)).tz_localize('UTC').tz_convert('EST')
-end_date = start_date + pd.Timedelta(days=365*4)
+end_date = start_date + pd.Timedelta(days=90)
 sim_account_margin_multiplier = 3
 sim_account_starting_value_base = 100000
 base_currency = 'CAD'

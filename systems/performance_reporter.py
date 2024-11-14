@@ -147,7 +147,7 @@ class PerformanceReporter:
     #         # print('- ' * 50)
     #         return 0
     
-    def calculate_backtest_performance_metrics(self, config_dict, open_orders, closed_orders, market_data_df_root):
+    def calculate_backtest_performance_metrics(self, config_dict, open_orders, closed_orders, market_data_df_root, unfilled_orders):
         # Implementation for calculating performance metrics
         self.backtest_performance_metrics = {}
         profit = 0
@@ -165,7 +165,7 @@ class PerformanceReporter:
             # Implementation for calculating performance metrics
             signal_open_date = multi_leg_order[0]['timestamp']
             if signal_open_date > config_dict['backtest_inputs']['start_time'] and signal_open_date < config_dict['backtest_inputs']['end_time']:
-                signal_profit, signal_profit_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, self.oms.unfilled_orders, force_close=False)
+                signal_profit, signal_profit_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, unfilled_orders, force_close=False)
                 profit += signal_profit
                 if signal_profit >= 0:
                     win_count += 1
