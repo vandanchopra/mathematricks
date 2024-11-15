@@ -440,10 +440,11 @@ class IBKR_Execute:
             orderDirection = 'BUY' if position_size > 0 else 'SELL'
             entry_order = None
             try:
-                current_price = market_data_df.loc[min_granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+                current_price = market_data_df.loc[min_granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
             except Exception as e:
                 current_price = self.ib.reqTickers(Stock(symbol, 'SMART', 'USD'))[0].marketPrice()
-                self.logger.error(f"Error fetching current price for symbol from market_data_df: {symbol}. This needs to be fixed. Using IBKR to fetch the price as a backup.")
+                self.logger.error(f"Error fetching current price for symbol from market_data_df: {symbol}. This needs to be fixed, Using IBKR to fetch the price as a backup.")
+                self.logger.error(f"Close price for symbol: {symbol} is not in current_price: {market_data_df.loc[min_granularity].xs(symbol, axis=1, level='symbol')['close']}")
                 
             entry_order_leg = {'symbol': symbol,
                                 'timestamp': 'Unknown', 

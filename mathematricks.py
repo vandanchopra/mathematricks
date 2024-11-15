@@ -193,8 +193,8 @@ class Mathematricks:
                         self.current_market_data_df = self.current_market_data_df[~self.current_market_data_df.index.duplicated(keep='last')]
                         
                         # Generate Signals from the Strategies (signals)
-                        # new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
-                        # self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
+                        new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
+                        self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
                         
                         # Check if we're going live
                         prev_live_bool = self.live_bool
@@ -202,15 +202,15 @@ class Mathematricks:
                             self.live_bool = self.are_we_live(run_mode, self.system_timestamp, start_date)
                         
                         # # Convert signals to orders
-                        # new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.open_orders, self.system_timestamp, self.live_bool)
+                        new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.open_orders, self.system_timestamp, self.live_bool)
                         
                         # If the system is going live, sync the orders with the broker
-                        # if prev_live_bool == False and self.live_bool == True:
+                        if prev_live_bool == False and self.live_bool == True:
                         # Get a list of orders that'll be sent to the LIVE broker, based on current open orders
-                            # new_orders = self.sync_orders_on_live(new_orders, self.current_market_data_df, self.system_timestamp)
+                            new_orders = self.sync_orders_on_live(new_orders, self.current_market_data_df, self.system_timestamp)
                             
                         # Execute orders on the market with the OMS
-                        # self.oms.execute_orders(new_orders, self.system_timestamp, self.current_market_data_df, live_bool=self.live_bool)
+                        self.oms.execute_orders(new_orders, self.system_timestamp, self.current_market_data_df, live_bool=self.live_bool)
                         
                         # Print update messages to console
                         self.print_update_to_console(next_rows)
@@ -233,7 +233,7 @@ class Mathematricks:
                     self.logger.debug('Exiting...')
                     break
         elif run_mode == 4:
-            self.update_all_historical_price_data()
+            self.datafeeder.update_all_historical_price_data(self.live_bool)
             
         else:
             raise AssertionError('Invalid run_mode value: {}'.format(run_mode))

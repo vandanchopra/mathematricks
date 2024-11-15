@@ -11,7 +11,7 @@ class DataFetcher:
         self.logger = create_logger(log_level='DEBUG', logger_name='datafetcher', print_to_console=True)
         self.broker = Brokers()
     
-    def fetch_updated_price_data(self, start_date, end_date, lookback, throttle_secs=0.25, update_data=True):
+    def fetch_updated_price_data(self, start_date, end_date, lookback, throttle_secs=0.25, update_data=True, run_mode=4):
         list_of_symbols = self.config_dict['datafeeder_config']['list_of_symbols']
         interval_inputs = self.config_dict['datafeeder_config']['data_inputs']
         # self.logger.debug({'list_of_symbols': list_of_symbols})
@@ -19,7 +19,7 @@ class DataFetcher:
         
         for data_source in data_sources:
             if data_source == 'yahoo':
-                market_data_df = self.broker.sim.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, throttle_secs=throttle_secs, back_test_start_date=start_date, back_test_end_date=end_date, lookback=lookback, update_data=update_data)
+                market_data_df = self.broker.sim.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, throttle_secs=throttle_secs, back_test_start_date=start_date, back_test_end_date=end_date, lookback=lookback, update_data=update_data, run_mode=run_mode)
                 
             elif data_source == 'ibkr':
                 market_data_df = self.broker.ib.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, back_test_start_date=start_date, back_test_end_date=end_date, lookback=lookback) 

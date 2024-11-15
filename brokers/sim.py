@@ -27,7 +27,7 @@ class SIM_Execute():
         """
         symbol = order['symbol']
         granularity = order['granularity']
-        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
         current_system_timestamp = market_data_df.index.get_level_values(1)[-1]
         
         if order['orderType'].lower() in ['market', 'market_exit']:
@@ -68,7 +68,7 @@ class SIM_Execute():
         system_timestamp = market_data_df.index.get_level_values(1)[-1]
         symbol = order['symbol']
         granularity = order['granularity'] if ('granularity' in order and order['granularity'].lower() != 'unknown') else '1d'
-        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
         
         if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
             if order['orderDirection'].lower() == 'buy' and current_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_price <= order['exitPrice']:
@@ -281,7 +281,7 @@ class Yahoo():
             dummy_addition = True
         if len(stock_symbols) > 1:
             # sleeper(5, "Giving you 5 seconds to read the above message...")
-            self.logger.info(f"÷Downloading data for 'Start Date': {start_date}, 'Interval': {interval}, Batch Size: {stock_symbols}")
+            # self.logger.info(f"÷Downloading data for 'Start Date': {start_date}, 'Interval': {interval}, Batch Size: {stock_symbols}")
             
             if start_date is not None and ((interval == '1m' and time.time() - start_date.timestamp() < 60*60*24*7) or (interval == '1d')):
                 # convert Timestamp to _datetime
@@ -297,7 +297,7 @@ class Yahoo():
 
         return asset_data_df_dict
         
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'/db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None, update_data=True):
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'/db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None, update_data=True, run_mode=4):
         data_frames = []
         batch_size = 75
         
@@ -323,16 +323,17 @@ class Yahoo():
                         if not existing_data.empty:
                             # existing_data_first_date = existing_data.index.min().tz_convert('UTC')
                             existing_data_last_date = existing_data.index.max().tz_convert('UTC')
-                            yday_date = pd.Timestamp.today().tz_localize('UTC') - pd.Timedelta(days=1)
+                            yday_date = pd.Timestamp.today().tz_localize('UTC').replace(hour=0, minute=0, second=0, microsecond=0) #- pd.Timedelta(days=1)
                             # replace hours, minutes, seconds with 0
-                            yday_date = yday_date.replace(hour=0, minute=0, second=0, microsecond=0)
-                            # self.logger.info({'interval':interval, 'symbol': symbol, 'existing_data_last_date': existing_data_last_date, 'yday_date': yday_date})
-                            if (back_test_end_date is not None and existing_data_last_date >= back_test_end_date) or (back_test_end_date is None and existing_data_last_date >= yday_date):
+                            if symbol == 'EL':
+                                self.logger.debug({'market_data':existing_data})
+                                self.logger.info({'interval':interval, 'symbol': symbol, 'existing_data_last_date': existing_data_last_date, 'yday_date': yday_date, 'back_test_end_date':back_test_end_date})
+                                
+                            if (back_test_end_date is not None and existing_data_last_date >= back_test_end_date) or (back_test_end_date is None and existing_data_last_date >= yday_date and interval == '1d'):
                                 # prune the data using the back_test_start_date and back_test_end_date
                                 existing_data = existing_data.loc[:back_test_end_date]
                                 existing_data_dict[interval][symbol] = existing_data
                                 stock_symbols_with_full_data[interval].append(symbol)
-                                
                             else:
                                 existing_data_dict[interval][symbol] = existing_data
                                 stock_symbols_with_partial_data[interval].append(symbol)

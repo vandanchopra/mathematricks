@@ -204,7 +204,7 @@ class OMS:
                     close_prices = market_data_df.loc[self.min_granularity].xs(symbol, axis=1, level='symbol')['close']
                     # drop nan values
                     close_prices = close_prices.dropna()
-                    total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_prices[-1] # THIS VALUE IS HYPOTHETICAL
+                    total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_prices.loc[-1] # THIS VALUE IS HYPOTHETICAL
                     # Then calculate the closest integer number of stocks that can be bought with the funds available for IBKR
                     total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] = int(total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] / total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'])
                     # self.logger.info({'symbol':symbol, 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price']})
@@ -251,7 +251,7 @@ class OMS:
                                 new_order = deepcopy(order)
                                 new_order['orderQuantity'] = abs(actual_symbol_quantity)
                                 # fix entry price
-                                new_order['entryPrice'] = market_data_df.loc['1d'].xs(symbol, axis=1, level='symbol')['close'][-1]
+                                new_order['entryPrice'] = market_data_df.loc['1d'].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
                                 # fix broker
                                 new_order['broker'] = 'IBKR'
                                 # status
@@ -476,7 +476,7 @@ class OMS:
             granularity = order['granularity'] # Get minimum granularity from market_data_df
             # system_timestamp = market_data_df.index.get_level_values(1)[-1]
             stoploss_pct = order['stoploss_pct']
-            current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
+            current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
             # stoploss_abs = order['stoploss_abs']
             orderDirection = order['orderDirection']
 
@@ -694,7 +694,10 @@ class OMS:
                     # Drop nan values
                     close_prices = close_prices.dropna()
                     if len(close_prices) > 0:
-                        order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
+                        try:
+                            order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
+                        except Exception as e:
+                            raise Exception(f"Error in updating symbol_ltp: {e}, Symbol: {order['symbol']}, Close Prices: {close_prices}")
                 
                 if order_status not in ['closed', 'cancelled']: # Basically if status is 'open' or 'pending'
                     # First check if Stoploss needs to be udpated.

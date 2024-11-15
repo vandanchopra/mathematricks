@@ -174,7 +174,7 @@ class DataFeeder:
             # self.logger.debug({'next_open':next_open, 'sleep_time':sleep_time})
         return sleep_time
     
-    def update_all_historical_price_data(self):
+    def update_all_historical_price_data(self, live_bool=False):
         symbols_universe_df = load_symbols_universe_df()
         list_of_symbols = symbols_universe_df['Symbol'].tolist()
         list_of_symbols = list(set(list_of_symbols))
@@ -182,8 +182,9 @@ class DataFeeder:
         price_update_config_dict = deepcopy(self.config_dict)
         price_update_config_dict['datafeeder_config']['list_of_symbols'] = list_of_symbols
         price_update_config_dict['datafeeder_config']['data_inputs']['1m']= {'columns': ['open', 'high', 'low', 'close', 'volume'], 'lookback': 365}
+        run_mode=self.config_dict['run_mode'] = 4
         self.datafetcher.config_dict = price_update_config_dict
-        self.datafetcher.fetch_updated_price_data(start_date=None, end_date=None, lookback={}, throttle_secs=60, update_data=True)
+        self.datafetcher.fetch_updated_price_data(start_date=None, end_date=None, lookback={}, throttle_secs=60, update_data=True, run_mode=self.config_dict['run_mode'])
         self.logger.info(f'Price data updated for {len(list_of_symbols)} symbols. Granualarities Updated: {list(price_update_config_dict["datafeeder_config"]["data_inputs"].keys())}')
         self.datafetcher.config_dict = config_dict_orginal
     
@@ -194,7 +195,7 @@ class DataFeeder:
         # update data and return the updated data
         if self.market_data_df is None or self.datafeeder_system_timestamp is None:
             self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date, 'end_date':end_date})
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'])
             
             # self.logger.info({'start_date':start_date, 'end_date':end_date})
             # msg = 'market_data_df Shape: '
@@ -213,7 +214,7 @@ class DataFeeder:
             start_date = system_timestamp if system_timestamp else start_date
             self.lookback_dict = self.reset_lookback_dict()
             # self.logger.info({'self.lookback_dict':self.lookback_dict})
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=0.25, lookback=self.lookback_dict)
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=0.25, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'])
             # self.logger.info({'self.market_data_df':self.market_data_df})
             if len(self.market_data_df) < 1:
                 sleep_time = self.get_next_expected_timestamp(self.datafeeder_system_timestamp)

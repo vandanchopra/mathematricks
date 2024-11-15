@@ -297,9 +297,9 @@ class RMS:
                             "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
                             }
                         signal_orders.append(order_leg)
-                    except:
+                    except Exception as e:
                         self.logger.debug({'signal':signal})
-                        raise Exception('Error in create_order')
+                        raise Exception(f'Error in create_order: {e}, Signal: {signal}')
                 if 'exit_order_type' in signal:
                     # raise AssertionError('exit_order_type in signal')
                     order_leg = {'symbol': signal["symbol"], 
