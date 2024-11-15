@@ -5,15 +5,15 @@ Backtest: return historical data until the current test system date
 
 '''
 import datetime
-from pdb import run
-import pytz
+import pytz, os, time, logging
+
+from traitlets import Int
 from systems.datafetcher import DataFetcher
-import time
-from systems.utils import create_logger, sleeper
-import logging
+from systems.utils import create_logger, sleeper, load_symbols_universe_df
 import pandas as pd
 from systems.indicators import Indicators
 import pandas_market_calendars as mcal
+from copy import deepcopy
 
 class DataFeeder:
     def __init__(self, config_dict):
@@ -26,6 +26,41 @@ class DataFeeder:
         self.indicators = Indicators()
         self.lookback_dict = self.create_lookback_dict()
         self.first_run = True
+    
+    def load_symbols_universe_df():
+        def remove_old_files(stocksymbolslists_folder, days_old=30):    
+            # Get file names from the folder
+            file_names = [f for f in os.listdir(stocksymbolslists_folder) if f.endswith('.csv')]
+            # Get the number portion of the file names
+            file_numbers = [float(f.split('_')[-1].split('.')[0]) for f in file_names]
+            # Now assume that these numbers are EPOCH timestamps in milliseconds and calculate the age of the timestamp in days
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            file_numbers = [datetime.fromtimestamp(x/1000, timezone.utc) for x in file_numbers]
+            file_numbers = [now - x for x in file_numbers]
+            file_numbers = [x.days for x in file_numbers]
+            # if any of those are more than 30 days old, then delete them from file_name
+            file_names = [f for f, age in zip(file_names, file_numbers) if age < days_old]
+            return file_names
+        
+        # get file names from the folder and load all the csv files and concatenate them and return a pandas dataframe
+        stocksymbolslists_folder = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/data/stocksymbolslists'
+        
+        # Get file names from the folder
+        file_names = [f for f in os.listdir(stocksymbolslists_folder) if f.endswith('.csv')]
+        # Remove all files that are more than 30 days old
+        file_names = remove_old_files(stocksymbolslists_folder, days_old=90)
+        # Load all the CSV files and concatenate them into a single DataFrame
+        dfs = [pd.read_csv(os.path.join(stocksymbolslists_folder, file)) for file in file_names]
+        symbols_universe_df = pd.concat(dfs, ignore_index=True)
+        # Now sort the combined_df by the market cap column in descending order
+        symbols_universe_df = symbols_universe_df.sort_values(by='Market Cap', ascending=False)
+        # Drop all rows where Market Cap is NaN
+        symbols_universe_df = symbols_universe_df.dropna(subset=['Market Cap'])
+        # Drop all rows where Market Cap is 0
+        symbols_universe_df = symbols_universe_df[symbols_universe_df['Market Cap'] != 0]
+        
+        return symbols_universe_df
     
     def create_lookback_dict(self):
         lookback_dict = {}
@@ -139,6 +174,19 @@ class DataFeeder:
             # self.logger.debug({'next_open':next_open, 'sleep_time':sleep_time})
         return sleep_time
     
+    def update_all_historical_price_data(self):
+        symbols_universe_df = load_symbols_universe_df()
+        list_of_symbols = symbols_universe_df['Symbol'].tolist()
+        list_of_symbols = list(set(list_of_symbols))
+        config_dict_orginal = deepcopy(self.config_dict)
+        price_update_config_dict = deepcopy(self.config_dict)
+        price_update_config_dict['datafeeder_config']['list_of_symbols'] = list_of_symbols
+        price_update_config_dict['datafeeder_config']['data_inputs']['1m']= {'columns': ['open', 'high', 'low', 'close', 'volume'], 'lookback': 365}
+        self.datafetcher.config_dict = price_update_config_dict
+        self.datafetcher.fetch_updated_price_data(start_date=None, end_date=None, lookback={}, throttle_secs=60, update_data=True)
+        self.logger.info(f'Price data updated for {len(list_of_symbols)} symbols. Granualarities Updated: {list(price_update_config_dict["datafeeder_config"]["data_inputs"].keys())}')
+        self.datafetcher.config_dict = config_dict_orginal
+    
     def next(self, system_timestamp, run_mode, start_date, end_date, sleep_time=0):
         # last_timestamp = max([pd.DataFrame(past_market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in past_market_data_df.index.get_level_values(0).unique()]) if len(past_market_data_df) > 0 else None
         # start_date = last_timestamp if last_timestamp else start_date
@@ -161,15 +209,21 @@ class DataFeeder:
             # sleeper(20, 'Just taking a small break 1')
         
         while len(self.market_data_df) < 1 and run_mode in [1,2]:
+            historical_data_update_bool = False
             start_date = system_timestamp if system_timestamp else start_date
             self.lookback_dict = self.reset_lookback_dict()
             # self.logger.info({'self.lookback_dict':self.lookback_dict})
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, lookback=self.lookback_dict)
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=0.25, lookback=self.lookback_dict)
             # self.logger.info({'self.market_data_df':self.market_data_df})
             if len(self.market_data_df) < 1:
                 sleep_time = self.get_next_expected_timestamp(self.datafeeder_system_timestamp)
-                # self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date})
-                sleeper(sleep_time, 'System Sleeping: Time to next timestamp')
+                hours_4 = 60*60*4
+                if sleep_time > hours_4 and not historical_data_update_bool:
+                    self.logger.info(f"Sleep time is more than 4 hours. Updating all historical data. Sleep Time: {int(sleep_time / 60)} minutes")
+                    self.update_all_historical_price_data()
+                    historical_data_update_bool = True
+                else:# self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date})
+                    sleeper(sleep_time, 'System Sleeping: Time to next timestamp')
                 
             # self.logger.info({'start_date':start_date, 'end_date':end_date})
             # msg = 'market_data_df Shape: '
