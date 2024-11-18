@@ -89,7 +89,7 @@ class Mathematricks:
                 price = order['entryPrice'] if order['orderType'].lower() == 'market' else order['exitPrice']
                 order_value = price * order['orderQuantity'] if order['orderType'].lower() == 'market' else 0
                 total_orders_value += order_value
-                self.logger.info(f"OPEN Order {count+1}: Symbol: {order['symbol']}, orderDirection: {order['orderDirection']}, order_value: {order_value}, total_orders_value: {total_orders_value}, orderType: {order['orderType']}, orderQuantity: {order['orderQuantity']}, Status: {order['status']}, Broker: {order['broker']}")
+                self.logger.info(f"SIM OPEN ORDER {count+1}: Symbol: {order['symbol']}, orderDirection: {order['orderDirection']}, order_value: {order_value}, total_orders_value: {total_orders_value}, orderType: {order['orderType']}, orderQuantity: {order['orderQuantity']}, Status: {order['status']}, Broker: {order['broker']}")
         
         # for count, order in enumerate(self.oms.open_orders):
         #     self.logger.info(f"OPEN Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Status: {order[0]['status']}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")

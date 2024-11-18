@@ -1,8 +1,10 @@
 #from ib_insync import *
 from copy import deepcopy
 from operator import le
+from os import close
 import sys
 from urllib import response
+from matplotlib.pylab import f
 import pandas as pd
 #from brokers import Brokers
 import json
@@ -204,12 +206,14 @@ class OMS:
                     close_prices = market_data_df.loc[self.min_granularity].xs(symbol, axis=1, level='symbol')['close']
                     # drop nan values
                     close_prices = close_prices.dropna()
-                    total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_prices.loc[-1] # THIS VALUE IS HYPOTHETICAL
+                    total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_prices[-1] # THIS VALUE IS HYPOTHETICAL
                     # Then calculate the closest integer number of stocks that can be bought with the funds available for IBKR
                     total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] = int(total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] / total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'])
                     # self.logger.info({'symbol':symbol, 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price']})
                 except Exception as e:
-                    raise Exception(f"Symbol: {symbol}, availble_funds_for_asset_from_ibkr: {total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr']}, current_price: {total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price']}, Tail Prices: {market_data_df.loc[self.min_granularity].xs(symbol, axis=1, level='symbol')['close'].tail()}")
+                    self.logger.info({'symbol':symbol})
+                    self.logger.info({'market_data_df':market_data_df})
+                    raise Exception(f"Symbol: {symbol}, availble_funds_for_asset_from_ibkr: {total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr']}, Tail Prices: {market_data_df.loc[self.min_granularity].xs(symbol, axis=1, level='symbol')['close'].tail()}")
                 # self.logger.debug({'symbol':symbol, 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy']})
                 # self.logger.debug({'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'], 'fill_price':symbol_invested_value/total_quantity_open_symbol})
                 # Find out how much of the quantity is already bought
@@ -237,6 +241,7 @@ class OMS:
                     actual_quantity_to_buy[symbol] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['actual_quantity_to_buy']
                 if total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] != 0:
                     ideal_quantity_to_buy[symbol] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy']
+            
             return actual_quantity_to_buy, ideal_quantity_to_buy
         
         def create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr):
@@ -430,6 +435,7 @@ class OMS:
             self.logger.info("Ideal Position Size: " + ' | '.join(f"{key}: {value}" for key, value in ideal_quantity_to_buy.items()))
             self.logger.info("Actual Qty to Buy:   " + ' | '.join(f"{key}: {value}" for key, value in actual_quantity_to_buy.items()))
             # Create new orders
+            
             new_entry_orders = create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr)
             new_entry_orders, open_orders_ibkr = create_exit_orders_for_sync(sim_open_orders, new_entry_orders, system_timestamp, ideal_quantity_to_buy, unfilled_orders_ibkr, open_orders_ibkr)
             
@@ -690,14 +696,16 @@ class OMS:
                     self.available_granularities = market_data_df.index.get_level_values(0).unique()
                     self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
                     self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
-                    close_prices = market_data_df.loc[self.min_granularity].xs(order['symbol'], axis=1, level='symbol')['close']
+                    if order['symbol'] in market_data_df.loc[self.min_granularity].columns.get_level_values(0).unique():
+                        close_prices = market_data_df.loc[self.min_granularity].xs(order['symbol'], axis=1, level='symbol')['close']
+                        close_prices = close_prices.dropna()
+                        close_prices = close_prices.tolist()
+                    else:
+                        close_prices = []
+                        self.logger.warning(f"Symbol {order['symbol']} not found in market_data_df: Symbols in market_data_df: {market_data_df.loc[self.min_granularity].columns.get_level_values(0).unique()}")
                     # Drop nan values
-                    close_prices = close_prices.dropna()
                     if len(close_prices) > 0:
-                        try:
-                            order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
-                        except Exception as e:
-                            raise Exception(f"Error in updating symbol_ltp: {e}, Symbol: {order['symbol']}, Close Prices: {close_prices}")
+                        order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
                 
                 if order_status not in ['closed', 'cancelled']: # Basically if status is 'open' or 'pending'
                     # First check if Stoploss needs to be udpated.

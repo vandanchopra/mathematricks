@@ -65,6 +65,11 @@ def generate_hash_id(input_dict, system_timestamp):
 
 def load_symbols_universe_df():
     '''URL TO DOWNLOAD THE STOCK SYMBOLS LIST: https://www.nasdaq.com/market-activity/stocks/screener'''
+    ignored_symbols = ['VSTEW', 'RVPHW', 'SCLXW', 'CORZZ', 'TVGNW', 'ASTLW', 'SMXWW', 'ZOOZW', 'SHFSW', 'PCTTW', 'UKOMW', 'PRENW', 'AIRJW', 'CSLRW', 'HUBCW', 'ADSEW', 'PAMT', 'KITTW', 'ZEOWW', 'INVZW', 'RMCOW', 'BFRIW', 'NVNIW', 'SOUNW', 'NIOBW', 'COEPW', 'RVSNW', 'ZCARW', 'HUMAW', 'HTZWW', 'NCNCW', 'USGOW', 'DHCNL', 'RUMBW', 'SBCWW', 'ABPWW', 'PETWW', 'SQFTW', 'NVVEW', 'ABVEW', 'MSAIW', 'CEROW', 'ECXWW', 'BENFW', 'NNAVW', 'DTSTW', 'CORZW', 'ICUCW', 'FOXXW', 'FMSTW', 'BTCTW', 'ATNFW', 'GCMGW', 'LNZAW', 'LVROW', 'CRGOW', 'SWVLW', 'HYZNW', 'AENTW', 'OABIW', 'NIVFW', 'ADVWW', 'ESGLW', 'BLDEW', 'SAIHW', 'TCBPW', 'CRESW', 'LGHLW', 'BNZIW', 'EVLVW', 'LEXXW', 'ORGNW', 'SXTPW', 'SYTAW', 'TALKW']
+    ignored_symbols += ['MAPSW', 'FATBW', 'CELUW', 'FBYDW', 'KTTAW', 'XBPEW', 'DFLIW', 'EDBLW', 'BRLSW', 'COCHW', 'MNTSW', 'CMPOW', 'PBMWW', 'CRMLW', 'GIPRW', 'HYMCW', 'NXGLW', 'KPLTW', 'FAASW', 'GOEVW', 'KLTOW', 'NXPLW', 'BCTXW', 'ARBEW', 'CINGW', 'VGASW', 'SFB', 'ARKOW', 'GSMGW', 'BFRGW', 'WLDSW', 'SRZNW', 'RGTIW', 'PAVMZ', 'OPTXW', 'PXSAW', 'ODVWZ', 'AISPW', 'AFRIW', 'LDTCW', 'CXAIW', 'NXLIW', 'STSSW', 'VEEAW', 'CURIW', 'UHGWW', 'KDLYW', 'BTMWW', 'SONDW', 'RVMDW', 'AILEW', 'LOTWW', 'LCFYW', 'SWAGW', 'APCXW', 'CDTTW', 'PITAW', 'SLDPW', 'HOVRW', 'TMTCR', 'NRSNW', 'OCSAW', 'FFIEW', 'WGSWW', 'CIFRW', 'LSBPW', 'TOIIW', 'HUBCZ', 'DHAIW', 'NMHIW', 'MOBXW', 'AVPTW']
+    ignored_symbols += ['TNONW', 'MMVWW', 'ZAPPW', 'ACONW', 'JSPRW', 'SHOTW', 'MRNOW', 'IVDAW', 'DSYWW', 'NESRW', 'ONMDW', 'GRRRW', 'PIIIW', 'GGROW', 'CLNNW', 'HOFVW', 'PROCW', 'MTEKW', 'RCKTW', 'NIXXW', 'IMTXW', 'ALVOW', 'CMAXW', 'BIAFW', 'BCGWW', 'CDIOW', 'LUNRW', 'SDAWW', 'FUFUW', 'AUROW', 'AREBW', 'COOTW', 'XOSWW', 'LFLYW', 'GOVXW', 'ABLLW', 'SBFMW', 'NWTNW', 'BHST', 'SVMHW', 'LTRYW', 'REVBW', 'BEATW', 'MVSTW', 'CPTNW', 'CGBSW', 'RZLVW', 'TBLAW', 'MKDWW', 'BAERW', 'DAVEW', 'SLXNW', 'BZFDW', 'NRXPW', 'DBGIW', 'NCPLW', 'SVREW', 'CDROW', 'NEOVW', 'EUDAW', 'MDAIW', 'ANGHW', 'NKGNW', 'ILLRW', 'CAPTW', 'BDMDW', 'LSEAW', 'HOLOW', 'ADNWW', 'SABSW', 'KWESW', 'QSIAW', 'ENGNW', 'IZTC', 'GFAIW']
+    ignored_symbols += ['MAPSW', 'FATBW', 'CELUW', 'FBYDW', 'KTTAW', 'XBPEW', 'DFLIW', 'EDBLW', 'BRLSW', 'COCHW', 'MNTSW', 'CMPOW', 'PBMWW', 'CRMLW', 'GIPRW', 'HYMCW', 'NXGLW', 'KPLTW', 'FAASW', 'GOEVW', 'KLTOW', 'NXPLW', 'BCTXW', 'ARBEW', 'CINGW', 'VGASW', 'SFB', 'ARKOW', 'GSMGW', 'BFRGW', 'WLDSW', 'SRZNW', 'RGTIW', 'PAVMZ', 'OPTXW', 'PXSAW', 'ODVWZ', 'AISPW', 'AFRIW', 'LDTCW', 'CXAIW', 'NXLIW', 'STSSW', 'VEEAW', 'CURIW', 'UHGWW', 'KDLYW', 'BTMWW', 'SONDW', 'RVMDW', 'AILEW', 'LOTWW', 'LCFYW', 'SWAGW', 'APCXW', 'CDTTW', 'PITAW', 'SLDPW', 'HOVRW', 'TMTCR', 'NRSNW', 'OCSAW', 'FFIEW', 'WGSWW', 'CIFRW', 'LSBPW', 'TOIIW', 'HUBCZ', 'DHAIW', 'NMHIW', 'MOBXW', 'AVPTW']
+    
     def remove_old_files(stocksymbolslists_folder, days_old=30):    
         # Get file names from the folder
         file_names = [f for f in os.listdir(stocksymbolslists_folder) if f.endswith('.csv')]
@@ -102,8 +107,13 @@ def load_symbols_universe_df():
     # If there are spaces in the Symbol column, then remove them
     symbols_universe_df['Symbol'] = symbols_universe_df['Symbol'].str.replace(' ', '')
     
+    # Remove all rows where Symbol is in the ignored_symbols list
+    symbols_universe_df = symbols_universe_df[~symbols_universe_df['Symbol'].isin(ignored_symbols)]
+    
     return symbols_universe_df
 
+
+    
 project_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/'
                
 class SystemTemplates:

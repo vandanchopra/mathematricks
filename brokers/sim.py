@@ -297,7 +297,7 @@ class Yahoo():
 
         return asset_data_df_dict
         
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'/db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None, update_data=True, run_mode=4):
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'/db/data/yahoo', throttle_secs=0.25, start_date=None, end_date=None, lookback=None, update_data=True, run_mode=4):
         data_frames = []
         batch_size = 75
         
@@ -325,13 +325,11 @@ class Yahoo():
                             existing_data_last_date = existing_data.index.max().tz_convert('UTC')
                             yday_date = pd.Timestamp.today().tz_localize('UTC').replace(hour=0, minute=0, second=0, microsecond=0) #- pd.Timedelta(days=1)
                             # replace hours, minutes, seconds with 0
-                            if symbol == 'EL':
-                                self.logger.debug({'market_data':existing_data})
-                                self.logger.info({'interval':interval, 'symbol': symbol, 'existing_data_last_date': existing_data_last_date, 'yday_date': yday_date, 'back_test_end_date':back_test_end_date})
                                 
-                            if (back_test_end_date is not None and existing_data_last_date >= back_test_end_date) or (back_test_end_date is None and existing_data_last_date >= yday_date and interval == '1d'):
+                            if (end_date is not None and existing_data_last_date >= end_date) or (end_date is not None and existing_data_last_date >= yday_date and interval == '1d'):
+                            # if end_date is not None and existing_data_last_date >= end_date:
                                 # prune the data using the back_test_start_date and back_test_end_date
-                                existing_data = existing_data.loc[:back_test_end_date]
+                                existing_data = existing_data.loc[:end_date]
                                 existing_data_dict[interval][symbol] = existing_data
                                 stock_symbols_with_full_data[interval].append(symbol)
                             else:
@@ -485,8 +483,8 @@ class Yahoo():
         '''Step 7: Trim the data to the back_test_start_date and back_test_end_date'''
         for count, data_frame in enumerate(data_frames):
             lookback_value = lookback['1d'] * 2 if '1d' in lookback else 0
-            before = data_frame.loc[:back_test_start_date]
-            after = data_frame.loc[back_test_start_date:back_test_end_date]
+            before = data_frame.loc[:start_date]
+            after = data_frame.loc[start_date:end_date]
             after = after.iloc[1:]
             before_new = before.iloc[-lookback_value:]
             # self.logger.info({'interval':interval, 'before':before.shape, 'after':after.shape, 'before_new':before_new.shape})

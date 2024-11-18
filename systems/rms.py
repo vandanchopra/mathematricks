@@ -116,6 +116,8 @@ class RMS:
         # Create a delta portfolio
         delta_portfolio, rebalanced_portfolio = rebalance_portfolio_strategy(current_portfolio, normalized_ideal_portfolio, strategy_name, total_buying_power, open_orders, system_timestamp)
         
+        self.logger.debug({'delta_portfolio':delta_portfolio})
+        
         # Start Creating Signals
         signal_template = {"symbol": 'symbol',
                     "strategy_name" : strategy_name, 

@@ -19,7 +19,7 @@ class DataFetcher:
         
         for data_source in data_sources:
             if data_source == 'yahoo':
-                market_data_df = self.broker.sim.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, throttle_secs=throttle_secs, back_test_start_date=start_date, back_test_end_date=end_date, lookback=lookback, update_data=update_data, run_mode=run_mode)
+                market_data_df = self.broker.sim.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, throttle_secs=throttle_secs, start_date=start_date, end_date=end_date, lookback=lookback, update_data=update_data, run_mode=run_mode)
                 
             elif data_source == 'ibkr':
                 market_data_df = self.broker.ib.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, back_test_start_date=start_date, back_test_end_date=end_date, lookback=lookback) 

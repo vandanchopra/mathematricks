@@ -3,6 +3,7 @@
 # from ib_insync import *
 from copy import deepcopy
 from turtle import update
+from typing import final
 from ib_insync import IB, Stock, MarketOrder, LimitOrder, Order, util
 from matplotlib.pyplot import bar
 import nest_asyncio
@@ -439,12 +440,14 @@ class IBKR_Execute:
             avg_cost = open_position.avgCost
             orderDirection = 'BUY' if position_size > 0 else 'SELL'
             entry_order = None
+            current_price = None
             try:
                 current_price = market_data_df.loc[min_granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
             except Exception as e:
                 current_price = self.ib.reqTickers(Stock(symbol, 'SMART', 'USD'))[0].marketPrice()
                 self.logger.error(f"Error fetching current price for symbol from market_data_df: {symbol}. This needs to be fixed, Using IBKR to fetch the price as a backup.")
-                self.logger.error(f"Close price for symbol: {symbol} is not in current_price: {market_data_df.loc[min_granularity].xs(symbol, axis=1, level='symbol')['close']}")
+            finally:
+                current_price = current_price if current_price else 0
                 
             entry_order_leg = {'symbol': symbol,
                                 'timestamp': 'Unknown', 
@@ -488,6 +491,9 @@ class IBKR_Execute:
                     multi_leg_order.append(exit_order_leg)
         
             open_orders_ibkr.append(multi_leg_order)
+        
+        for open_order_ibkr in open_orders_ibkr:
+            self.logger.info(f"Open Order IBKR: Symbol: {open_order_ibkr[0]['symbol']}, Position Size: {open_order_ibkr[0]['orderQuantity']}, Entry Price: {open_order_ibkr[0]['entryPrice']}, Exit Price: {open_order_ibkr[1]['exitPrice']}")
                 
         return open_orders_ibkr, self.unfilled_orders_ibkr
     
@@ -705,14 +711,6 @@ class IBKR_Execute:
                     break
                 
         return response_order
-    
-    # def modify_order(self, order, system_timestamp):
-    #     '''Modify an existing order with new parameters'''
-    #     if order['modify_reason'] == 'new_price':
-    #         response_order = self.modify_stoploss_price(order, system_timestamp)
-    #     else:
-    #         raise NotImplementedError(f"Modify order reason {order['modify_reason']} not implemented.")
-    #     return response_order
     
     def modify_order(self, order, system_timestamp):
         self.check_ib_connection()
