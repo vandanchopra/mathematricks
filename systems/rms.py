@@ -4,11 +4,12 @@ from xml.dom import NotFoundErr
 from systems.utils import create_logger, sleeper, generate_hash_id
 
 class RMS:
-    def __init__(self, config_dict):
+    def __init__(self, config_dict, market_data_extractor):
         #initializing constants from config dict
         self.config_dict = config_dict
         self.logger = create_logger(log_level='DEBUG', logger_name='RMS', print_to_console=True)
         self.max_risk_per_bet = self.config_dict["risk_management"]["max_risk_per_bet"]
+        self.market_data_extractor = market_data_extractor
         # self.orders = self.load_orders_from_db()
         # self.get_strategy_portfolio()
         
@@ -77,8 +78,8 @@ class RMS:
                     
             # Create Additions
             for symbol in normalized_ideal_portfolio:
-                maximum_marging_used_pct = self.config_dict['risk_management']['maximum_marging_used_pct']
-                ideal_orderValue = abs(normalized_ideal_portfolio[symbol]['signal_strength'] * ((total_buying_power * maximum_marging_used_pct)/2))
+                maximum_margin_used_pct = self.config_dict['risk_management']['maximum_margin_used_pct']
+                ideal_orderValue = abs(normalized_ideal_portfolio[symbol]['signal_strength'] * ((total_buying_power * maximum_margin_used_pct)/2))
                 
                 ideal_orderQuantity = abs(ideal_orderValue / normalized_ideal_portfolio[symbol]['current_price'])
                 order_direction_multiplier = 1 if normalized_ideal_portfolio[symbol]['orderDirection'] == 'BUY' else -1

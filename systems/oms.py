@@ -11,7 +11,7 @@ import json
 from config import config_dict
 import pandas as pd  # Assuming you are using pandas Timestamps
 from brokers.brokers import Brokers
-from systems.utils import create_logger, generate_hash_id, sleeper
+from systems.utils import create_logger, generate_hash_id, sleeper, MarketDataExtractor
 from pprint import pprint
 from systems.performance_reporter import PerformanceReporter
 
@@ -26,16 +26,17 @@ class OMS:
     def __init__(self, config):
         self.config_dict = config
         self.logger = create_logger(log_level='DEBUG', logger_name='OMS', print_to_console=True)
+        self.market_data_extractor = MarketDataExtractor()
         self.brokers = Brokers()
         self.profit = 0
         self.margin_available = self.update_all_margin_available()
         self.open_orders = self.load_json('db/oms/backtests/open_orders.json')
         self.closed_orders = self.load_json('db/oms/backtests/closed_orders.json')
         self.portfolio = {}
-        self.reporter = PerformanceReporter()
+        self.reporter = PerformanceReporter(self.market_data_extractor)
         self.granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
         self.unfilled_orders = []
-    
+        
     def get_strategy_margin_available(self, strategy_name):
         num_of_strategy_count = len(self.config_dict["strategies"])
         strategy_margin = self.margin_available['all']['total_margin_available'] / num_of_strategy_count
@@ -191,7 +192,7 @@ class OMS:
                     orderDirection_multiplier = 1 if order_entry['orderDirection'].lower() == 'buy' else -1
                     symbol_invested_value += order_entry['entryPrice'] * order_entry['orderQuantity'] * orderDirection_multiplier
                     total_quantity_open_symbol += order_entry['orderQuantity'] * orderDirection_multiplier
-                    # self.logger.debug({'symbol':symbol, 'orderQuantity':order_entry['orderQuantity'], 'symbol_invested_value':symbol_invested_value, 'total_quantity_open_symbol':total_quantity_open_symbol})
+                    self.logger.debug({'symbol':symbol, 'orderQuantity':order_entry['orderQuantity'], 'symbol_invested_value':symbol_invested_value, 'total_quantity_open_symbol':total_quantity_open_symbol, 'sim_invested_ratio_symbol':symbol_invested_value / sim_net_liquidation_value})
                     
                 # Then get the ratio to sim_net_liquidation_value
                 total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'] = symbol_invested_value / sim_net_liquidation_value
@@ -200,22 +201,34 @@ class OMS:
                 total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'] * ibkr_available_funds
                 # self.logger.debug({'symbol':symbol, 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr']})
                 
-                # self.logger.debug({'symbol':symbol, 'symbol_invested_value':symbol_invested_value, 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'ratio_of_invested_value_to_sim_net_liquidation_value': total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'], 'sim_net_liquidation_value':sim_net_liquidation_value, 'ibkr_available_funds':ibkr_available_funds})
+                # self.logger.debug({'symbol':symbol, 'symbol_invested_value':symbol_invested_value, 'avail_funds_for_asset_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'ratio_of_sim_funds': total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'], 'sim_net_liquidation_value':sim_net_liquidation_value, 'ibkr_avail_funds':ibkr_available_funds})
                 # Then get the current value of the stock.
-                try:
-                    close_prices = market_data_df.loc[self.min_granularity].xs(symbol, axis=1, level='symbol')['close']
-                    # drop nan values
-                    close_prices = close_prices.dropna()
-                    total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_prices[-1] # THIS VALUE IS HYPOTHETICAL
-                    # Then calculate the closest integer number of stocks that can be bought with the funds available for IBKR
-                    total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] = int(total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] / total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'])
-                    # self.logger.info({'symbol':symbol, 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price']})
-                except Exception as e:
-                    self.logger.info({'symbol':symbol})
-                    self.logger.info({'market_data_df':market_data_df})
-                    raise Exception(f"Symbol: {symbol}, availble_funds_for_asset_from_ibkr: {total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr']}, Tail Prices: {market_data_df.loc[self.min_granularity].xs(symbol, axis=1, level='symbol')['close'].tail()}")
-                # self.logger.debug({'symbol':symbol, 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy']})
-                # self.logger.debug({'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'], 'fill_price':symbol_invested_value/total_quantity_open_symbol})
+                min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
+                close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'close')
+                # self.logger.debug({'symbol':symbol, 'close_prices':close_prices})
+                close_prices.dropna(inplace=True)
+                close_prices = close_prices.tolist()
+                if len(close_prices) == 0:
+                    close_price = None
+                    for sim_open_order in sim_open_orders:
+                        for order in sim_open_order:
+                            if order['status'].lower() in ['open', 'pending'] and order['symbol'] == symbol:
+                                if 'symbol_ltp' in order:
+                                    close_price = list(order['symbol_ltp'].values())[-1]
+                                    self.logger.debug(f"Close Price extraced from sim_open_orders: {symbol}|{close_price}")
+                                    break
+                else:
+                    close_price = close_prices[-1]
+                
+                if close_price is None:
+                    raise AssertionError(f"Close price is None for symbol: {symbol}")
+                
+                # self.logger.debug({'symbol':symbol, 'symbol_data':market_data_df.loc['1m'].xs(symbol, level=1, axis=1)})
+                total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_price # THIS VALUE IS HYPOTHETICAL
+                # Then calculate the closest integer number of stocks that can be bought with the funds available for IBKR
+                total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] = int(total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] / total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'])
+            
+                self.logger.debug({'symbol':symbol, 'ibkr_available_funds':ibkr_available_funds, 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'], 'fill_price':symbol_invested_value/total_quantity_open_symbol})
                 # Find out how much of the quantity is already bought
                 for open_order_ibkr in open_orders_ibkr:
                     if open_order_ibkr[0]['symbol'] == symbol:
@@ -230,8 +243,6 @@ class OMS:
                         ibkr_orderDirection_multiplier = 1 if unfilled_order.order.action == 'BUY' else -1
                         total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] += unfilled_order.order.totalQuantity * ibkr_orderDirection_multiplier
                         # self.logger.debug({'symbol':symbol, 'Quantity bought':unfilled_order.order.totalQuantity * ibkr_orderDirection_multiplier})
-                        # self.logger.debug({'unfilled_order':unfilled_order, 'quantity_bought':total_ratio_of_each_
-                        # order_to_net_liquidation_value[symbol]['quantity_bought']})
                         
                 # self.logger.debug({'symbol':symbol, 'quantity_bought':total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought']})
                 # Find out actual quantity to buy
@@ -256,7 +267,11 @@ class OMS:
                                 new_order = deepcopy(order)
                                 new_order['orderQuantity'] = abs(actual_symbol_quantity)
                                 # fix entry price
-                                new_order['entryPrice'] = market_data_df.loc['1d'].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
+                                close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, '1d', symbol, 'close')
+                                close_prices.dropna(inplace=True)
+                                close_prices = close_prices.tolist()
+                                close_price = close_prices[-1]
+                                new_order['entryPrice'] = close_price
                                 # fix broker
                                 new_order['broker'] = 'IBKR'
                                 # status
@@ -422,7 +437,8 @@ class OMS:
             # account_balances_dict = self.get_account_balances()
             self.update_all_margin_available()
             # self.logger.debug({'account_balances_dict':account_balances_dict})
-            ibkr_available_funds = self.margin_available['ibkr'][self.config_dict['base_account_numbers']['ibkr']]['combined'][self.config_dict['trading_currency']]['total_buying_power']
+            margin_pct_available_to_use = self.config_dict['risk_management']['maximum_margin_used_pct']
+            ibkr_available_funds = self.margin_available['ibkr'][self.config_dict['base_account_numbers']['ibkr']]['combined'][self.config_dict['trading_currency']]['total_buying_power'] * margin_pct_available_to_use
             
             # self.logger.debug({'ibkr_available_funds':ibkr_available_funds})
             # get account balance for SIM
@@ -693,16 +709,11 @@ class OMS:
                 if order_status not in ['closed', 'cancelled']:
                     if 'symbol_ltp' not in order:
                         order['symbol_ltp'] = {}
-                    self.available_granularities = market_data_df.index.get_level_values(0).unique()
-                    self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
-                    self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
-                    if order['symbol'] in market_data_df.loc[self.min_granularity].columns.get_level_values(0).unique():
-                        close_prices = market_data_df.loc[self.min_granularity].xs(order['symbol'], axis=1, level='symbol')['close']
-                        close_prices = close_prices.dropna()
-                        close_prices = close_prices.tolist()
-                    else:
-                        close_prices = []
-                        self.logger.warning(f"Symbol {order['symbol']} not found in market_data_df: Symbols in market_data_df: {market_data_df.loc[self.min_granularity].columns.get_level_values(0).unique()}")
+                    min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
+                    close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, order['symbol'], 'close')
+                    close_prices.dropna(inplace=True)
+                    close_prices = close_prices.tolist()
+
                     # Drop nan values
                     if len(close_prices) > 0:
                         order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]

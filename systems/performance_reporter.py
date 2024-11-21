@@ -4,7 +4,8 @@ import os, json, pickle
 from systems.utils import create_logger, sleeper, generate_hash_id
 
 class PerformanceReporter:
-    def __init__(self):
+    def __init__(self, market_data_extractor):
+        self.market_data_extractor = market_data_extractor
         self.backtest_folder_path = project_path + 'db/vault/backtest_reports'
         self.backtest_performance_metrics = None
         self.backtest_report = None
@@ -29,6 +30,7 @@ class PerformanceReporter:
         exit_qty = 0
         total_profit = 0
         total_order_value = 0
+        symbol = multi_leg_order[0]['symbol']
         for order in multi_leg_order:
             if 'entryPrice' in order and order['status'].lower() != 'cancelled':
                 entry_orders.append(order)
@@ -42,7 +44,6 @@ class PerformanceReporter:
         
         if force_close:
             for unfilled_order in unfilled_orders:
-                # self.logger.debug((unfilled_order.contract.symbol, multi_leg_order[0]['symbol'], unfilled_order.order.orderType.lower()))
                 if unfilled_order.contract.symbol == multi_leg_order[0]['symbol'] and unfilled_order.order.orderType.lower() == 'mkt':
                     # self.logger.debug((unfilled_order.contract.symbol, multi_leg_order[0]['symbol'], unfilled_order.order.orderType.lower()))
                     entry_order_direction = multi_leg_order[0]['orderDirection']
@@ -59,6 +60,7 @@ class PerformanceReporter:
                 exit_price = exit_order.get('fill_price') if 'fill_price' in exit_order else list(exit_order['symbol_ltp'].values())[-1]
                 if exit_price:
                     break
+            # self.logger.debug({'Symbol':symbol, 'Exit Price':exit_price, 'Fill Price': exit_order.get('fill_price') if 'fill_price' in exit_order else None, 'symbol_ltp':exit_order['symbol_ltp'].values()})
             
             for entry_order in entry_orders:
                 entry_price = entry_order.get('fill_price')

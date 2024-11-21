@@ -109,7 +109,7 @@ class BacktestQueue:
                                                     }
                                                 },
                                 'base_account_numbers':{'sim':'sim_1', 'ibkr':'U13152795'},
-                                'risk_management': {'max_risk_per_bet':0.05, 'maximum_marging_used_pct':0.80}
+                                'risk_management': {'max_risk_per_bet':0.05, 'maximum_margin_used_pct':0.80}
                                 }
         
         config_dict = deepcopy(config_dict_template)

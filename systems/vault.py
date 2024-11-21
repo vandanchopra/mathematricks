@@ -2,11 +2,12 @@ import json, os
 from systems.utils import create_logger, sleeper
 
 class Vault:
-    def __init__(self, config_dict):
+    def __init__(self, config_dict, market_data_extractor):
         self.tickers_dict = {}
         self.logger = create_logger(log_level='DEBUG', logger_name='Vault', print_to_console=True)
         self.strategies = self.load_strategies(config_dict)
         self.config_dict = self.create_datafeeder_config(config_dict, self.strategies)
+        self.market_data_extractor = market_data_extractor
 
     def load_strategies(self, config_dict):
         strategy_names = config_dict['strategies']

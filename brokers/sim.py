@@ -1,13 +1,11 @@
-from email.mime import base
-from re import A
 import os, hashlib, time, json, logging, sys
-from turtle import back
 from numpy import isin
 import pandas as pd
 import yfinance as yf
 from systems.utils import create_logger, generate_hash_id, sleeper, project_path
 from tqdm import tqdm
 from copy import deepcopy
+from datetime import datetime
 
 # Main Simulation Class
 class Sim():
@@ -150,7 +148,7 @@ class SIM_Execute():
     
 class Yahoo():
     def __init__(self):
-        self.logger = create_logger(log_level=logging.INFO, logger_name='datafetcher', print_to_console=True)
+        self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
         self.asset_data_df_dict = {}
     
     def get_nasdaq_stock_symbols(self, nasdaq_csv_filepath, min_market_cap=10 * 1 * 1000 * 1000 * 1000):
@@ -219,47 +217,14 @@ class Yahoo():
         
         return asset_data_df
     
-    def update_price_data_batch_old(self, stock_symbols, start_date, batch_size=60, throttle_secs=0.25):
-        asset_data_df_dict = {}
-        for interval in stock_symbols:
-            pbar_ydownloader = tqdm(stock_symbols[interval], desc= f'Downloading data from Yahoo: Interval: {interval}: ')
-            asset_data_df_dict[interval] = {}
-            for i in range(0, len(stock_symbols[interval]), batch_size):
-                batch = stock_symbols[interval][i:i + batch_size]
-                if len(batch) == 1:
-                    batch.append('AAPL')
-                    dummy_addition = True
-                if len(batch) > 1:
-                    self.logger.info(f"Downloading data for 'Start Date': {start_date}, 'Interval': {interval}, Batch Size: {len(batch)}")
-                    # sleeper(5, "Giving you 5 seconds to read the above message...")
-                    if start_date is not None and ((interval == '1m' and time.time() - start_date.timestamp() < 60*60*24*7) or (interval == '1d')):
-                        # convert Timestamp to _datetime
-                        # start_date = start_date.to_pydatetime()
-                        data = yf.download(batch, start=start_date, progress=False,interval=interval)
-                    else:
-                        data = yf.download(batch, period="max", progress=False,interval=interval)
-                    # self.logger.info({'data':data})
-                    for ticker in stock_symbols[interval]:
-                        if ticker in data.columns.get_level_values(1):
-                            asset_data_df = data.loc[:, data.columns.get_level_values(1) == ticker]
-                            asset_data_df_dict[interval][ticker]= asset_data_df
-                pbar_ydownloader.update(len(batch))
-                if throttle_secs < 1:
-                    self.logger.warning('Throttle seconds is less than 1 to give Yahoo API time to breathe.')
-                    time.sleep(throttle_secs)
-                else:
-                    sleeper(throttle_secs, 'Giving Yahoo API time to breathe.')  # To avoid hitting rate limits
-                
-            pbar_ydownloader.close()
-        return asset_data_df_dict
-    
     def restructure_asset_data_df(self, asset_data_df):
-        asset_data_df.columns = asset_data_df.columns.str.lower()
-        asset_data_df.index.names = ['datetime']
-        asset_data_df.index = asset_data_df.index.tz_convert('UTC')
-        cols = list(asset_data_df.columns)
-        asset_data_df = asset_data_df.T.reset_index(drop=True).T
-        asset_data_df = asset_data_df.set_axis(cols, axis=1)
+        if not asset_data_df.empty:
+            asset_data_df.columns = asset_data_df.columns.str.lower()
+            asset_data_df.index.names = ['datetime']
+            asset_data_df.index = asset_data_df.index.tz_convert('UTC')
+            cols = list(asset_data_df.columns)
+            asset_data_df = asset_data_df.T.reset_index(drop=True).T
+            asset_data_df = asset_data_df.set_axis(cols, axis=1)
         
         return asset_data_df
         
@@ -281,7 +246,7 @@ class Yahoo():
             dummy_addition = True
         if len(stock_symbols) > 1:
             # sleeper(5, "Giving you 5 seconds to read the above message...")
-            # self.logger.info(f"÷Downloading data for 'Start Date': {start_date}, 'Interval': {interval}, Batch Size: {stock_symbols}")
+            # self.logger.info(f"÷Downloading Yahoo data for 'Start Date': {start_date}, 'Interval': {interval}, Batch Size: {stock_symbols}")
             
             if start_date is not None and ((interval == '1m' and time.time() - start_date.timestamp() < 60*60*24*7) or (interval == '1d')):
                 # convert Timestamp to _datetime
@@ -293,11 +258,11 @@ class Yahoo():
             for ticker in stock_symbols:
                 if ticker in data.columns.get_level_values(1):
                     asset_data_df = data.loc[:, data.columns.get_level_values(1) == ticker]
-                    asset_data_df_dict[ticker]= asset_data_df
+                    asset_data_df_dict[ticker] = asset_data_df
 
         return asset_data_df_dict
         
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'/db/data/yahoo', throttle_secs=0.25, start_date=None, end_date=None, lookback=None, update_data=True, run_mode=4):
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'/db/data/yahoo', throttle_secs=1, start_date=None, end_date=None, lookback=None, update_data=True, run_mode=4):
         data_frames = []
         batch_size = 75
         
@@ -323,10 +288,11 @@ class Yahoo():
                         if not existing_data.empty:
                             # existing_data_first_date = existing_data.index.min().tz_convert('UTC')
                             existing_data_last_date = existing_data.index.max().tz_convert('UTC')
-                            yday_date = pd.Timestamp.today().tz_localize('UTC').replace(hour=0, minute=0, second=0, microsecond=0) #- pd.Timedelta(days=1)
+                            yday_date = pd.Timestamp.today().tz_localize('UTC').replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(days=1)
                             # replace hours, minutes, seconds with 0
-                                
-                            if (end_date is not None and existing_data_last_date >= end_date) or (end_date is not None and existing_data_last_date >= yday_date and interval == '1d'):
+                            # if interval == '1d':
+                                # self.logger.debug({'symbol':symbol, 'interval':interval,'existing_data_last_date':existing_data_last_date, 'yday_date':yday_date, 'end_date':end_date, 'timestamp_test_bool':existing_data_last_date >= yday_date})
+                            if (end_date is not None and existing_data_last_date >= end_date) or (existing_data_last_date >= yday_date and interval == '1d'):
                             # if end_date is not None and existing_data_last_date >= end_date:
                                 # prune the data using the back_test_start_date and back_test_end_date
                                 existing_data = existing_data.loc[:end_date]
@@ -346,134 +312,164 @@ class Yahoo():
 
         for interval in interval_inputs:
             self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
+            # if interval == '1d':
+            #     self.logger.debug({'partial_data_symbols':stock_symbols_with_partial_data[interval]})
         
         '''STEP 2: Get the data for the ones that don't have data'''
         for interval in interval_inputs:
-            pbar = tqdm(stock_symbols_no_data[interval], desc=f'Updating NO data: Interval: {interval}')
-            # pbar_ydownloader = tqdm(stock_symbols[interval], desc= f'Downloading data from Yahoo: Interval: {interval}: ')
-            for i in range(0, len(stock_symbols_no_data[interval]), batch_size):
-                batch = stock_symbols_no_data[interval][i:i + batch_size]
-                batch_asset_data_df_dict = self.batch_update_price_data(batch, interval, start_date=None)
-                # Extract the data from yahoo batch response and save it to csv
-                data_input_folder = os.path.join(data_folder, interval)
-                os.makedirs(data_input_folder, exist_ok=True)
-                for symbol in batch_asset_data_df_dict:
-                    # Extract the data from the yahoo batch response
-                    asset_data_df = batch_asset_data_df_dict[symbol]
-                    asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
+            if len(stock_symbols_no_data[interval]) > 0:
+                pbar = tqdm(stock_symbols_no_data[interval], desc=f'Updating NO data: Interval: {interval}')
+                # pbar_ydownloader = tqdm(stock_symbols[interval], desc= f'Downloading data from Yahoo: Interval: {interval}: ')
+                for i in range(0, len(stock_symbols_no_data[interval]), batch_size):
+                    batch = stock_symbols_no_data[interval][i:i + batch_size]
+                    batch_asset_data_df_dict = self.batch_update_price_data(batch, interval, start_date=None)
+                    # Extract the data from yahoo batch response and save it to csv
+                    data_input_folder = os.path.join(data_folder, interval)
+                    os.makedirs(data_input_folder, exist_ok=True)
+                    for symbol in batch_asset_data_df_dict:
+                        # Extract the data from the yahoo batch response
+                        asset_data_df = batch_asset_data_df_dict[symbol]
+                        asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
+                        asset_data_df = self.restructure_asset_data_df(asset_data_df)
+                        asset_data_df = asset_data_df.dropna(how='all')
+                        asset_data_df['symbol'] = symbol
+                        asset_data_df['interval'] = interval
+                        
+                        if interval == '1d':
+                            today = pd.Timestamp(datetime.now()).tz_localize('UTC')
+                            today = today.replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(minutes=1)
+                            asset_data_df = asset_data_df.loc[:today]
+                        
+                        # Save it to the csv file
+                        symbol = symbol.replace('/','-') if '/' in symbol else symbol
+                        csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
+                        # self.logger.info(f"Trying to save to {csv_file_path}")
+                        if not asset_data_df.empty:
+                            # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
+                            asset_data_df.to_csv(csv_file_path)
+                        # else:
+                            # self.logger.warning(f"Data for {symbol} is empty.")
+
+                        # Remove all cols not needed
+                        asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
+                        
+                        # Update it to the data_frames list
+                        data_frames.append(asset_data_df)
+                    pbar.update(len(batch))
+                    if throttle_secs < 1:
+                        self.logger.warning('Throttle seconds is less than 1 to give Yahoo API time to breathe.')
+                        time.sleep(throttle_secs)
+                    else:
+                        sleeper(throttle_secs, 'Giving Yahoo API time to breathe.')  # To avoid hitting rate limits
+                pbar.close()
+        
+        '''STEP 3: Get the data for the ones that have partial data'''
+        # Update the existing data. Get the minimum start date for the ones that have data. Then update the new downloaded data to the existing data
+        for interval in interval_inputs:
+            if len(stock_symbols_with_partial_data[interval]) > 0:
+                pbar = tqdm(stock_symbols_with_partial_data[interval], desc=f'Updating Partial data: Interval: {interval}')
+                for i in range(0, len(stock_symbols_with_partial_data[interval]), batch_size):
+                    batch = stock_symbols_with_partial_data[interval][i:i + batch_size]
+                    start_date = None
+                    for symbol in batch:
+                        existing_data = existing_data_dict[interval][symbol]
+                        # last_date = existing_data.index.max().tz_localize('UTC') if not existing_data.empty else None
+                        last_date = existing_data.index.max().tz_convert('UTC') if not existing_data.empty else None
+                        start_date = last_date if start_date is None and last_date is not None else None if last_date is None else min(start_date, last_date)
+                        
+                    batch_asset_data_df_dict = self.batch_update_price_data(batch, interval, start_date=start_date)
+                    ## Dummy code to emulate yfinance data download failure
+                    # batch_asset_data_df_dict = {}
+                    # for symbol in batch:
+                    #     batch_asset_data_df_dict[symbol] = pd.DataFrame(columns=pd.MultiIndex.from_tuples(
+                    #                                                     [('Adj Close', symbol), ('Close', symbol), ('High', symbol), 
+                    #                                                         ('Low', symbol), ('Open', symbol), ('Volume', symbol)],
+                    #                                                             names=['Metric', 'Ticker']), index=pd.DatetimeIndex([])
+                    #                                                             )
+                    
+                    data_input_folder = os.path.join(data_folder, interval)
+                    for symbol in batch:
+                        # Extract the data from the yahoo batch response
+                        asset_data_df = batch_asset_data_df_dict[symbol]
+                        # self.logger.info({'symbol':symbol, 'asset_data_df':asset_data_df.shape})
+                        asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
+                        asset_data_df = self.restructure_asset_data_df(asset_data_df)
+                        asset_data_df = asset_data_df.dropna(how='all')
+                        existing_data = existing_data_dict[interval][symbol]
+                        # get the start date of asset_data_df
+                        symbol_start_date = asset_data_df.index.min() if not asset_data_df.empty else start_date
+                        # prune the existing_data to only include data before the start date
+                        symbol_start_date = symbol_start_date.to_pydatetime()
+                        # self.logger.debug({'symbol':symbol, 'symbol_start_date':symbol_start_date})
+                        existing_data = existing_data[existing_data.index < symbol_start_date]
+                        # concatenate the existing data and the new data
+                        # self.logger.info({'symbol':symbol, 'start_date':start_date, 'interval':interval, 'existing_data':existing_data.shape, 'asset_data_df':asset_data_df.shape})
+                        if not asset_data_df.empty:
+                            updated_data = pd.concat([existing_data, asset_data_df])
+                        else:
+                            updated_data = existing_data
+                        # Remove symbol and interval columns if they exist in updated_data
+                        updated_data = updated_data.drop(columns=['symbol','interval'], errors='ignore')
+                        updated_data = updated_data.dropna(how='all')
+                        updated_data['symbol'] = symbol
+                        updated_data['interval'] = interval
+                        
+                        if interval == '1d':
+                            today = pd.Timestamp(datetime.now()).tz_localize('UTC')
+                            today = today.replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(minutes=1)
+                            updated_data = updated_data.loc[:today]
+                        
+                        # updated_data = updated_data.iloc[:-1] if interval == '1d' else updated_data
+                        # self.logger.info({'symbol':symbol, 'existing_data':existing_data.shape, 'updated_data':updated_data.shape, 'asset_data_df':asset_data_df.shape})
+                        # Save it to the csv file
+                        # if update_data is not an empty DataFrame, then save it to the csv file
+                        
+                        # self.logger.info(f"Trying to save to {csv_file_path}")
+                        if not updated_data.empty and not asset_data_df.empty:
+                            symbol = symbol.replace('/','-') if '/' in symbol else symbol
+                            csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
+                            # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}: asset_data_df: {asset_data_df.tail(2)}"})
+                            updated_data.to_csv(csv_file_path)
+                        # else:
+                            # self.logger.warning(f"Data for {symbol} is empty.")
+                        
+                        # if interval == '1m':
+                        # self.logger.info({'asset_data_df':asset_data_df})
+                        # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
+                        # sleeper(5, 'Sleeping for 5 seconds...')
+                        
+                        # Remove all cols not needed
+                        updated_data = self.remove_unwanted_cols(interval_inputs, interval, updated_data)
+                        
+                        # Update it to the data_frames list
+                        data_frames.append(updated_data)
+                    pbar.update(len(batch))
+                    if throttle_secs < 1:
+                        self.logger.warning(f'Throttle seconds is less than 1 to give Yahoo API time to breathe. throttle_secs: {throttle_secs}')
+                        time.sleep(throttle_secs)
+                    else:
+                        sleeper(throttle_secs, f'Giving Yahoo API time to breathe. throttle_secs: {throttle_secs}')  # To avoid hitting rate limits
+                        
+                pbar.close()
+                    
+        '''STEP 4: Get the data for the ones that have full data'''
+        for interval in interval_inputs:
+            if len(stock_symbols_with_full_data[interval]) > 0:
+                pbar = tqdm(stock_symbols_with_full_data[interval], desc='Get the data for the ones that have full data: ')
+                for symbol in existing_data_dict[interval]:
+                    asset_data_df = existing_data_dict[interval][symbol]
                     asset_data_df = self.restructure_asset_data_df(asset_data_df)
-                    asset_data_df = asset_data_df.dropna(how='all')
                     asset_data_df['symbol'] = symbol
                     asset_data_df['interval'] = interval
                     asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
                     
-                    # Save it to the csv file
-                    symbol = symbol.replace('/','-') if '/' in symbol else symbol
-                    csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
-                    # self.logger.info(f"Trying to save to {csv_file_path}")
-                    if not asset_data_df.empty:
-                        # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
-                        asset_data_df.to_csv(csv_file_path)
-                    # else:
-                        # self.logger.warning(f"Data for {symbol} is empty.")
-
                     # Remove all cols not needed
                     asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
                     
                     # Update it to the data_frames list
                     data_frames.append(asset_data_df)
-                pbar.update(len(batch))
-                if throttle_secs < 1:
-                    self.logger.warning('Throttle seconds is less than 1 to give Yahoo API time to breathe.')
-                    time.sleep(throttle_secs)
-                else:
-                    sleeper(throttle_secs, 'Giving Yahoo API time to breathe.')  # To avoid hitting rate limits
-            pbar.close()
-        
-        '''STEP 3: Get the data for the ones that have partial data'''
-        # Update the existing data. Get the minimum start date for the ones that have data. Then update the new downloaded data to the existing data
-        for interval in interval_inputs:
-            pbar = tqdm(stock_symbols_with_partial_data[interval], desc=f'Updating Partial data: Interval: {interval}')
-            for i in range(0, len(stock_symbols_with_partial_data[interval]), batch_size):
-                batch = stock_symbols_with_partial_data[interval][i:i + batch_size]
-                start_date = None
-                for symbol in batch:
-                    existing_data = existing_data_dict[interval][symbol]
-                    # last_date = existing_data.index.max().tz_localize('UTC') if not existing_data.empty else None
-                    last_date = existing_data.index.max().tz_convert('UTC') if not existing_data.empty else None
-                    start_date = last_date if start_date is None and last_date is not None else None if last_date is None else min(start_date, last_date)
-                    
-                batch_asset_data_df_dict = self.batch_update_price_data(batch, interval, start_date=start_date)
-                
-                data_input_folder = os.path.join(data_folder, interval)
-                for symbol in batch_asset_data_df_dict:
-                    # Extract the data from the yahoo batch response
-                    asset_data_df = batch_asset_data_df_dict[symbol]
-                    asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
-                    asset_data_df = self.restructure_asset_data_df(asset_data_df)
-                    
-                    existing_data = existing_data_dict[interval][symbol]
-                    # get the start date of asset_data_df
-                    symbol_start_date = asset_data_df.index.min()
-                    # prune the existing_data to only include data before the start date
-                    symbol_start_date = symbol_start_date.to_pydatetime()
-                    existing_data = existing_data[existing_data.index < symbol_start_date]
-                    # concatenate the existing data and the new data
-                    updated_data = pd.concat([existing_data, asset_data_df])
-                    # Remove symbol and interval columns if they exist in updated_data
-                    updated_data = updated_data.drop(columns=['symbol','interval'], errors='ignore')
-                    updated_data = updated_data.dropna(how='all')
-                    updated_data['symbol'] = symbol
-                    updated_data['interval'] = interval
-                    updated_data = updated_data.iloc[:-1] if interval == '1d' else updated_data
-                    
-                    # Save it to the csv file
-                    # if update_data is not an empty DataFrame, then save it to the csv file
-                    symbol = symbol.replace('/','-') if '/' in symbol else symbol
-                    csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
-                    # self.logger.info(f"Trying to save to {csv_file_path}")
-                    if not updated_data.empty:
-                        # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
-                        updated_data.to_csv(csv_file_path)
-                    # else:
-                        # self.logger.warning(f"Data for {symbol} is empty.")
-                    
-                    # if interval == '1m':
-                    # self.logger.info({'asset_data_df':asset_data_df})
-                    # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
-                    # sleeper(5, 'Sleeping for 5 seconds...')
-                    
-                    # Remove all cols not needed
-                    updated_data = self.remove_unwanted_cols(interval_inputs, interval, updated_data)
-                    
-                    # Update it to the data_frames list
-                    data_frames.append(updated_data)
-                pbar.update(len(batch))
-                if throttle_secs < 1:
-                    self.logger.warning('Throttle seconds is less than 1 to give Yahoo API time to breathe.')
-                    time.sleep(throttle_secs)
-                else:
-                    sleeper(throttle_secs, 'Giving Yahoo API time to breathe.')  # To avoid hitting rate limits
-                    
-            pbar.close()
-                    
-        '''STEP 4: Get the data for the ones that have full data'''
-        pbar = tqdm(stock_symbols_with_full_data, desc='Get the data for the ones that have full data: ')
-        for interval in interval_inputs:
-            for symbol in existing_data_dict[interval]:
-                asset_data_df = existing_data_dict[interval][symbol]
-                asset_data_df = self.restructure_asset_data_df(asset_data_df)
-                asset_data_df['symbol'] = symbol
-                asset_data_df['interval'] = interval
-                asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
-                
-                # Remove all cols not needed
-                asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
-                
-                # Update it to the data_frames list
-                data_frames.append(asset_data_df)
-                pbar.update(1)
-        pbar.close()
+                    pbar.update(1)
+                pbar.close()
         
         '''Step 6: Add 1d timedelta to date'''
         for dataframe in data_frames:
@@ -482,12 +478,15 @@ class Yahoo():
         
         '''Step 7: Trim the data to the back_test_start_date and back_test_end_date'''
         for count, data_frame in enumerate(data_frames):
-            lookback_value = lookback['1d'] * 2 if '1d' in lookback else 0
+            lookback_value = int(lookback['1d'] * 1.2) if '1d' in lookback else 0
             before = data_frame.loc[:start_date]
-            after = data_frame.loc[start_date:end_date]
-            after = after.iloc[1:]
-            before_new = before.iloc[-lookback_value:]
-            # self.logger.info({'interval':interval, 'before':before.shape, 'after':after.shape, 'before_new':before_new.shape})
+            try:
+                after = data_frame.loc[start_date:end_date]
+                after = after.iloc[1:]
+                before_new = before.iloc[-lookback_value:]
+            except Exception as e:
+                raise Exception({'start_date':start_date, 'end_date':end_date})
+            # self.logger.info({'interval':interval, 'before':before.shape, 'after':after.shape, 'before_new':before_new.shape, 'req_start_date':start_date, 'req_end_date':end_date, 'tail':data_frame.tail()})
             # self.logger.debug({'interval':interval, 'lookback_value':lookback_value, 'first_row':before_new.index[0], 'last_row':before_new.index[-1]}) 
 
             # join before and after dataframes
@@ -498,8 +497,11 @@ class Yahoo():
             joined.index.name = 'date'
             data_frames[count] = joined        
         
+        # self.logger.debug({'start_date':start_date, 'end_date':end_date, 'lookback_value':lookback_value, 'joined':joined.shape})
+        # raise AssertionError('STOP')
+        
         '''STEP 8: # Combine all DataFrames into a single DataFrame'''
-        self.logger.info('Combining all DataFrames into a single DataFrame...')
+        # self.logger.info('Combining all DataFrames into a single DataFrame...')
         combined_df = pd.concat(data_frames)
         combined_df.reset_index(drop=False,inplace=True)
         # Set multi-index
@@ -510,212 +512,7 @@ class Yahoo():
         # combined_df = combined_df.unstack(level='symbol')
         # Sort the index
         combined_df.sort_index(inplace=True)
+        # self.logger.info({'combined_df':combined_df})
+        # raise AssertionError('STOP HERE')
         
         return combined_df
-    
-    def update_price_data_old(self, stock_symbols, interval_inputs, data_folder=project_path+'/db/data/yahoo', throttle_secs=0.25, back_test_start_date=None, back_test_end_date=None, lookback=None, update_data=True):
-        data_frames = []
-
-        # Break the list into two lists. ones that don't have data and ones that have data
-        stock_symbols_no_data = { k:[] for k in interval_inputs}
-        stock_symbols_with_partial_data = { k:[] for k in interval_inputs}
-        stock_symbols_with_full_data = { k:[] for k in interval_inputs}
-        existing_data_dict = { k:{} for k in interval_inputs}
-        '''STEP 1: Bifurcate the list of stock symbols into two lists: 1) ones that have data 2) ones that don't have data 3) Ones that have partial data'''
-
-        for interval in interval_inputs:
-            csv_loader_pbar = tqdm(stock_symbols, desc=f'Fetching {interval} CSV data & Bifurcating Batches: ')
-            
-            for symbol in stock_symbols:
-                symbol = symbol.replace('/','-') if '/' in symbol else symbol
-                csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
-                
-                if not os.path.exists(csv_file_path):
-                    stock_symbols_no_data[interval].append(symbol)
-                else:
-                    try:
-                        existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
-                        if not existing_data.empty:
-                            # existing_data_first_date = existing_data.index.min().tz_convert('UTC')
-                            existing_data_last_date = existing_data.index.max().tz_convert('UTC')
-                            yday_date = pd.Timestamp.today().tz_localize('UTC') - pd.Timedelta(days=1)
-                            # replace hours, minutes, seconds with 0
-                            yday_date = yday_date.replace(hour=0, minute=0, second=0, microsecond=0)
-                            # self.logger.info({'interval':interval, 'symbol': symbol, 'existing_data_last_date': existing_data_last_date, 'yday_date': yday_date})
-                            if (back_test_end_date is not None and existing_data_last_date >= back_test_end_date) or (back_test_end_date is None and existing_data_last_date >= yday_date):
-                                # prune the data using the back_test_start_date and back_test_end_date
-                                existing_data = existing_data.loc[:back_test_end_date]
-                                existing_data_dict[interval][symbol] = existing_data
-                                stock_symbols_with_full_data[interval].append(symbol)
-                                
-                            else:
-                                existing_data_dict[interval][symbol] = existing_data
-                                stock_symbols_with_partial_data[interval].append(symbol)
-                                
-                        else: 
-                            stock_symbols_no_data[interval].append(symbol)
-                            
-                    except Exception as e:
-                        raise Exception(f"Error reading {csv_file_path}. Error: {e}")
-                csv_loader_pbar.update(1)
-            csv_loader_pbar.close()
-
-        for interval in interval_inputs:
-            self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
-        
-        '''STEP 2: Get the data for the ones that don't have data'''
-        for interval in stock_symbols:
-            pbar_ydownloader = tqdm(stock_symbols[interval], desc= f'Downloading data from Yahoo: Interval: {interval}: ')
-            asset_data_df_dict[interval] = {}
-            for i in range(0, len(stock_symbols[interval]), batch_size):
-                batch = stock_symbols[interval][i:i + batch_size]
-                batch_asset_data_df_dict = self.update_price_data_batch(batch, interval, start_date=None, batch_size=60, throttle_secs=throttle_secs)
-
-        # Extract the data from yahoo batch response and save it to csv
-        for interval in asset_data_df_dict:
-            data_input_folder = os.path.join(data_folder, interval)
-            os.makedirs(data_input_folder, exist_ok=True)
-            for symbol in asset_data_df_dict[interval]:
-                # Extract the data from the yahoo batch response
-                asset_data_df = asset_data_df_dict[interval][symbol]
-                asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
-                asset_data_df = self.restructure_asset_data_df(asset_data_df)
-                asset_data_df = asset_data_df.dropna(how='all')
-                asset_data_df['symbol'] = symbol
-                asset_data_df['interval'] = interval
-                asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
-                
-                # Save it to the csv file
-                symbol = symbol.replace('/','-') if '/' in symbol else symbol
-                csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
-                # self.logger.info(f"Trying to save to {csv_file_path}")
-                if not asset_data_df.empty:
-                    # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
-                    asset_data_df.to_csv(csv_file_path)
-                # else:
-                    # self.logger.warning(f"Data for {symbol} is empty.")
-
-                # Remove all cols not needed
-                asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
-                
-                # Update it to the data_frames list
-                data_frames.append(asset_data_df)
-        
-        '''STEP 3: Get the data for the ones that have partial data'''
-        # Update the existing data. Get the minimum start date for the ones that have data. Then update the new downloaded data to the existing data
-        start_date = None
-        for interval in stock_symbols_with_partial_data:
-            for symbol in stock_symbols_with_partial_data[interval]:
-                existing_data = existing_data_dict[interval][symbol]
-                # last_date = existing_data.index.max().tz_localize('UTC') if not existing_data.empty else None
-                last_date = existing_data.index.max().tz_convert('UTC') if not existing_data.empty else None
-                start_date = last_date if start_date is None and last_date is not None else None if last_date is None else min(start_date, last_date)
-                # self.logger.debug({'interval':interval, 'symbol': symbol, 'last_date': last_date, 'start_date': start_date})
-        # self.logger.debug({'start_date': start_date})
-                
-        asset_data_df_dict = self.update_price_data_batch(stock_symbols_with_partial_data, start_date=start_date, batch_size=60)
-        
-        pbar = tqdm(stock_symbols_with_partial_data, desc='Updating data: ')
-        for interval in asset_data_df_dict:
-            data_input_folder = os.path.join(data_folder, interval)
-            for symbol in asset_data_df_dict[interval]:
-                # Extract the data from the yahoo batch response
-                asset_data_df = asset_data_df_dict[interval][symbol]
-                asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
-                asset_data_df = self.restructure_asset_data_df(asset_data_df)
-                
-                existing_data = existing_data_dict[interval][symbol]
-                # get the start date of asset_data_df
-                symbol_start_date = asset_data_df.index.min()
-                # prune the existing_data to only include data before the start date
-                symbol_start_date = symbol_start_date.to_pydatetime()
-                existing_data = existing_data[existing_data.index < symbol_start_date]
-                # concatenate the existing data and the new data
-                updated_data = pd.concat([existing_data, asset_data_df])
-                # Remove symbol and interval columns if they exist in updated_data
-                updated_data = updated_data.drop(columns=['symbol','interval'], errors='ignore')
-                updated_data = updated_data.dropna(how='all')
-                updated_data['symbol'] = symbol
-                updated_data['interval'] = interval
-                updated_data = updated_data.iloc[:-1] if interval == '1d' else updated_data
-                
-                # Save it to the csv file
-                # if update_data is not an empty DataFrame, then save it to the csv file
-                symbol = symbol.replace('/','-') if '/' in symbol else symbol
-                csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
-                # self.logger.info(f"Trying to save to {csv_file_path}")
-                if not updated_data.empty:
-                    # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
-                    updated_data.to_csv(csv_file_path)
-                # else:
-                    # self.logger.warning(f"Data for {symbol} is empty.")
-                
-                # if interval == '1m':
-                # self.logger.info({'asset_data_df':asset_data_df})
-                # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}"})
-                # sleeper(5, 'Sleeping for 5 seconds...')
-                
-                # Remove all cols not needed
-                updated_data = self.remove_unwanted_cols(interval_inputs, interval, updated_data)
-                
-                # Update it to the data_frames list
-                data_frames.append(updated_data)
-                pbar.update(1)
-        pbar.close()
-        
-        '''STEP 4: Get the data for the ones that have full data'''
-        pbar = tqdm(stock_symbols_with_full_data, desc='Get the data for the ones that have full data: ')
-        for interval in interval_inputs:
-            for symbol in existing_data_dict[interval]:
-                asset_data_df = existing_data_dict[interval][symbol]
-                asset_data_df = self.restructure_asset_data_df(asset_data_df)
-                asset_data_df['symbol'] = symbol
-                asset_data_df['interval'] = interval
-                asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
-                
-                # Remove all cols not needed
-                asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
-                
-                # Update it to the data_frames list
-                data_frames.append(asset_data_df)
-                pbar.update(1)
-        pbar.close()
-        
-        '''Step 6: Add 1d timedelta to date'''
-        for dataframe in data_frames:
-            if '1d' in dataframe['interval'].unique():
-                dataframe.index = dataframe.index + pd.Timedelta(hours=23, minutes=59, seconds=59)
-        
-        '''Step 7: Trim the data to the back_test_start_date and back_test_end_date'''
-        for count, data_frame in enumerate(data_frames):
-            lookback_value = lookback['1d'] * 2 if '1d' in lookback else 0
-            before = data_frame.loc[:back_test_start_date]
-            after = data_frame.loc[back_test_start_date:back_test_end_date]
-            after = after.iloc[1:]
-            before_new = before.iloc[-lookback_value:]
-            # self.logger.info({'interval':interval, 'before':before.shape, 'after':after.shape, 'before_new':before_new.shape})
-            # self.logger.debug({'interval':interval, 'lookback_value':lookback_value, 'first_row':before_new.index[0], 'last_row':before_new.index[-1]}) 
-
-            # join before and after dataframes
-            if lookback_value > 0:
-                joined = pd.concat([before_new, after])
-            else:
-                joined = after
-            joined.index.name = 'date'
-            data_frames[count] = joined        
-        
-        '''STEP 8: # Combine all DataFrames into a single DataFrame'''
-        self.logger.info('Combining all DataFrames into a single DataFrame...')
-        combined_df = pd.concat(data_frames)
-        combined_df.reset_index(drop=False,inplace=True)
-        # Set multi-index
-        combined_df.set_index(['date','symbol'],inplace=True)
-        asset_data_df = data_frames[0]
-        pass_cols = list(asset_data_df.columns)
-        combined_df = combined_df.reset_index().pivot_table(values=pass_cols, index=['interval', 'date'], columns=['symbol'], aggfunc='mean')
-        # combined_df = combined_df.unstack(level='symbol')
-        # Sort the index
-        combined_df.sort_index(inplace=True)
-        
-        return combined_df
-    

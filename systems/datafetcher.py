@@ -6,14 +6,16 @@ import sys
 import pandas as pd
 
 class DataFetcher:
-    def __init__(self, config_dict):
+    def __init__(self, config_dict, market_data_extractor):
         self.config_dict = config_dict
+        self.market_data_extractor = market_data_extractor
         self.logger = create_logger(log_level='DEBUG', logger_name='datafetcher', print_to_console=True)
         self.broker = Brokers()
     
-    def fetch_updated_price_data(self, start_date, end_date, lookback, throttle_secs=0.25, update_data=True, run_mode=4):
+    def fetch_updated_price_data(self, start_date, end_date, lookback, throttle_secs=1, update_data=True, run_mode=4):
         list_of_symbols = self.config_dict['datafeeder_config']['list_of_symbols']
         interval_inputs = self.config_dict['datafeeder_config']['data_inputs']
+        # self.logger.debug({'interval_inputs': interval_inputs})
         # self.logger.debug({'list_of_symbols': list_of_symbols})
         data_sources = self.config_dict['data_update_inputs']['data_sources']
         

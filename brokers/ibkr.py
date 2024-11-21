@@ -493,7 +493,10 @@ class IBKR_Execute:
             open_orders_ibkr.append(multi_leg_order)
         
         for open_order_ibkr in open_orders_ibkr:
-            self.logger.info(f"Open Order IBKR: Symbol: {open_order_ibkr[0]['symbol']}, Position Size: {open_order_ibkr[0]['orderQuantity']}, Entry Price: {open_order_ibkr[0]['entryPrice']}, Exit Price: {open_order_ibkr[1]['exitPrice']}")
+            msg = f"Open Order IBKR: Symbol: {open_order_ibkr[0]['symbol']}, Position Size: {open_order_ibkr[0]['orderQuantity']}, Entry Price: {open_order_ibkr[0]['entryPrice']}"
+            if len(open_order_ibkr) > 1:
+                msg += f", Exit Price: {open_order_ibkr[1]['exitPrice']}"
+            self.logger.info(msg)
                 
         return open_orders_ibkr, self.unfilled_orders_ibkr
     
@@ -829,6 +832,8 @@ class IBKR_Execute:
         account_balance_dict[trading_currency]['margin_multiplier'] = (float(account_balance_dict[trading_currency]['buying_power_available']) + float(account_balance_dict[trading_currency]['buying_power_used'])) / (float(account_balance_dict[trading_currency]['pledge_to_margin_used']) + float(account_balance_dict[trading_currency]['pledge_to_margin_availble']))
         account_balance_dict[trading_currency]['total_buying_power'] = float(account_balance_dict[trading_currency]['buying_power_available']) + float(account_balance_dict[trading_currency]['buying_power_used'])
         account_balance_dict[trading_currency]['pct_of_margin_used'] = float(account_balance_dict[trading_currency]['pledge_to_margin_used']) / float(account_balance_dict[trading_currency]['total_account_value'])
+        
+        self.logger.debug({'IBKR: account_balance_dict':account_balance_dict})
         
         return account_balance_dict
     

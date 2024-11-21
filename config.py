@@ -2,9 +2,10 @@ import json
 import os
 import pandas as pd
 from datetime import datetime
+import pytz
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
-start_date = pd.Timestamp(datetime(2000,3,1)).tz_localize('UTC').tz_convert('EST')
-end_date = start_date + pd.Timedelta(days=90)
+start_date = datetime(2000, 3, 1).astimezone(pytz.timezone('US/Eastern'))
+end_date = start_date + pd.Timedelta(days=365*2)
 sim_account_margin_multiplier = 3
 sim_account_starting_value_base = 100000
 base_currency = 'CAD'
@@ -23,7 +24,7 @@ config_dict = {
         'save_backtest_results':True,
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
-    'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
+    'strategies':['strategy_dev.strategy_3_1'], # 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set
     'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'account_info':{
@@ -39,5 +40,5 @@ config_dict = {
                            }
                     },
     'base_account_numbers':{'sim':'sim_1', 'ibkr':IBKR_base_account_number},
-    'risk_management': {'max_risk_per_bet':0.05, 'maximum_marging_used_pct':0.70}
+    'risk_management': {'max_risk_per_bet':0.05, 'maximum_margin_used_pct':0.65}
     }

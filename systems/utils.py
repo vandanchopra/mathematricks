@@ -3,6 +3,8 @@
 import os, time, sys, logging, json, hashlib, datetime, pytz
 import pandas as pd
 
+project_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/'
+
 def create_logger(log_level, logger_name='mathematricks', print_to_console=True):
     logger = logging.getLogger(logger_name)
     if not logger.hasHandlers():
@@ -109,15 +111,35 @@ def load_symbols_universe_df():
     
     # Remove all rows where Symbol is in the ignored_symbols list
     symbols_universe_df = symbols_universe_df[~symbols_universe_df['Symbol'].isin(ignored_symbols)]
-    
+
     return symbols_universe_df
 
+class MarketDataExtractor:
+    def get_market_data_granularities(self, market_data_df):
+        return list(market_data_df.index.get_level_values(0).unique())
 
+    def get_market_data_df_columns(self, market_data_df, granularity):
+        return list(market_data_df.loc[granularity].columns.get_level_values(0).unique())
+
+    def get_market_data_df_symbols(self, market_data_df, granularity):
+        return list(market_data_df.loc['1d'].columns.get_level_values(1).unique())
+
+    def get_market_data_df_symbol_prices(self, market_data_df, granularity, symbol, column):
+        return market_data_df.loc[granularity].xs(symbol, level=1, axis=1)[column]
+
+    def get_market_data_df_symbol_timestamps(self, market_data_df, granularity, symbol):
+        return list(market_data_df.loc[granularity].xs(symbol, level=1, axis=1).index)
     
-project_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/'
-               
-class SystemTemplates:
-    pass
+    def get_market_data_df_timestamps(self, market_data_df):
+        return list(market_data_df.index.get_level_values(1).unique())
+    
+    def get_market_data_df_minimum_granularity(self, market_data_df):
+        granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
+        available_granularities = self.get_market_data_granularities(market_data_df)
+        min_granularity_val = min([granularity_lookup_dict[granularity] for granularity in available_granularities])
+        min_granularity = list(granularity_lookup_dict.keys())[list(granularity_lookup_dict.values()).index(min_granularity_val)]
+        
+        return min_granularity
 
 if __name__ == '__main__':
     logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks2', print_to_console=True)
