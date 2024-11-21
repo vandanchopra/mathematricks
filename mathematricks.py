@@ -1,3 +1,4 @@
+from operator import ne
 import os, json, time, logging, sys, pickle, warnings
 from matplotlib.pylab import f
 import pandas as pd
@@ -37,6 +38,7 @@ class Mathematricks:
         self.first_run = True
         self.system_timestamp = pd.Timestamp('1901-01-01 00:00:00+0000', tz='UTC')
         self.market_open_bool = self.datafeeder.is_market_open(pd.Timestamp.now(tz='US/Eastern'))
+        self.time_to_load_minute_data = self.datafeeder.get_prev_market_open(pd.Timestamp.now(tz='US/Eastern')) - datetime.timedelta(days=3)
     
     def are_we_live(self, run_mode, system_timestamp, start_date):
         # convert system_timestamp and start_date to date only
@@ -44,14 +46,12 @@ class Mathematricks:
         live_bool = False
         # self.logger.info({'run_mode':run_mode, 'system_timestamp':system_timestamp, 'start_date':start_date})
         # now_tz = datetime.datetime.now() - datetime.timedelta(days=5)
-        system_timestamp = system_timestamp
-        system_timestamp_tz = system_timestamp.astimezone(pytz.timezone('US/Eastern'))
-        start_date_minus_5_days = start_date - datetime.timedelta(days=5)
-        # self.logger.debug({'run_mode':run_mode, 'system_timestamp':system_timestamp, 'start_date_minus_5_days':start_date_minus_5_days})
-        if run_mode in [1,2] and system_timestamp >= start_date_minus_5_days:
+        # last_to_last_market_close = self.datafeeder.get_previous_market_close(system_timestamp - datetime.timedelta(days=1))
+        # start_date_minus_5_days = start_date - datetime.timedelta(days=5)
+        # self.logger.debug({'run_mode':run_mode, 'system_timestamp':system_timestamp, 'time_to_load_minute_data':self.time_to_load_minute_data.astimezone(pytz.timezone('US/Eastern'))})
+        if run_mode in [1,2] and system_timestamp >= self.time_to_load_minute_data:
             # previous_market_close = self.datafeeder.previous_market_close(system_timestamp)
             # self.logger.info({'run_mode':run_mode, 'system_timestamp+1':system_timestamp+datetime.timedelta(minutes=1), 'start_date':start_date})
-            
             if '1m' not in self.datafeeder.config_dict['datafeeder_config']['data_inputs']: #and system_timestamp >= previous_market_close:
                 # Add 1min timestamp to the datafeeder and datafetcher interval_inputs
                 # self.logger.debug(f"Current config_dict: {self.datafeeder.config_dict}, 'Previous Config Dict: {self.datafeeder.previous_config_dict}")
@@ -62,7 +62,7 @@ class Mathematricks:
                 self.datafeeder.datafetcher.lookback_dict = self.datafeeder.lookback_dict
                 # self.logger.debug(f"Added 1m to datafeeder and datafetcher interval_inputs: system_timestamp: {system_timestamp_tz}")
                 # self.logger.debug(f"Current config_dict: {self.datafeeder.config_dict}, 'Previous Config Dict: {self.datafeeder.previous_config_dict}")
-            
+                
             now_tz = pd.Timestamp.now(tz='US/Eastern')
             if self.market_open_bool:
                 sleep_lookup = {"1m":60,"2m":120,"5m":300,"1d":86400}
@@ -71,10 +71,11 @@ class Mathematricks:
                 last_timestamp_tz = now_tz - datetime.timedelta(seconds=min_granularity_seconds)
                 last_timestamp_tz = last_timestamp_tz.replace(second=0, microsecond=0)
             else:
-                last_timestamp_tz = self.datafeeder.previous_market_close(now_tz)
+                last_timestamp_tz = self.datafeeder.get_previous_market_close(now_tz)
                 last_timestamp_tz = last_timestamp_tz.astimezone(pytz.timezone('US/Eastern'))
             # self.logger.debug({'system_timestamp_tz':system_timestamp_tz, 'last_timestamp_tz':last_timestamp_tz})
             # if next_expected_timestamp <= min_granularity_seconds:
+            system_timestamp_tz = system_timestamp.astimezone(pytz.timezone('US/Eastern'))
             if system_timestamp_tz + datetime.timedelta(minutes=1) >= last_timestamp_tz:
                 live_bool = True
                 # msg = {'start_date':start_date, 'market_open_bool':self.market_open_bool, 'system_timestamp':system_timestamp, 'now_tz':now_tz, 'last_timestamp_tz':last_timestamp_tz, 'live_bool':live_bool}
@@ -125,8 +126,6 @@ class Mathematricks:
         return new_orders
 
     def print_update_to_console(self, next_rows):
-        
-        
         '''PRINT 2: Print Margin Available'''
         broker = 'IBKR'.lower() if self.live_bool else 'SIM'.lower()
         base_account_number = list(self.oms.margin_available[broker].keys())[0]
@@ -142,8 +141,8 @@ class Mathematricks:
         buying_power_used_pct = (self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']/self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']) * 100
         log_msg += f'Margin Used %: {round(buying_power_used_pct, 2)}%'
         self.logger.info(log_msg)
-        
-        '''PRINT 3: Print Unrealized PnL'''
+    
+        '''PRINT 3: Print Unrealized PnL: Don't run it if the system is not live and the next timestamp is not 1m'''
         if self.live_bool:
             self.oms.unfilled_orders = self.oms.brokers.ib.execute.ib.reqAllOpenOrders()
         unrealized_pnl_abs_dict, unrealized_pnl_pct_dict = self.reporter.calculate_unrealized_pnl(self.oms.open_orders, self.oms.unfilled_orders)
@@ -161,7 +160,7 @@ class Mathematricks:
         for key in unrealized_pnl_pct_dict.keys():
             log_msg += f"{key}: {round((unrealized_pnl_pct_dict[key] * 100), 2)}% | "
         self.logger.info(log_msg)
-            
+                
     def run(self):
         run_mode = config_dict['run_mode']
         
@@ -172,7 +171,7 @@ class Mathematricks:
             market_open_bool = self.datafeeder.is_market_open(start_date)
             # self.logger.warning('Manually setting market_open_bool to True')
             # sleeper(4, 'Giving your system 4 seconds to read the warning message above')
-            prev_mkt_close = self.datafeeder.previous_market_close(start_date)
+            prev_mkt_close = self.datafeeder.get_previous_market_close(start_date)
             # If market is closed, then take prev market close else take the current time (Eg. On Sunday, min(start_date, prev_mkt_close) on Monday, at 12 noon, max(start_date, prev_mkt_close)
             start_date = prev_mkt_close if not market_open_bool else start_date
             start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -194,16 +193,17 @@ class Mathematricks:
                         print(msg + '-'*(os.get_terminal_size().columns - len(msg)))
                         self.current_market_data_df = pd.concat([self.current_market_data_df, next_rows], axis=0)
                         self.current_market_data_df = self.current_market_data_df[~self.current_market_data_df.index.duplicated(keep='last')]
-                        '''PRINT 1: Print Details of the next Timestamp'''
-                        for interval, next_datetime in next_rows.index:
-                            next_datetime_EST = next_datetime.astimezone(pytz.timezone('US/Eastern'))
-                            system_timestamp_EST = self.system_timestamp.astimezone(pytz.timezone('US/Eastern'))
-                            self.logger.info(f"Interval: {interval}, Latest Data Datetime: {next_datetime_EST}, System Datetime: {system_timestamp_EST}, Live Bool: {self.live_bool}")
-                            # if interval == '1m':
-                                # sleeper(1, 'Giving you 1 second to read the message above')
                         
                         if next_rows.index.get_level_values(1)[-1] > self.system_timestamp: #isinstance(self.system_timestamp, type(None)) or 
                             self.system_timestamp = next_rows.index.get_level_values(1)[-1]
+                            
+                            '''PRINT 1: Print Details of the next Timestamp'''
+                            for interval, next_datetime in next_rows.index:
+                                next_datetime_EST = next_datetime.astimezone(pytz.timezone('US/Eastern'))
+                                system_timestamp_EST = self.system_timestamp.astimezone(pytz.timezone('US/Eastern'))
+                                self.logger.info(f"Interval: {interval}, Latest Data Datetime: {next_datetime_EST}, System Datetime: {system_timestamp_EST}, Live Bool: {self.live_bool}")
+                            
+                            
                             # Generate Signals from the Strategies (signals)
                             new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
                             self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
@@ -244,7 +244,7 @@ class Mathematricks:
                     self.logger.debug('Exiting...')
                     break
                 except Exception as e:
-                    self.logger.error(f'Error Reported in the Main Loop: {str(Exception)}|{e}')
+                    raise Exception(e)
                     
         elif run_mode == 4:
             self.datafeeder.update_all_historical_price_data(self.live_bool)

@@ -370,14 +370,14 @@ class Yahoo():
                 pbar = tqdm(stock_symbols_with_partial_data[interval], desc=f'Updating Partial data: Interval: {interval}')
                 for i in range(0, len(stock_symbols_with_partial_data[interval]), batch_size):
                     batch = stock_symbols_with_partial_data[interval][i:i + batch_size]
-                    start_date = None
+                    batch_start_date = None
                     for symbol in batch:
                         existing_data = existing_data_dict[interval][symbol]
                         # last_date = existing_data.index.max().tz_localize('UTC') if not existing_data.empty else None
                         last_date = existing_data.index.max().tz_convert('UTC') if not existing_data.empty else None
-                        start_date = last_date if start_date is None and last_date is not None else None if last_date is None else min(start_date, last_date)
-                        
-                    batch_asset_data_df_dict = self.batch_update_price_data(batch, interval, start_date=start_date)
+                        batch_start_date = last_date if batch_start_date is None and last_date is not None else None if last_date is None else min(batch_start_date, last_date)
+                    
+                    batch_asset_data_df_dict = self.batch_update_price_data(batch, interval, start_date=batch_start_date)
                     ## Dummy code to emulate yfinance data download failure
                     # batch_asset_data_df_dict = {}
                     # for symbol in batch:
