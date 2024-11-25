@@ -7,7 +7,7 @@ import numpy as np
 import sys, time
 
 class Strategy (BaseStrategy):
-    def __init__(self):
+    def __init__(self, config_dict):
         super().__init__()
         self.strategy_name = 'strategy_1'
         self.granularity = "1d"
@@ -17,7 +17,7 @@ class Strategy (BaseStrategy):
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
         self.timeInForce = "DAY"    #DAY, Expiry, IoC (immediate or cancel) , TTL (Order validity in minutes) 
         self.orderQuantity = 10
-        self.data_inputs, tickers = self.datafeeder_inputs()
+        self.data_inputs, self.tickers = self.datafeeder_inputs()
         
     def get_name(self):
         return self.strategy_name
@@ -44,7 +44,7 @@ class Strategy (BaseStrategy):
             asset_data_df['SMA30'] = asset_data_df['close'].rolling(window=30).mean()
 
             asset_data_df['signal_strength'] = 0
-            asset_data_df['signal_strength'][30:] = np.where(asset_data_df['SMA15'][30:] > asset_data_df['SMA30'][30:], 1, 0) 
+            asset_data_df.loc[30:, 'signal_strength'] = np.where(asset_data_df.loc[30:, 'SMA15'] > asset_data_df.loc[30:, 'SMA30'], 1, 0)
             asset_data_df['position'] = asset_data_df['signal_strength'].diff()
             current_price = asset_data_df.iloc[-1]['close']
             #in the above df the position column will have a +1 value in case of a positive sma crossover and -1 in the opposite case
@@ -67,12 +67,12 @@ class Strategy (BaseStrategy):
                 signal = {"symbol": symbol, 
                         "signal_strength":signal_strength, 
                         "strategy_name": self.strategy_name, 
-                        "timestamp": asset_data_df.iloc[-1]['datetime'], 
+                        "timestamp": system_timestamp,
                         "entry_order_type": self.orderType, 
                         "exit_order_type":self.exit_order_type, 
                         "stoploss_pct": self.stop_loss_pct,
                         # "sl_abs": (1-self.stop_loss_abs) * current_price, 
-                        "symbol_ltp" : current_price, 
+                        "symbol_ltp" : {system_timestamp:current_price}, 
                         "timeInForce" : self.timeInForce , 
                         "orderQuantity" : self.orderQuantity,
                         'orderDirection': orderDirection,
@@ -80,7 +80,6 @@ class Strategy (BaseStrategy):
                         'signal_type':'BUY_SELL',
                         'market_neutral':False,
                         }
-                signal["timestamp"] = signal["timestamp"].strftime('%Y-%m-%d %H:%M:%S')
                 signals.append(signal)
                 # self.logger.debug({'system_timestamp':system_timestamp, 'signal':signal})
                 # self.logger.debug(f"Previous SMA15: {round(asset_data_df.iloc[-2]['SMA15'], 2)}, Current SMA15: {round(asset_data_df.iloc[-1]['SMA15'], 2)}")
@@ -89,4 +88,4 @@ class Strategy (BaseStrategy):
                 # self.sleeper(5, "Strategy 1 Manual Sleep")
                 return_type = 'signals'
         # self.logger.debug({'signals':signals})
-        return return_type, signals
+        return return_type, signals, self.tickers

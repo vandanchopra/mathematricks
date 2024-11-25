@@ -166,6 +166,7 @@ class PerformanceReporter:
         for count, multi_leg_order in enumerate(closed_orders):
             # Implementation for calculating performance metrics
             signal_open_date = multi_leg_order[0]['timestamp']
+            # self.logger.debug({'signal_open_date':signal_open_date, 'start_time':config_dict['backtest_inputs']['start_time'], 'end_time':config_dict['backtest_inputs']['end_time']})
             if signal_open_date > config_dict['backtest_inputs']['start_time'] and signal_open_date < config_dict['backtest_inputs']['end_time']:
                 signal_profit, signal_profit_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, unfilled_orders, force_close=False)
                 profit += signal_profit

@@ -80,8 +80,10 @@ class RMS:
             for symbol in normalized_ideal_portfolio:
                 maximum_margin_used_pct = self.config_dict['risk_management']['maximum_margin_used_pct']
                 ideal_orderValue = abs(normalized_ideal_portfolio[symbol]['signal_strength'] * ((total_buying_power * maximum_margin_used_pct)/2))
+                # self.logger.debug({'symbol':symbol, 'ideal_orderValue':ideal_orderValue, 'Signal Strength':normalized_ideal_portfolio[symbol]['signal_strength'], 'total_buying_power':total_buying_power, 'maximum_margin_used_pct':maximum_margin_used_pct})
                 
                 ideal_orderQuantity = abs(ideal_orderValue / normalized_ideal_portfolio[symbol]['current_price'])
+                # self.logger.debug({'symbol':symbol, 'ideal_orderQuantity':ideal_orderQuantity, 'ideal_orderValue':ideal_orderValue, 'current_price':normalized_ideal_portfolio[symbol]['current_price']})
                 order_direction_multiplier = 1 if normalized_ideal_portfolio[symbol]['orderDirection'] == 'BUY' else -1
                 if strategy_name in current_portfolio and symbol in current_portfolio[strategy_name]:
                     ''' If a symbol is already present, then don't touch it. Don't add or delete it. Let it die its natural death.'''
@@ -190,6 +192,7 @@ class RMS:
         if signal['signal_type'] == 'BUY_SELL':
             if (signal["exit_order_type"] == "stoploss_pct"):
                 signal_new = signal.copy()
+                # self.logger.debug({'signal_new':signal_new})
                 current_price = list(signal["symbol_ltp"].values())[-1]
                 entry_orderDirection = signal["orderDirection"]
                 signal_new["stoploss_abs"] = current_price * (1-signal["stoploss_pct"]) if entry_orderDirection == "BUY" else current_price * (1+signal["stoploss_pct"])
