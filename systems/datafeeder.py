@@ -214,7 +214,10 @@ class DataFeeder:
         self.datafetcher.config_dict = price_update_config_dict
         check_for_splits = False
         self.logger.warning(f"System is not checking for splits. Need to add this functionality.")
-        self.datafetcher.fetch_updated_price_data(start_date=None, end_date=None, lookback={}, throttle_secs=60, update_data=True, run_mode=self.config_dict['run_mode'])
+        if 'ibkr' in self.config_dict['data_update_inputs']['data_sources'].values():
+            self.datafetcher.fetch_updated_price_data(start_date=None, end_date=None, lookback={}, throttle_secs=60, update_data=True, run_mode=self.config_dict['run_mode'], live_bool=True)
+        if 'yahoo' in self.config_dict['data_update_inputs']['data_sources'].values():
+            self.datafetcher.fetch_updated_price_data(start_date=None, end_date=None, lookback={}, throttle_secs=60, update_data=True, run_mode=self.config_dict['run_mode'], live_bool=False)
         self.logger.info(f'Price data updated for {len(list_of_symbols)} symbols. Granualarities Updated: {list(price_update_config_dict["datafeeder_config"]["data_inputs"].keys())}')
         self.datafetcher.config_dict = config_dict_orginal
     
@@ -225,14 +228,14 @@ class DataFeeder:
             return True
         return False
     
-    def next(self, system_timestamp, run_mode, start_date, end_date, sleep_time=0):
+    def next(self, system_timestamp, run_mode, start_date, end_date, sleep_time=0, live_bool=False):
         # update data and return the updated data
         if self.previous_config_dict != self.config_dict:
             # self.logger.debug({'system_timestamp':system_timestamp, 'start_date':start_date, 'end_date':end_date, 'self.lookback_dict':self.lookback_dict})
             start_date = system_timestamp if self.previous_config_dict else start_date
             end_date = start_date + pd.Timedelta(days=10) if not end_date else end_date
             # self.logger.debug(f'Config Dict Updated: Fetching data for {start_date} to {end_date} | System Timestamp: {system_timestamp}, Lookback Dict: {self.lookback_dict}')
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=1, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'])
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=1, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
             self.previous_config_dict = deepcopy(self.config_dict)
             # self.logger.info({'start_date':start_date, 'end_date':end_date})
             # msg = 'market_data_df Shape: '
@@ -252,8 +255,8 @@ class DataFeeder:
             historical_data_update_bool = False
             self.lookback_dict = self.reset_lookback_dict()
             # self.logger.info({'start_date':start_date.astimezone(pytz.timezone('US/Eastern')), 'end_date':end_date, 'self.lookback_dict':self.lookback_dict})
-            self.logger.debug(f'Market Data DF Empty: Fetching data for {start_date} to {end_date} | System Timestamp: {system_timestamp}, Lookback Dict: {self.lookback_dict}')
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=10, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'])
+            self.logger.debug(f'Market Data DF Empty: Fetching data for {start_date} to {end_date} | System Timestamp: {system_timestamp}, Lookback Dict: {self.lookback_dict}, Live Bool: {live_bool}')
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=10, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
             # timestamps = self.market_data_extractor.get_market_data_df_timestamps(self.market_data_df)
             # self.logger.info({'timestamp_0':timestamps[0].astimezone(pytz.timezone('US/Eastern')), 'timestamp_-1':timestamps[-1].astimezone(pytz.timezone('US/Eastern'))})
             # self.logger.info({'self.market_data_df':self.market_data_df.head(5)})

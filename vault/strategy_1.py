@@ -25,7 +25,7 @@ class Strategy (BaseStrategy):
     def datafeeder_inputs(self):
         tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
         # tickers = ['MSFT', 'NVDA']
-        data_inputs = {'1d': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}} #'1m': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}
+        data_inputs = {'1d': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':32}} #'1m': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}
         return data_inputs, tickers
         
     def generate_signals(self, next_rows, market_data_df, system_timestamp):

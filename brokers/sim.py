@@ -266,13 +266,13 @@ class Yahoo():
         data_frames = []
         batch_size = 75
         
+        '''STEP 1: Bifurcate the list of stock symbols into three lists: 1) ones that have data 2) ones that don't have data 3) Ones that have partial data'''
         # Break the list into two lists. ones that don't have data and ones that have data
         stock_symbols_no_data = { k:[] for k in interval_inputs}
         stock_symbols_with_partial_data = { k:[] for k in interval_inputs}
         stock_symbols_with_full_data = { k:[] for k in interval_inputs}
         existing_data_dict = { k:{} for k in interval_inputs}
-        
-        '''STEP 1: Bifurcate the list of stock symbols into two lists: 1) ones that have data 2) ones that don't have data 3) Ones that have partial data'''
+
         for interval in interval_inputs:
             csv_loader_pbar = tqdm(stock_symbols, desc=f'Fetching {interval} CSV data & Bifurcating Batches: ')
             
@@ -285,9 +285,13 @@ class Yahoo():
                 else:
                     try:
                         existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
+                        # Add timedelta 1 day to the index column
+                        if interval == '1d':
+                            existing_data.index = existing_data.index + pd.Timedelta(days=1)
                         if not existing_data.empty:
                             # existing_data_first_date = existing_data.index.min().tz_convert('UTC')
                             existing_data_last_date = existing_data.index.max().tz_convert('UTC')
+                            # self.logger.debug({'symbol':symbol, 'existing_data_last_date':existing_data_last_date.astimezone('US/Eastern')})
                             yday_date = pd.Timestamp.today().tz_localize('UTC').replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(days=1)
                             # replace hours, minutes, seconds with 0
                             # if interval == '1d':
@@ -318,7 +322,7 @@ class Yahoo():
         '''STEP 2: Get the data for the ones that don't have data'''
         for interval in interval_inputs:
             if len(stock_symbols_no_data[interval]) > 0:
-                pbar = tqdm(stock_symbols_no_data[interval], desc=f'Updating NO data: Interval: {interval}')
+                pbar = tqdm(stock_symbols_no_data[interval], desc=f'Yahoo - Updating NO data: Interval: {interval}')
                 # pbar_ydownloader = tqdm(stock_symbols[interval], desc= f'Downloading data from Yahoo: Interval: {interval}: ')
                 for i in range(0, len(stock_symbols_no_data[interval]), batch_size):
                     batch = stock_symbols_no_data[interval][i:i + batch_size]
@@ -514,5 +518,8 @@ class Yahoo():
         combined_df.sort_index(inplace=True)
         # self.logger.info({'combined_df':combined_df})
         # raise AssertionError('STOP HERE')
+        
+        '''STEP 9: Add a column for data_source= 'yahoo' '''
+        combined_df['data_source'] = 'yahoo'
         
         return combined_df

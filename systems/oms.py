@@ -14,6 +14,7 @@ from brokers.brokers import Brokers
 from systems.utils import create_logger, generate_hash_id, sleeper, MarketDataExtractor
 from pprint import pprint
 from systems.performance_reporter import PerformanceReporter
+from systems.telegram import TelegramBot
 
 class CustomJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder to handle non-serializable types like pd.Timestamp."""
@@ -36,6 +37,7 @@ class OMS:
         self.reporter = PerformanceReporter(self.market_data_extractor)
         self.granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
         self.unfilled_orders = []
+        self.telegram_bot = TelegramBot()
         
     def get_strategy_margin_available(self, strategy_name):
         num_of_strategy_count = len(self.config_dict["strategies"])
@@ -767,6 +769,7 @@ class OMS:
                     else:
                         msg += f" | Profit: {profit}"
                     self.logger.info(msg)
+                    self.telegram_bot.send_message(msg)                    
         
         updated_open_orders, closed_orders = self.remove_closed_orders_from_open_orders_list(open_orders, closed_orders)
         # self.logger.debug({'updated_open_orders':len(updated_open_orders), 'closed_orders':len(closed_orders)})

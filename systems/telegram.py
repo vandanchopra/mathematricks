@@ -11,10 +11,10 @@ class TelegramBot:
         
         :param token: The API token for the Telegram bot
         """
-        self.token = os.getenv('TELEGRAM_BOT_TOKEN')
+        self.token = os.getenv('MATHEMATRICKS_TELEGRAM_BOT_TOKEN')
         self.base_url = f"https://api.telegram.org/bot{self.token}"
-        self.bot_chat_id = '781528652'
-        self.designGaga_group_chat_id = '-1002268561441'
+        # self.bot_chat_id = '781528652'
+        self.mathematricks_group_chat_id = '-365852442'
 
     def send_message(self, message):
         """
@@ -26,7 +26,7 @@ class TelegramBot:
         """
         url = f"{self.base_url}/sendMessage"
         payload = {
-            'chat_id': self.designGaga_group_chat_id,
+            'chat_id': self.mathematricks_group_chat_id,
             'text': message
         }
         response = requests.post(url, data=payload)
@@ -39,7 +39,7 @@ class TelegramBot:
 # Example usage:
 if __name__ == "__main__":
       # Replace with the private group chat ID
-    message = 'NEW MESSAGE FROM CLASS'
+    message = 'NEW MESSAGE FROM MATHEMATRICKS'
 
     bot = TelegramBot()
     response = bot.send_message(message)

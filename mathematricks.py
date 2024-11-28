@@ -20,6 +20,7 @@ write the software for AAPL, MSFT only.
 
 class Mathematricks:
     def __init__(self, config_dict):
+        
         self.logger = create_logger(log_level='DEBUG', logger_name='Mathematricks', print_to_console=True)
         self.market_data_extractor = MarketDataExtractor()
         self.config_dict = config_dict
@@ -57,6 +58,7 @@ class Mathematricks:
                 # self.logger.debug(f"Current config_dict: {self.datafeeder.config_dict}, 'Previous Config Dict: {self.datafeeder.previous_config_dict}")
                 self.datafeeder.config_dict['datafeeder_config']['data_inputs']['1m'] = self.datafeeder.config_dict['datafeeder_config']['data_inputs']['1d']
                 self.datafeeder.datafetcher.config_dict['datafeeder_config']['data_inputs']['1m'] = self.datafeeder.datafetcher.config_dict['datafeeder_config']['data_inputs']['1d']
+                
                 # self.datafeeder.lookback_dict = self.datafeeder.create_lookback_dict()
                 self.datafeeder.lookback_dict = self.datafeeder.reset_lookback_dict()
                 self.datafeeder.datafetcher.lookback_dict = self.datafeeder.lookback_dict
@@ -187,7 +189,7 @@ class Mathematricks:
         if run_mode in [1,2,3]:
             while True:
                 try:
-                    next_rows = self.datafeeder.next(system_timestamp=self.system_timestamp, run_mode=run_mode, sleep_time=self.sleep_time, start_date=start_date, end_date=end_date)
+                    next_rows = self.datafeeder.next(system_timestamp=self.system_timestamp, run_mode=run_mode, sleep_time=self.sleep_time, start_date=start_date, end_date=end_date, live_bool=self.live_bool)
                     if next_rows is not None:
                         msg = "------------------------ New Timestamp "
                         print(msg + '-'*(os.get_terminal_size().columns - len(msg)))
@@ -201,8 +203,7 @@ class Mathematricks:
                             for interval, next_datetime in next_rows.index:
                                 next_datetime_EST = next_datetime.astimezone(pytz.timezone('US/Eastern'))
                                 system_timestamp_EST = self.system_timestamp.astimezone(pytz.timezone('US/Eastern'))
-                                self.logger.info(f"Interval: {interval}, Latest Data Datetime: {next_datetime_EST}, System Datetime: {system_timestamp_EST}, Live Bool: {self.live_bool}")
-                            
+                                self.logger.info(f"Interval: {interval}, Latest Data Datetime: {next_datetime_EST}, System Datetime: {system_timestamp_EST}, Live Bool: {self.live_bool}, Data Source: {next_rows.loc[interval].iloc[-1][('data_source', '')]}")
                             
                             # Generate Signals from the Strategies (signals)
                             new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
@@ -214,11 +215,11 @@ class Mathematricks:
                                 self.live_bool = self.are_we_live(run_mode, self.system_timestamp, start_date)
                             
                             # Convert signals to orders
-                            new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.open_orders, self.system_timestamp, self.live_bool)
+                            # new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.open_orders, self.system_timestamp, self.live_bool)
                             
                             # If the system is going live, sync the orders with the broker # Get a list of orders that'll be sent to the LIVE broker, based on current open orders
-                            if prev_live_bool == False and self.live_bool == True:
-                                new_orders = self.sync_orders_on_live(new_orders, self.current_market_data_df, self.system_timestamp)
+                            # if prev_live_bool == False and self.live_bool == True:
+                            #     new_orders = self.sync_orders_on_live(new_orders, self.current_market_data_df, self.system_timestamp)
                                 
                             # Execute orders on the market with the OMS
                             self.oms.execute_orders(new_orders, self.system_timestamp, self.current_market_data_df, live_bool=self.live_bool)
