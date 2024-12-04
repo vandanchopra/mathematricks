@@ -194,7 +194,7 @@ class OMS:
                     orderDirection_multiplier = 1 if order_entry['orderDirection'].lower() == 'buy' else -1
                     symbol_invested_value += order_entry['entryPrice'] * order_entry['orderQuantity'] * orderDirection_multiplier
                     total_quantity_open_symbol += order_entry['orderQuantity'] * orderDirection_multiplier
-                    self.logger.debug({'symbol':symbol, 'orderQuantity':order_entry['orderQuantity'], 'symbol_invested_value':symbol_invested_value, 'total_quantity_open_symbol':total_quantity_open_symbol, 'sim_invested_ratio_symbol':symbol_invested_value / sim_net_liquidation_value})
+                    # self.logger.debug({'symbol':symbol, 'orderQuantity':order_entry['orderQuantity'], 'symbol_invested_value':symbol_invested_value, 'total_quantity_open_symbol':total_quantity_open_symbol, 'sim_invested_ratio_symbol':symbol_invested_value / sim_net_liquidation_value})
                     
                 # Then get the ratio to sim_net_liquidation_value
                 total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'] = symbol_invested_value / sim_net_liquidation_value
@@ -230,7 +230,7 @@ class OMS:
                 # Then calculate the closest integer number of stocks that can be bought with the funds available for IBKR
                 total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] = int(total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] / total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'])
             
-                self.logger.debug({'symbol':symbol, 'ibkr_available_funds':ibkr_available_funds, 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'], 'fill_price':symbol_invested_value/total_quantity_open_symbol})
+                # self.logger.debug({'symbol':symbol, 'ibkr_available_funds':ibkr_available_funds, 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'], 'fill_price':symbol_invested_value/total_quantity_open_symbol})
                 # Find out how much of the quantity is already bought
                 for open_order_ibkr in open_orders_ibkr:
                     if open_order_ibkr[0]['symbol'] == symbol:
@@ -254,55 +254,95 @@ class OMS:
                     actual_quantity_to_buy[symbol] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['actual_quantity_to_buy']
                 if total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] != 0:
                     ideal_quantity_to_buy[symbol] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy']
+
+            # Now Remove all open Orders that are not in ideal_quantity_to_buy
+            # self.logger.debug({'ideal_quantity_to_buy':ideal_quantity_to_buy})
             
+            '''Last Step: Remove all open orders that are not in ideal_quantity_to_buy'''
+            for open_order_ibkr in open_orders_ibkr:
+                symbol = open_order_ibkr[0]['symbol']
+                if symbol not in ideal_quantity_to_buy:
+                    # self.logger.debug({'symbol':symbol, 'open_order_ibkr':open_order_ibkr})
+                    order_quantity = open_order_ibkr[0]['orderQuantity']
+                    order_direction = open_order_ibkr[0]['orderDirection']
+                    order_direction_multiplier = 1 if order_direction.lower() == 'buy' else -1
+                    if symbol in actual_quantity_to_buy:
+                        actual_quantity_to_buy['MKT_EXIT|'+symbol] -= order_quantity * order_direction_multiplier * -1
+                    else:
+                        actual_quantity_to_buy['MKT_EXIT|'+symbol] = order_quantity * order_direction_multiplier * -1
+                
             return actual_quantity_to_buy, ideal_quantity_to_buy
         
-        def create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr):
+        def create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr, open_orders_ibkr):
             new_entry_orders = []
+            new_cancellation_orders = []
             
             for symbol, actual_symbol_quantity in actual_quantity_to_buy.items():
-                run_once = 0
-                for multi_leg_order in sim_open_orders:
-                    if run_once == 0:
+                mkt_exit_bool = True if 'MKT_EXIT' in symbol else False
+                if not mkt_exit_bool:
+                    run_once = 0
+                    for multi_leg_order in sim_open_orders:
+                        if run_once == 0:
+                            for order in multi_leg_order:
+                                if order['symbol'] == symbol and 'entryPrice' in order:
+                                    new_order = deepcopy(order)
+                                    new_order['orderQuantity'] = abs(actual_symbol_quantity)
+                                    # fix entry price
+                                    close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, '1d', symbol, 'close')
+                                    close_prices.dropna(inplace=True)
+                                    close_prices = close_prices.tolist()
+                                    close_price = close_prices[-1]
+                                    new_order['entryPrice'] = close_price
+                                    # fix broker
+                                    new_order['broker'] = 'IBKR'
+                                    # status
+                                    new_order['status'] = 'pending'
+                                    # make fill_price = 0
+                                    # new_order['fill_price'] = 0
+                                    # filled_timestamp = None
+                                    new_order['filled_timestamp'] = None
+                                    # broker_order_id = None
+                                    new_order['broker_order_id'] = None
+                                    # Remove fresh_update
+                                    if 'fresh_update' in new_order:
+                                        new_order.pop('fresh_update')
+                                    # Remove message
+                                    if 'message' in new_order:
+                                        new_order.pop('message')
+                                    # Remove history
+                                    if 'history' in new_order:
+                                        new_order.pop('history')
+                                    new_order['orderDirection'] = 'BUY' if actual_symbol_quantity > 0 else 'SELL'
+                                    
+                                    # order_id = create new order_id
+                                    new_order['original_order_id'] = new_order['order_id']
+                                    new_order['order_id'] = generate_hash_id(new_order, system_timestamp)
+                                    new_entry_orders.append([new_order]) # Order is being sent as a single-leg multi-leg order, that's why it's in a list.
+                                    # self.logger.debug({'symbol':symbol, 'new_order':new_order})
+                                    run_once += 1
+                else:
+                    symbol = symbol.split('|')[-1]
+                    # Now create a MARKET_EXIT ORDER
+                    run_once = 0
+                    for multi_leg_order in open_orders_ibkr:
                         for order in multi_leg_order:
                             if order['symbol'] == symbol and 'entryPrice' in order:
                                 new_order = deepcopy(order)
-                                new_order['orderQuantity'] = abs(actual_symbol_quantity)
-                                # fix entry price
-                                close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, '1d', symbol, 'close')
-                                close_prices.dropna(inplace=True)
-                                close_prices = close_prices.tolist()
-                                close_price = close_prices[-1]
-                                new_order['entryPrice'] = close_price
-                                # fix broker
-                                new_order['broker'] = 'IBKR'
-                                # status
                                 new_order['status'] = 'pending'
-                                # make fill_price = 0
-                                # new_order['fill_price'] = 0
-                                # filled_timestamp = None
+                                new_order['timestamp'] = system_timestamp
+                                new_order['orderDirection'] = 'SELL' if order['orderDirection'].lower() == 'buy' else 'BUY'
+                                new_order['fill_price'] = None
                                 new_order['filled_timestamp'] = None
-                                # broker_order_id = None
                                 new_order['broker_order_id'] = None
-                                # Remove fresh_update
-                                if 'fresh_update' in new_order:
-                                    new_order.pop('fresh_update')
-                                # Remove message
-                                if 'message' in new_order:
-                                    new_order.pop('message')
-                                # Remove history
-                                if 'history' in new_order:
-                                    new_order.pop('history')
-                                new_order['orderDirection'] = 'BUY' if actual_symbol_quantity > 0 else 'SELL'
-                                
-                                # order_id = create new order_id
-                                new_order['original_order_id'] = new_order['order_id']
                                 new_order['order_id'] = generate_hash_id(new_order, system_timestamp)
-                                new_entry_orders.append([new_order]) # Order is being sent as a single-leg multi-leg order, that's why it's in a list.
-                                # self.logger.debug({'symbol':symbol, 'new_order':new_order})
-                                run_once += 1
-                            
-            return new_entry_orders
+                                new_order['orderType'] = 'MARKET_EXIT'
+                                new_order['timeInForce'] = 'GTC'
+                                new_cancellation_orders.append([new_order])
+            
+            # Put in the cancellation orders first, and then the entry orders (So that the system doesn't go into -ve buying power values)
+            new_entry_orders_full_list = new_cancellation_orders + new_entry_orders
+                                
+            return new_entry_orders_full_list
         
         def create_exit_orders_for_sync(sim_open_orders, new_entry_orders, system_timestamp, ideal_quantity_to_buy, unfilled_orders_ibkr, open_orders_ibkr):
             # self.logger.debug({'ideal_quantity_to_buy':ideal_quantity_to_buy})
@@ -348,7 +388,7 @@ class OMS:
                             current_stoploss_quantity += unfilled_order.order.totalQuantity
                             current_stoploss_list.append(unfilled_order)
                             stoploss_order_location = 'unfilled_orders_ibkr'
-                            # self.logger.debug('Found in unfilled_orders_ibkr')
+                            self.logger.debug(f'Found in unfilled_orders_ibkr: {unfilled_order}')
                             break
                         
                     if not stoploss_order_temp:
@@ -356,7 +396,7 @@ class OMS:
                             for order in multi_leg_order:
                                 if order['symbol'] == symbol and 'exitPrice' in order:
                                     stoploss_order_temp = order
-                                    # self.logger.debug('Found in sim_open_orders')
+                                    # self.logger.debug(f'Found in sim_open_orders: {order}')
                                     break
                             if stoploss_order_temp:
                                 break
@@ -453,16 +493,13 @@ class OMS:
             self.logger.info("Ideal Position Size: " + ' | '.join(f"{key}: {value}" for key, value in ideal_quantity_to_buy.items()))
             self.logger.info("Actual Qty to Buy:   " + ' | '.join(f"{key}: {value}" for key, value in actual_quantity_to_buy.items()))
             # Create new orders
-            
-            new_entry_orders = create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr)
+            new_entry_orders = create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr, open_orders_ibkr)
             new_entry_orders, open_orders_ibkr = create_exit_orders_for_sync(sim_open_orders, new_entry_orders, system_timestamp, ideal_quantity_to_buy, unfilled_orders_ibkr, open_orders_ibkr)
             
             '''LAST STEP: Fix the order in which the orders are placed in the new_orders list. Right now we're going above margin'''
-            self.logger.warning('FIX THE ORDER IN WHICH THE ORDERS ARE PLACED IN THE NEW_ORDERS LIST. RIGHT NOW WE ARE GOING ABOVE MARGIN')
             new_orders.extend(new_entry_orders)
             self.open_orders = open_orders_ibkr
             # self.logger.debug({'self.open_orders':self.open_orders})
-        
         return new_orders
 
     def get_open_orders(self, broker):
@@ -492,26 +529,31 @@ class OMS:
             order['modify_reason'] = modify_reason
             order['message'] = modify_message
             
-        return order    
+        return order
     
     def update_trailing_stop_losses(self, order, market_data_df):
         if order['status'] != 'pending' and order['orderType'] == 'stoploss_pct':
             symbol = order['symbol']
-            granularity = order['granularity'] # Get minimum granularity from market_data_df
+            # granularity = order['granularity'] # Get minimum granularity from market_data_df
+            granularity = minimum_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
             # system_timestamp = market_data_df.index.get_level_values(1)[-1]
             stoploss_pct = order['stoploss_pct']
-            current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
-            # stoploss_abs = order['stoploss_abs']
-            orderDirection = order['orderDirection']
+            # current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
+            current_price = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, granularity, symbol, 'close').iloc[-1]
+            if current_price:
+                # stoploss_abs = order['stoploss_abs']
+                orderDirection = order['orderDirection']
 
-            current_stoploss = order['exitPrice']
-            ideal_stoploss = current_price * (1 - stoploss_pct) if orderDirection == 'SELL' else current_price * (1 + stoploss_pct)
-            acceptable_loss_pct_deviation = stoploss_pct/5
-            acceptable_spotloss = current_price * (1 - (stoploss_pct+acceptable_loss_pct_deviation)) if orderDirection == 'SELL' else current_price * (1 + (stoploss_pct-acceptable_loss_pct_deviation))
-            update_stoploss = current_stoploss < acceptable_spotloss and ideal_stoploss > current_stoploss if orderDirection == 'SELL' else current_stoploss > acceptable_spotloss and ideal_stoploss < current_stoploss
-            
-            if update_stoploss:
-                order = self.modify_order(order, new_price=ideal_stoploss)
+                current_stoploss = order['exitPrice']
+                ideal_stoploss = current_price * (1 - stoploss_pct) if orderDirection == 'SELL' else current_price * (1 + stoploss_pct)
+                acceptable_loss_pct_deviation = stoploss_pct/5
+                acceptable_spotloss = current_price * (1 - (stoploss_pct+acceptable_loss_pct_deviation)) if orderDirection == 'SELL' else current_price * (1 + (stoploss_pct-acceptable_loss_pct_deviation))
+                update_stoploss = current_stoploss < acceptable_spotloss and ideal_stoploss > current_stoploss if orderDirection == 'SELL' else current_stoploss > acceptable_spotloss and ideal_stoploss < current_stoploss
+                
+                if update_stoploss:
+                    order = self.modify_order(order, new_price=ideal_stoploss)
+            else:
+                raise AssertionError(f"Current Price is None for symbol: {symbol}")
     
         return order
             
@@ -606,7 +648,7 @@ class OMS:
         '''Update the available margin after executing the order.'''
         if response_order['status'] == 'closed':
             # self.logger.debug({f'system_timestamp':system_timestamp, 'response_order':response_order})
-            strategy_name = response_order['strategy_name']
+            strategy_name = response_order['strategy_name'] if  response_order['strategy_name'] != 'Unknown' else 'strategy_3_1'
             symbol = response_order['symbol']
             orderDirection = response_order['orderDirection']
             orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
@@ -642,6 +684,7 @@ class OMS:
                     # self.logger.info(f"Order Closed | Symbol: {symbol} | Profit: {round(profit, 2)} | Order Quantiy: {orderQuantity}")
                 # self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
                 # self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
+                self.logger.info({'broker':broker, 'base_account_number':base_account_number, 'strategy_name':strategy_name, 'trading_currency':trading_currency})
                 margin_used_by_entry_order = round((margin_used_by_order - (profit * (orderDirection_multiplier * -1))), 10)
                 self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] -= margin_used_by_entry_order
                 self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] -= margin_used_by_entry_order
@@ -713,12 +756,13 @@ class OMS:
                         order['symbol_ltp'] = {}
                     min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
                     close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, order['symbol'], 'close')
-                    close_prices.dropna(inplace=True)
-                    close_prices = close_prices.tolist()
+                    if type(close_prices) != type(None):
+                        close_prices.dropna(inplace=True)
+                        close_prices = close_prices.tolist()
 
-                    # Drop nan values
-                    if len(close_prices) > 0:
-                        order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
+                        # Drop nan values
+                        if len(close_prices) > 0:
+                            order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
                 
                 if order_status not in ['closed', 'cancelled']: # Basically if status is 'open' or 'pending'
                     # First check if Stoploss needs to be udpated.
@@ -769,7 +813,8 @@ class OMS:
                     else:
                         msg += f" | Profit: {profit}"
                     self.logger.info(msg)
-                    self.telegram_bot.send_message(msg)                    
+                    if live_bool:
+                        self.telegram_bot.send_message(msg)                    
         
         updated_open_orders, closed_orders = self.remove_closed_orders_from_open_orders_list(open_orders, closed_orders)
         # self.logger.debug({'updated_open_orders':len(updated_open_orders), 'closed_orders':len(closed_orders)})

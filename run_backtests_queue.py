@@ -1,3 +1,4 @@
+from tkinter import E
 from systems.backtests_queue.backtests_queue import BacktestQueue
 from mathematricks import Mathematricks
 

@@ -98,7 +98,7 @@ class BacktestQueue:
                                     # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
                                     },
                                 'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
-                                'data_update_inputs': {'data_sources':['yahoo']}, # 'yahoo', 'ibkr'
+                                'data_update_inputs': {'data_sources':{'sim':'yahoo', 'live':'ibkr'}}, # 'yahoo', 'ibkr'
                                 'sleep_time':60,
                                 'account_info':{'sim':{'sim_1': {base_currency:{'total_account_value': sim_account_starting_value_base, 
                                                                                 'buying_power_available':sim_account_starting_value_base * sim_account_margin_multiplier, 
@@ -113,11 +113,11 @@ class BacktestQueue:
                                 }
         
         config_dict = deepcopy(config_dict_template)
-        config_dict['run_mode'] = 2
+        config_dict['run_mode'] = 3
         config_dict['backtest_inputs']['start_time'] = pd.Timestamp(backtest_entry['Start Date'])
         config_dict['backtest_inputs']['end_time'] = pd.Timestamp(backtest_entry['End Date'])
         config_dict['strategies'] = re.findall(r"'(.*?)'", backtest_entry['Strategies'])
-        config_dict['data_update_inputs']['data_sources'] = re.findall(r"'(.*?)'", backtest_entry['Data Source'])
+        config_dict['data_update_inputs']['data_sources'] = convert_str_to_dict(backtest_entry['Data Source'])
         config_dict['risk_management'] = convert_str_to_dict(backtest_entry['Risk Management'])
         config_dict['account_info']['sim']['sim_1'][base_currency] = convert_str_to_dict(backtest_entry['Account Info'])
         config_dict['backtest_inputs']['Backtest Name'] = backtest_entry['Backtest Name']

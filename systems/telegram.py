@@ -1,6 +1,5 @@
-import requests
 from dotenv import load_dotenv
-import os
+import os, time, requests
 
 load_dotenv()
         
@@ -30,6 +29,7 @@ class TelegramBot:
             'text': message
         }
         response = requests.post(url, data=payload)
+        time.sleep(0.5)
         
         if response.status_code == 200:
             return response.json()  # Message successfully sent

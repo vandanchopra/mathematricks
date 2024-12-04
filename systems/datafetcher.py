@@ -19,7 +19,7 @@ class DataFetcher:
         # self.logger.debug({'list_of_symbols': list_of_symbols})
         data_sources = self.config_dict['data_update_inputs']['data_sources']
         data_source =  data_sources['live'] if live_bool else data_sources['sim']
-        # self.logger.debug({'data_source':data_source, 'data_sources': data_sources})
+        # self.logger.debug({'data_source':data_source, 'data_sources':data_sources})
         # sleeper(10, 'Giving you time to read the above Message 2')
 
         if data_source == 'yahoo':
@@ -29,6 +29,11 @@ class DataFetcher:
             market_data_df = self.broker.ib.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, throttle_secs=throttle_secs, start_date=start_date, end_date=end_date, lookback=lookback, update_data=update_data, run_mode=run_mode) 
         else:
             raise ValueError(f'Invalid data source: {data_source}')
+        
+        # Forward fill the data
+        market_data_df = market_data_df.fillna(method='ffill')
+        market_data_df = market_data_df.fillna(method='bfill')
+        self.logger.warning('We are not maintaining the matrix for ffill and bfill. This needs to be implemented')
         
         return market_data_df
         

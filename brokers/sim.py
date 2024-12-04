@@ -6,6 +6,7 @@ from systems.utils import create_logger, generate_hash_id, sleeper, project_path
 from tqdm import tqdm
 from copy import deepcopy
 from datetime import datetime
+from colorama import Fore, Style
 
 # Main Simulation Class
 class Sim():
@@ -403,9 +404,9 @@ class Yahoo():
                         # get the start date of asset_data_df
                         symbol_start_date = asset_data_df.index.min() if not asset_data_df.empty else start_date
                         # prune the existing_data to only include data before the start date
-                        symbol_start_date = symbol_start_date.to_pydatetime()
+                        # symbol_start_date = symbol_start_date.to_pydatetime()
                         # self.logger.debug({'symbol':symbol, 'symbol_start_date':symbol_start_date})
-                        existing_data = existing_data[existing_data.index < symbol_start_date]
+                        existing_data = existing_data[existing_data.index < str(symbol_start_date)]
                         # concatenate the existing data and the new data
                         # self.logger.info({'symbol':symbol, 'start_date':start_date, 'interval':interval, 'existing_data':existing_data.shape, 'asset_data_df':asset_data_df.shape})
                         if not asset_data_df.empty:
@@ -506,20 +507,31 @@ class Yahoo():
         
         '''STEP 8: # Combine all DataFrames into a single DataFrame'''
         # self.logger.info('Combining all DataFrames into a single DataFrame...')
-        combined_df = pd.concat(data_frames)
-        combined_df.reset_index(drop=False,inplace=True)
-        # Set multi-index
-        combined_df.set_index(['date','symbol'],inplace=True)
-        asset_data_df = data_frames[0]
-        pass_cols = list(asset_data_df.columns)
-        combined_df = combined_df.reset_index().pivot_table(values=pass_cols, index=['interval', 'date'], columns=['symbol'], aggfunc='mean')
-        # combined_df = combined_df.unstack(level='symbol')
-        # Sort the index
-        combined_df.sort_index(inplace=True)
+        # self.logger.info({'data_frame':data_frames[0]})
+        
+        # Remove empty dataframes from the list data_frames
+        data_frames = [df for df in data_frames if not df.empty]
+        if len(data_frames) > 0:
+            combined_df = pd.concat(data_frames)
+            combined_df.reset_index(drop=False,inplace=True)
+            # Set multi-index
+            combined_df.set_index(['date','symbol'],inplace=True)
+            asset_data_df = data_frames[0]
+            pass_cols = list(asset_data_df.columns)
+            # self.logger.info({'combined_df':combined_df})
+            combined_df = combined_df.reset_index().pivot_table(values=pass_cols, index=['interval', 'date'], columns=['symbol'], aggfunc='mean')
+            # combined_df = combined_df.unstack(level='symbol')
+            # Sort the index
+            combined_df.sort_index(inplace=True)
+            '''STEP 9: Add a column for data_source= 'yahoo' '''
+            combined_df['data_source'] = 'yahoo'
+        else:
+            combined_df = pd.DataFrame()
         # self.logger.info({'combined_df':combined_df})
         # raise AssertionError('STOP HERE')
         
-        '''STEP 9: Add a column for data_source= 'yahoo' '''
-        combined_df['data_source'] = 'yahoo'
+        
+        # self.logger.info({'combined_df':combined_df})
+        # raise AssertionError('STOP HERE')
         
         return combined_df

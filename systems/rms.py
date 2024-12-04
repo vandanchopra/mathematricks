@@ -78,7 +78,11 @@ class RMS:
                     
             # Create Additions
             for symbol in normalized_ideal_portfolio:
-                maximum_margin_used_pct = self.config_dict['risk_management']['maximum_margin_used_pct']
+                try:
+                    maximum_margin_used_pct = self.config_dict['risk_management']['maximum_margin_used_pct']
+                except Exception as e:
+                    self.logger.debug({'config_dict':self.config_dict['risk_management']})
+                    raise Exception(f"Error in rebalance_portfolio_strategy: {e}")
                 ideal_orderValue = abs(normalized_ideal_portfolio[symbol]['signal_strength'] * ((total_buying_power * maximum_margin_used_pct)/2))
                 # self.logger.debug({'symbol':symbol, 'ideal_orderValue':ideal_orderValue, 'Signal Strength':normalized_ideal_portfolio[symbol]['signal_strength'], 'total_buying_power':total_buying_power, 'maximum_margin_used_pct':maximum_margin_used_pct})
                 
@@ -115,6 +119,7 @@ class RMS:
         trading_currency = self.config_dict['trading_currency']
         # self.logger.debug({'margin_available':margin_available})
         total_buying_power = margin_available[broker][base_account_number][strategy_name][trading_currency]['total_buying_power']
+        # total_buying_power = 72727.81
         
         # Create a delta portfolio
         delta_portfolio, rebalanced_portfolio = rebalance_portfolio_strategy(current_portfolio, normalized_ideal_portfolio, strategy_name, total_buying_power, open_orders, system_timestamp)
@@ -137,6 +142,10 @@ class RMS:
                     'signal_type':'BUY_SELL'
                     }
         
+        for signal_key, signal_value in ideal_portfolio_entry.items():
+            if signal_key != 'ideal_portfolio' and signal_key not in signal_template:
+                signal_template[signal_key] = signal_value
+        
         ideal_portfolio_signals = []
         # Start with creating the Deletion Signals
         for symbol in delta_portfolio['deletions']:
@@ -153,7 +162,7 @@ class RMS:
             signal = deepcopy(signal_template)
             signal['symbol'] = symbol
             # self.logger.debug({'symbol':symbol, 'len-orders_to_cancel':len(orders_to_cancel)})
-            signal['orderQuantity'] = abs(delta_portfolio['deletions'][symbol])
+            signal['orderQuantity'] = abs(delta_portfolio['deletions'][symbol])            
             signal['orderDirection'] = 'BUY' if delta_portfolio['deletions'][symbol] < 0 else 'SELL'
             signal['orders_to_cancel'] = orders_to_cancel
             if 'symbol_ltp' not in signal:
@@ -175,7 +184,11 @@ class RMS:
             if 'symbol_ltp' not in signal:
                 signal['symbol_ltp'] = {}
             signal['symbol_ltp'][str(system_timestamp)] = normalized_ideal_portfolio[symbol]['current_price']
+            # signal['orderQuantity'] = abs(delta_portfolio['additions'][symbol])
+            # if 'orderQuantity' not in signal[symbol]:
             signal['orderQuantity'] = abs(delta_portfolio['additions'][symbol])
+            # else:
+            # signal['orderQuantity'] = abs(signal['orderQuantity'])
             signal['orderDirection'] = 'BUY' if delta_portfolio['additions'][symbol] > 0 else 'SELL'
             signal['signal_type'] = 'BUY_SELL'
             ideal_portfolio_signals.append(signal)
@@ -190,7 +203,7 @@ class RMS:
     
     def calculate_stoploss(self, signal):
         if signal['signal_type'] == 'BUY_SELL':
-            if (signal["exit_order_type"] == "stoploss_pct"):
+            if signal["exit_order_type"] in ["stoploss_pct", 'take_profit_stoploss_pct']:
                 signal_new = signal.copy()
                 # self.logger.debug({'signal_new':signal_new})
                 current_price = list(signal["symbol_ltp"].values())[-1]
@@ -201,6 +214,20 @@ class RMS:
                 signal_new['signal_update_reason'] = 'SL pct converted to SL abs'
                 signal = self.update_signal_history(signal, signal_new)
                 
+        return signal
+    
+    def calculate_take_profit(self, signal):
+        if signal['signal_type'] == 'BUY_SELL':
+            if signal["exit_order_type"] in ["take_profit_pct", 'take_profit_stoploss_pct']:
+                signal_new = signal.copy()
+                current_price = list(signal["symbol_ltp"].values())[-1]
+                entry_orderDirection = signal["orderDirection"]
+                # self.logger.debug({'signal':signal})
+                signal_new["take_profit_abs"] = current_price * (1+signal["take_profit_pct"]) if entry_orderDirection == "BUY" else current_price * (1-signal["take_profit_pct"])
+                signal_new['signal_update_by'] = 'RMS'
+                signal_new['signal_update_reason'] = 'TP pct converted to TP abs'
+                signal = self.update_signal_history(signal, signal_new)
+            
         return signal
     
     def calculate_total_risk(self, signal, margin_available, live_bool):
@@ -307,24 +334,66 @@ class RMS:
                         self.logger.debug({'signal':signal})
                         raise Exception(f'Error in create_order: {e}, Signal: {signal}')
                 if 'exit_order_type' in signal:
+                    if signal['exit_order_type'] == 'stoploss_pct':
                     # raise AssertionError('exit_order_type in signal')
-                    order_leg = {'symbol': signal["symbol"], 
-                        'timestamp': signal["timestamp"], 
-                        "orderDirection": 'BUY' if signal["orderDirection"] == 'SELL' else 'SELL', 
-                        "exitPrice":round(signal["stoploss_abs"], 2),
-                        'stoploss_pct': signal["stoploss_pct"],
-                        'stoploss_abs': round(signal["stoploss_abs"], 2),
-                        "orderType":signal["exit_order_type"], 
-                        "timeInForce": 'GTC' if signal["exit_order_type"] in ['stoploss_abs', 'stoploss_pct'] else signal["timeInForce"],
-                        "orderQuantity":abs(int(signal['orderQuantity'])),
-                        "strategy_name":signal["strategy_name"],
-                        "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM',
-                        'granularity': signal['granularity'],
-                        "status": 'pending',
-                        "signal_id": signal["signal_id"],
-                        "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
-                        }
-                    signal_orders.append(order_leg)
+                        order_leg = {'symbol': signal["symbol"], 
+                            'timestamp': signal["timestamp"], 
+                            "orderDirection": 'BUY' if signal["orderDirection"] == 'SELL' else 'SELL', 
+                            "exitPrice":round(signal["stoploss_abs"], 2),
+                            'stoploss_pct': signal["stoploss_pct"],
+                            'stoploss_abs': round(signal["stoploss_abs"], 2),
+                            "orderType":signal["exit_order_type"], 
+                            "timeInForce": 'GTC' if signal["exit_order_type"] in ['stoploss_abs', 'stoploss_pct'] else signal["timeInForce"],
+                            "orderQuantity":abs(int(signal['orderQuantity'])),
+                            "strategy_name":signal["strategy_name"],
+                            "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM',
+                            'granularity': signal['granularity'],
+                            "status": 'pending',
+                            "signal_id": signal["signal_id"],
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            }
+                        signal_orders.append(order_leg)
+                        
+                    elif signal['exit_order_type'] == 'take_profit_stoploss_pct':
+                        '''You create a take profit order and a stoploss order'''
+                        # Take Profit Order
+                        order_leg = {'symbol': signal["symbol"], 
+                            'timestamp': signal["timestamp"], 
+                            "orderDirection": 'BUY' if signal["orderDirection"] == 'SELL' else 'SELL', 
+                            "exitPrice":round(signal["take_profit_abs"], 2),
+                            'take_profit_pct': signal["take_profit_pct"],
+                            'take_profit_abs': round(signal["take_profit_abs"], 2),
+                            "orderType":'take_profit_abs', 
+                            "timeInForce": 'GTC' if signal["exit_order_type"] in ['stoploss_abs', 'stoploss_pct', 'take_profit_stoploss_pct'] else signal["timeInForce"],
+                            "orderQuantity":abs(int(signal['orderQuantity'])),
+                            "strategy_name":signal["strategy_name"],
+                            "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM',
+                            'granularity': signal['granularity'],
+                            "status": 'pending',
+                            "signal_id": signal["signal_id"],
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            }
+                        signal_orders.append(order_leg)
+                        
+                        # Stoploss Order
+                        order_leg = {'symbol': signal["symbol"], 
+                            'timestamp': signal["timestamp"], 
+                            "orderDirection": 'BUY' if signal["orderDirection"] == 'SELL' else 'SELL', 
+                            "exitPrice":round(signal["stoploss_abs"], 2),
+                            'stoploss_pct': signal["stoploss_pct"],
+                            'stoploss_abs': round(signal["stoploss_abs"], 2),
+                            "orderType":'stoploss_abs', 
+                            "timeInForce": 'GTC' if signal["exit_order_type"] in ['stoploss_abs', 'stoploss_pct', 'take_profit_stoploss_pct'] else signal["timeInForce"],
+                            "orderQuantity":abs(int(signal['orderQuantity'])),
+                            "strategy_name":signal["strategy_name"],
+                            "broker": 'IBKR' if self.config_dict['run_mode'] in [1,2] else 'SIM',
+                            'granularity': signal['granularity'],
+                            "status": 'pending',
+                            "signal_id": signal["signal_id"],
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            }
+                        signal_orders.append(order_leg)
+                        
             if signal_type == 'ORDER_CANCELLATION':
                 # validate the total order quantity
                 signal_orderQuantity = signal['orderQuantity']
@@ -388,6 +457,7 @@ class RMS:
                 signal_ = deepcopy(signal)
                 del signal_['symbol_ltp']
                 signal['signal_id'] = generate_hash_id(input_dict=signal_, system_timestamp=system_timestamp)
+            signal = self.calculate_take_profit(signal)
             signal = self.calculate_stoploss(signal)
             signal, margin_available_local = self.risk_management_checklist(signal, margin_available_local, live_bool)
             signal_orders = self.create_order(signal)

@@ -14,7 +14,7 @@ from tqdm.asyncio import tqdm as tqdm_asyncio
 # from datetime import datetime, timedelta
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from systems.utils import create_logger, generate_hash_id, sleeper, project_path
 
 nest_asyncio.apply()
@@ -69,7 +69,6 @@ class Data:
         self.ib = ib
         self.connect_to_IBKR = connect_to_IBKR
         self.interval_lookup = {"1m": "1 min", "2m": "2min", "5m":"5 min","1d":"1 day"} # update this to include all provided interval from yahoo and ibkr
-        self.duration_lookup = {"1m": "1 W", "2m": "2 W", "5m":"1 M","1d":"20 Y"} #update this to get max duration fora each interval
 
     def check_ib_connection(self):
         if not self.ib:
@@ -110,16 +109,78 @@ class Data:
         
         return asset_data_df_dict
     
+    def calculate_ibkr_duration_scaled(self, start_date: datetime) -> dict:
+        
+        """
+        Converts a start_date into IBKR duration strings for given barSize types,
+        scaling the duration in seconds to the appropriate IBKR-friendly granularity.
+
+        Args:
+            start_date (datetime): The start datetime (with timezone).
+            bar_sizes (list[str]): A list of bar sizes, e.g., ['1m', '1d'].
+
+        Returns:
+            dict: A dictionary where keys are bar sizes and values are durations 
+                with the appropriate IBKR-friendly units.
+        """
+        bar_sizes = ["1m", "1d"]  # Bar sizes to calculate durations for
+        
+        if start_date is None:
+            return {"1m": "1 W", "2m": "2 W", "5m":"1 M","1d":"20 Y"}
+        else:
+            # Current datetime with timezone
+            current_date_obj = datetime.now(timezone.utc)
+            
+            # Calculate total duration in seconds
+            total_seconds = (current_date_obj - start_date).total_seconds()
+            duration_dict = {}
+
+            def scale_duration(seconds):
+                # 1 year = 31,536,000 seconds (365 days)
+                if seconds >= 31536000:  # More than 1 year
+                    return f"{int(seconds // 31536000) + 1} Y"  # Display in years
+                elif seconds >= 2419200:  # More than 1 month (30 days)
+                    return f"{int(seconds // 2419200) + 1} M"  # Display in months
+                elif seconds >= 604800:  # More than 1 week
+                    return f"{int(seconds // 604800) + 1} W"  # Display in weeks
+                elif seconds >= 86400:  # More than 1 day
+                    return f"{int(seconds // 86400) + 1} D"  # Display in days
+                else:  # Less than 1 hour
+                    return f"{int(seconds) + 1} S"  # Display in minutes
+            
+
+            # Map bar sizes to appropriate duration calculations
+            for bar_size in bar_sizes:
+                if "m" in bar_size:  # Minute-level data
+                    duration = scale_duration(total_seconds)
+                    duration_dict[bar_size] = duration
+                elif "h" in bar_size:  # Hour-level data
+                    duration = scale_duration(total_seconds)
+                    duration_dict[bar_size] = duration
+                elif "d" in bar_size:  # Day-level data
+                    duration = scale_duration(total_seconds)
+                    duration_dict[bar_size] = duration
+                elif "w" in bar_size:  # Week-level data
+                    duration = scale_duration(total_seconds)
+                    duration_dict[bar_size] = duration
+                else:
+                    raise ValueError(f"Unsupported bar size: {bar_size}")
+
+            return duration_dict
+    
     async def update_price_data_batch(self, stock_symbols, interval, start_date=None, batch_size=75):
         self.check_ib_connection()
 
         asset_data_df_dict = {}
         barSize = self.interval_lookup[interval]
-        duration = self.duration_lookup[interval]
+        # self.logger.debug({'stock_symbols':stock_symbols})
+        # self.logger.debug({'interval':interval, 'barSize':barSize, 'start_date':start_date})
+        ibkr_duration_dict = self.calculate_ibkr_duration_scaled(start_date)
+        duration = ibkr_duration_dict[interval]
 
         # Map symbols to their fetch tasks
         tasks = {
-            ticker: self.fetch_historical_data(ticker, barSize, duration, start=start_date)
+            ticker: self.fetch_historical_data(ticker, barSize, duration, start_date=start_date)
             for ticker in stock_symbols
         }
 
@@ -144,7 +205,7 @@ class Data:
 
         return asset_data_df_dict
 
-    async def fetch_historical_data(self, ticker, barSize, duration, start=None, exchange:str = "SMART", currency:str = "USD"):
+    async def fetch_historical_data(self, ticker, barSize, duration, start_date=None, exchange:str = "SMART", currency:str = "USD"):
         try:
             contract = self.ib.qualifyContracts(Stock(ticker, exchange, currency))[0]
         
@@ -154,6 +215,7 @@ class Data:
         # duration = "20 Y"
         # barSize = "1 day"
         # Fetch historical data for max duration
+            # self.logger.debug(f"Fetching data for {ticker}|{exchange}|{currency} with barSize: {barSize}, duration: {duration}")
             bars = self.ib.reqHistoricalData(
                 contract,
                 endDateTime='',
@@ -161,7 +223,8 @@ class Data:
                 barSizeSetting=barSize,
                 whatToShow='TRADES',
                 useRTH=True,
-                formatDate=1
+                formatDate=1,
+                
             )
         except Exception as e:
             bars = Exception(f"Error fetching data for {ticker}. Error: {e}")
@@ -217,7 +280,7 @@ class Data:
             for symbol in stock_symbols:
                 symbol = symbol.replace('/','-') if '/' in symbol else symbol
                 csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
-                
+
                 if not os.path.exists(csv_file_path):
                     stock_symbols_no_data[interval].append(symbol)
                 else:
@@ -234,6 +297,7 @@ class Data:
                             # replace hours, minutes, seconds with 0
                             # if interval == '1d':
                                 # self.logger.debug({'symbol':symbol, 'interval':interval,'existing_data_last_date':existing_data_last_date, 'yday_date':yday_date, 'end_date':end_date, 'timestamp_test_bool':existing_data_last_date >= yday_date})
+                            
                             if (end_date is not None and existing_data_last_date >= end_date) or (existing_data_last_date >= yday_date and interval == '1d'):
                             # if end_date is not None and existing_data_last_date >= end_date:
                                 # prune the data using the back_test_start_date and back_test_end_date
@@ -254,8 +318,9 @@ class Data:
 
         for interval in interval_inputs:
             self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
-            if interval == '1d':
-                self.logger.debug({'partial_data_symbols':stock_symbols_with_full_data[interval]})
+            # if interval == '1d':
+                # self.logger.debug({'partial_data_symbols':stock_symbols_with_full_data[interval]})
+        # sleeper(5, 'Giving you time to read the above Message')
         
         '''STEP 2: Get the data for the ones that don't have data'''
         for interval in interval_inputs:
@@ -291,6 +356,7 @@ class Data:
                         # Save it to the csv file
                         symbol = symbol.replace('/','-') if '/' in symbol else symbol
                         csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
+                        
                         # self.logger.info({'symbol':symbol, 'asset_data_df':asset_data_df.shape})
                         # self.logger.info(f"Trying to save to {csv_file_path}")
                         if not asset_data_df.empty:
@@ -306,7 +372,7 @@ class Data:
                         data_frames.append(asset_data_df)
                     pbar.update(len(batch))
                     if throttle_secs < 1:
-                        self.logger.warning('Throttle seconds is less than 1 to give Yahoo API time to breathe.')
+                        self.logger.warning('Throttle seconds is less than 1 to give IBKR API time to breathe.')
                         time.sleep(throttle_secs)
                     else:
                         sleeper(throttle_secs, 'Giving IBKR API time to breathe.')  # To avoid hitting rate limits
@@ -346,13 +412,19 @@ class Data:
                         # asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
                         asset_data_df = self.restructure_asset_data_df(asset_data_df)
                         asset_data_df = asset_data_df.dropna(how='all')
+                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'asset_data_df':asset_data_df})
                         existing_data = existing_data_dict[interval][symbol]
                         # get the start date of asset_data_df
                         symbol_start_date = asset_data_df.index.min() if not asset_data_df.empty else start_date
                         # prune the existing_data to only include data before the start date
                         symbol_start_date = symbol_start_date.to_pydatetime()
                         # self.logger.debug({'symbol':symbol, 'symbol_start_date':symbol_start_date})
+                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.index})
+                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
+                        
                         existing_data = existing_data[existing_data.index < symbol_start_date]
+                        # new_data = asset_data_df[asset_data_df.index >= existing_data.index.max()]
+                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape, 'new_data':new_data.shape})
                         # concatenate the existing data and the new data
                         # self.logger.info({'symbol':symbol, 'start_date':start_date, 'interval':interval, 'existing_data':existing_data.shape, 'asset_data_df':asset_data_df.shape})
                         if not asset_data_df.empty:
@@ -364,7 +436,7 @@ class Data:
                         updated_data = updated_data.dropna(how='all')
                         updated_data['symbol'] = symbol
                         updated_data['interval'] = interval
-                        
+                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'updated_data':updated_data})
                         if interval == '1d':
                             today = pd.Timestamp(datetime.now()).tz_localize('UTC')
                             today = today.replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(minutes=1)
@@ -375,14 +447,14 @@ class Data:
                         # Save it to the csv file
                         # if update_data is not an empty DataFrame, then save it to the csv file
                         
-                        # self.logger.info(f"Trying to save to {csv_file_path}")
                         if not updated_data.empty and not asset_data_df.empty:
                             symbol = symbol.replace('/','-') if '/' in symbol else symbol
                             csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
+                            # self.logger.info(f"Trying to save to {csv_file_path}")
                             updated_data.to_csv(csv_file_path)
                             # self.logger.info({f"Saved {symbol}|{interval} data to {csv_file_path}: asset_data_df: {asset_data_df.tail(2)}"})
                         # else:
-                            # self.logger.warning(f"Data for {symbol}|{interval} is empty.")
+                        #     self.logger.warning(f"Data for {symbol}|{interval} is empty.")
                         
                         # if interval == '1m':
                         # self.logger.info({'asset_data_df':asset_data_df})
@@ -454,21 +526,28 @@ class Data:
         
         '''STEP 7: # Combine all DataFrames into a single DataFrame'''
         # self.logger.info('Combining all DataFrames into a single DataFrame...')
-        combined_df = pd.concat(data_frames)
-        combined_df.reset_index(drop=False,inplace=True)
-        # Set multi-index
-        combined_df.set_index(['date','symbol'],inplace=True)
-        asset_data_df = data_frames[0]
-        pass_cols = list(asset_data_df.columns)
-        combined_df = combined_df.reset_index().pivot_table(values=pass_cols, index=['interval', 'date'], columns=['symbol'], aggfunc='mean')
-        # combined_df = combined_df.unstack(level='symbol')
-        # Sort the index
-        combined_df.sort_index(inplace=True)
-        # self.logger.info({'combined_df':combined_df})
-        # raise AssertionError('STOP HERE')
+        # Remove empty dataframes from the list data_frames
         
-        '''STEP 8: Add a column for data_source= 'yahoo' '''
-        combined_df['data_source'] = 'ibkr'
+        data_frames = [df for df in data_frames if not df.empty]
+        # self.logger.info({'data_frame':data_frames[0]})
+        if len(data_frames) > 0:
+            combined_df = pd.concat(data_frames)
+            combined_df.reset_index(drop=False,inplace=True)
+            # Set multi-index
+            combined_df.set_index(['date','symbol'],inplace=True)
+            asset_data_df = data_frames[0]
+            pass_cols = list(asset_data_df.columns)
+            combined_df = combined_df.reset_index().pivot_table(values=pass_cols, index=['interval', 'date'], columns=['symbol'], aggfunc='mean')
+            # combined_df = combined_df.unstack(level='symbol')
+            # Sort the index
+            combined_df.sort_index(inplace=True)
+            # self.logger.info({'combined_df':combined_df})
+            # raise AssertionError('STOP HERE')
+
+            '''STEP 8: Add a column for data_source= 'yahoo' '''
+            combined_df['data_source'] = 'ibkr'
+        else:
+            combined_df = pd.DataFrame()
         
         return combined_df
 
@@ -993,7 +1072,8 @@ class IBKR_Execute:
                     action=target_order.order.action,  # e.g., 'BUY' or 'SELL'
                     orderType='STP',                   # Assuming a limit order, can be modified if needed
                     totalQuantity=new_quantity,
-                    auxPrice=new_price,
+                    auxPrice=new_price, 
+                    tif='GTC'
                 )
                 trade = self.ib.placeOrder(target_order.contract, new_order)
                 response_order = deepcopy(order)
