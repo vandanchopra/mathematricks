@@ -1,8 +1,7 @@
-import os, json, time, logging, sys, pickle, warnings
-from matplotlib.pylab import f
+import os, time #, logging, sys, pickle, warnings, json
+# from matplotlib.pylab import f
 import pandas as pd
 from config import config_dict
-from systems.datafetcher import DataFetcher
 from systems.datafeeder import DataFeeder
 from systems.vault import Vault
 from systems.rms import RMS
@@ -12,6 +11,7 @@ from systems.utils import create_logger, sleeper, MarketDataExtractor
 import datetime, pytz
 from copy import deepcopy
 from systems.telegram import TelegramBot
+from colorama import Fore, Style
 # warnings.filterwarnings("ignore")
 
 '''
@@ -39,12 +39,13 @@ class Mathematricks:
         self.market_open_bool = self.datafeeder.is_market_open(pd.Timestamp.now(tz='US/Eastern'))
         self.next_expected_timestamp_on_now = self.datafeeder.get_next_expected_timestamp(pd.Timestamp.now(tz='US/Eastern'))
         self.time_to_load_minute_data = self.datafeeder.get_prev_market_open(pd.Timestamp.now(tz='US/Eastern')) - datetime.timedelta(days=4)
+        self.prev_market_close = self.datafeeder.get_previous_market_close(pd.Timestamp.now(tz='US/Eastern'))
         self.telegram_bot = TelegramBot()
         self.first_telegram_msg_sent = False
+        self.update_telegram = self.config_dict['update_telegram']
     
     def are_we_live(self, run_mode, system_timestamp, start_date):
         # convert system_timestamp and start_date to date only
-        # system_timestamp = system_timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
         live_bool = False
         # self.logger.info({'run_mode':run_mode, 'system_timestamp':system_timestamp, 'start_date':start_date})
         # now_tz = datetime.datetime.now() - datetime.timedelta(days=5)
@@ -67,7 +68,7 @@ class Mathematricks:
                 
                 # self.logger.debug(f"Added 1m to datafeeder and datafetcher interval_inputs: system_timestamp: {system_timestamp_tz}")
                 # self.logger.debug(f"Current config_dict: {self.datafeeder.config_dict}, 'Previous Config Dict: {self.datafeeder.previous_config_dict}")
-                
+            system_timestamp_tz = system_timestamp.astimezone(pytz.timezone('US/Eastern'))
             now_tz = pd.Timestamp.now(tz='US/Eastern')
             if self.market_open_bool:
                 sleep_lookup = {"1m":60,"2m":120,"5m":300,"1d":86400}
@@ -76,12 +77,12 @@ class Mathematricks:
                 last_timestamp_tz = now_tz - datetime.timedelta(seconds=min_granularity_seconds)
                 last_timestamp_tz = last_timestamp_tz.replace(second=0, microsecond=0)
             else:
-                last_timestamp_tz = self.datafeeder.get_previous_market_close(now_tz)
+                last_timestamp_tz = self.prev_market_close
                 last_timestamp_tz = last_timestamp_tz.astimezone(pytz.timezone('US/Eastern'))
             # self.logger.debug({'system_timestamp_tz':system_timestamp_tz, 'last_timestamp_tz':last_timestamp_tz})
+            self.logger.debug({'system_timestamp':system_timestamp_tz, 'now_tz':now_tz, 'prev_market_close':self.prev_market_close, 'market_open_bool':self.market_open_bool, 'next_expected_timestamp_on_now':self.next_expected_timestamp_on_now, 'Go LIVE BOOL':system_timestamp_tz >= last_timestamp_tz - datetime.timedelta(minutes=2)})
             # if next_expected_timestamp <= min_granularity_seconds:
-            system_timestamp_tz = system_timestamp.astimezone(pytz.timezone('US/Eastern'))
-            self.logger.debug(f"Now: {now_tz}, System Timestamp: {system_timestamp_tz}, Last Timestamp: {last_timestamp_tz}, Next Expected Timestamp: {self.next_expected_timestamp_on_now}, Market Open: {self.market_open_bool}, 'Time to Go Live: {system_timestamp_tz >= last_timestamp_tz - datetime.timedelta(minutes=1)}")
+            # self.logger.debug(f"Now: {now_tz}, System Timestamp: {system_timestamp_tz}, Last Timestamp: {last_timestamp_tz}, Next Expected Timestamp: {self.next_expected_timestamp_on_now}, Market Open: {self.market_open_bool}, 'Time to Go Live: {system_timestamp_tz >= last_timestamp_tz - datetime.timedelta(minutes=1)}")
             # if system_timestamp_tz + datetime.timedelta(minutes=1) >= last_timestamp_tz:
             if system_timestamp_tz >= last_timestamp_tz - datetime.timedelta(minutes=2):
                 self.next_expected_timestamp_on_now = self.datafeeder.get_next_expected_timestamp(pd.Timestamp.now(tz='US/Eastern'))
@@ -137,7 +138,7 @@ class Mathematricks:
         return new_orders
 
     def print_update_to_console(self, next_rows):
-        telegram_send_bool = True if (self.live_bool and self.system_timestamp.minute % 10 == 0) or (self.live_bool and not self.first_telegram_msg_sent) else False
+        telegram_send_bool = True if (self.live_bool and self.system_timestamp.minute % 10 == 0 and self.update_telegram) or (self.live_bool and not self.first_telegram_msg_sent and self.update_telegram) else False
         if telegram_send_bool:
             self.first_telegram_msg_sent = True
         
@@ -153,10 +154,11 @@ class Mathematricks:
             # self.logger.debug({f"Margin Available: {self.oms.margin_available}"})
             if round(current_value, 1) < 0:
                 raise AssertionError(f"Negative Margin Available: {log_msg}")
+        total_buying_power = self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']
         buying_power_used_pct = (self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']/self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']) * 100
         log_msg += f'Margin Used %: {round(buying_power_used_pct, 2)}%'
         self.logger.info(log_msg)
-        if telegram_send_bool:
+        if self.live_bool and telegram_send_bool:
             self.telegram_bot.send_message(log_msg)
     
         '''PRINT 3: Print Unrealized PnL: Don't run it if the system is not live and the next timestamp is not 1m'''
@@ -170,37 +172,45 @@ class Mathematricks:
         total_unrealized_pnl_abs = sum(unrealized_pnl_abs_dict.values())
         log_msg = f'Unrealized PnL Abs: TOTAL: ${round(total_unrealized_pnl_abs, 2)} | '
         for key in unrealized_pnl_abs_dict.keys():
-            log_msg += f"{key}: {round(unrealized_pnl_abs_dict[key], 2)} | "
+            log_msg += f"{Fore.BLUE}{key}{Style.RESET_ALL}: {round(unrealized_pnl_abs_dict[key], 2)} | "
         self.logger.info(log_msg)
-        if telegram_send_bool:
+        if self.live_bool and telegram_send_bool:
             self.telegram_bot.send_message(log_msg)
         
         log_msg = 'Unrealized PnL % : '
         unrealized_pnl_pct_dict = dict(sorted(unrealized_pnl_pct_dict.items(), key=lambda item: item[1], reverse=True))
         for key in unrealized_pnl_pct_dict.keys():
-            log_msg += f"{key}: {round((unrealized_pnl_pct_dict[key] * 100), 2)}% | "
+            log_msg += f"{Fore.BLUE}{key}{Style.RESET_ALL}: {round((unrealized_pnl_pct_dict[key] * 100), 2)}% | "
         self.logger.info(log_msg)
-        if telegram_send_bool:
+        if self.live_bool and telegram_send_bool:
             self.telegram_bot.send_message(log_msg)
         
-        if self.live_bool:
-            msg = self.reporter.get_open_orders_print_msg(self.oms.open_orders)
-            self.logger.info(msg)
-            if telegram_send_bool:
-                self.telegram_bot.send_message(msg)
+        sequence_of_symbols = list(unrealized_pnl_pct_dict.keys())
+        msg = self.reporter.get_open_orders_print_msg(self.oms.open_orders, total_buying_power, sequence_of_symbols)
+        self.logger.info(msg)
+        if self.live_bool and telegram_send_bool:
+            self.telegram_bot.send_message(msg)
+        
+        msg = self.reporter.get_stoploss_orders_print_msg(self.oms.unfilled_orders, self.oms.open_orders, self.live_bool, sequence_of_symbols, self.current_market_data_df)
+        self.logger.info(msg)
+        if self.live_bool and telegram_send_bool:
+            self.telegram_bot.send_message(msg)
             
-            msg = self.reporter.get_stoploss_orders_print_msg(self.oms.unfilled_orders)
-            self.logger.info(msg)
-            if telegram_send_bool:
-                self.telegram_bot.send_message(msg)
-                
+        msg = ''            
+        for symbol in sequence_of_symbols:
+            for open_order in self.oms.open_orders:
+                if open_order[0]['symbol'] == symbol:
+                    filled_timestamp = open_order[0]['filled_timestamp']
+                    msg += f"Symbol: {symbol}, Filled Timestamp: {filled_timestamp} | "
+        self.logger.debug(msg)
+                        
     def run(self):
         run_mode = config_dict['run_mode']
         
         '''Set the start_date and end_date based on run_mode'''
         if run_mode in [1,2]: # live trading - real money
             # US Eastern Time Zone
-            start_date = datetime.datetime.now().astimezone(pytz.timezone('UTC'))
+            start_date = datetime.datetime.now().astimezone(pytz.timezone('UTC')) #if 'live_start_date' not in self.config_dict else self.config_dict['live_start_date']
             market_open_bool = self.datafeeder.is_market_open(start_date)
             # self.logger.warning('Manually setting market_open_bool to True')
             # sleeper(4, 'Giving your system 4 seconds to read the warning message above')
@@ -224,8 +234,12 @@ class Mathematricks:
                 end_date = end_date.astimezone(pytz.timezone('UTC'))
             
         '''Start Running the System'''
+        start = time.time()
         if run_mode in [1,2,3]:
             while True:
+                # for interval in self.current_market_data_df.index.get_level_values(0).unique():
+                #     self.logger.debug(f"Full Loop Time Taken: {time.time() - start}. Market_data_df Shape:{interval}: {self.current_market_data_df.loc[interval].shape}")
+                # start = time.time()
                 try:
                     next_rows = self.datafeeder.next(system_timestamp=self.system_timestamp, run_mode=run_mode, sleep_time=self.sleep_time, start_date=start_date, end_date=end_date, live_bool=self.live_bool)
                     if next_rows is not None:
@@ -242,6 +256,8 @@ class Mathematricks:
                                 next_datetime_EST = next_datetime.astimezone(pytz.timezone('US/Eastern'))
                                 system_timestamp_EST = self.system_timestamp.astimezone(pytz.timezone('US/Eastern'))
                                 self.logger.info(f"Interval: {interval}, Latest Data Datetime: {next_datetime_EST}, System Datetime: {system_timestamp_EST}, Live Bool: {self.live_bool}, Data Source: {next_rows.loc[interval].iloc[-1][('data_source', '')]}")
+                                # if interval == '1d':
+                                    # self.logger.info(f"next_rows: {next_rows}")
                             
                             # Generate Signals from the Strategies (signals)
                             new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
@@ -264,6 +280,10 @@ class Mathematricks:
                             
                             # Print update messages to console
                             self.print_update_to_console(next_rows)
+                            
+                            # # Trim the current_market_data_df to only keep 1.5x of the lookback_dict
+                            self.current_market_data_df = self.datafeeder.trim_current_market_data_df(self.current_market_data_df)
+                            
                         else:
                             self.logger.info('No new data available. Next Rows: {}'.format(next_rows))
 

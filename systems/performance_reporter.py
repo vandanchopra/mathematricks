@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import timedelta, datetime
 import numpy as np
+from colorama import Fore, Style
 
 class PerformanceReporter:
     def __init__(self, market_data_extractor):
@@ -175,7 +176,7 @@ class PerformanceReporter:
             
         return self.test_folder_path, testname
 
-    def get_open_orders_print_msg(self, open_orders):
+    def get_open_orders_print_msg(self, open_orders, total_buying_power, sequence_of_symbols):
         symbol_quantities = {}
         for order_pair in open_orders:
             for order in order_pair:
@@ -185,28 +186,77 @@ class PerformanceReporter:
                     if order['orderDirection'] == 'SELL':
                         order_quantity = -order_quantity
                     if symbol in symbol_quantities:
-                        symbol_quantities[symbol] += order_quantity
+                        symbol_quantities[symbol]['orderQuantity'] += order_quantity
                     else:
-                        symbol_quantities[symbol] = order_quantity
+                        if symbol not in symbol_quantities:
+                            symbol_quantities[symbol] = {}
+                        symbol_quantities[symbol]['orderQuantity'] = order_quantity
 
+        # for order_pair in open_orders:
+        #     for order in order_pair:
+        #         if order['status'] in ['pending', 'open']:
+        #             latest_price = list(order['symbol_ltp'].values())[-1]
+        #             current_value = latest_price * symbol_quantities[symbol]['orderQuantity']
+        #             symbol_quantities[symbol]['pct_of_total_buying_power'] = round(((current_value / total_buying_power) * 100), 2)
+        
+        # self.logger.debug({'symbol_quantities':symbol_quantities})
+                
+        for symbol in symbol_quantities:
+            symbol_quantities[symbol]['pct_of_total_buying_power'] = None
+            for order_pair in open_orders:
+                for order in order_pair:
+                    if order['symbol'] == symbol and order['status'] in ['pending', 'open']:
+                        latest_price = list(order['symbol_ltp'].values())[-1]
+                        current_value = latest_price * symbol_quantities[symbol]['orderQuantity']
+                        symbol_quantities[symbol]['pct_of_total_buying_power'] = round(((current_value / total_buying_power) * 100), 2)
+                if symbol_quantities[symbol]['pct_of_total_buying_power'] is not None:
+                    break
+                
+        # self.logger.debug({'symbol_quantities':symbol_quantities})
         # Create the message string
-        msg = ' | '.join([f"{symbol}: {quantity}" for symbol, quantity in symbol_quantities.items()])
-        msg = "Current Open Positions: " + msg
+        try:
+            msg = ' | '.join([f"{Fore.BLUE}{symbol}{Style.RESET_ALL}: QTY: {symbol_quantities[symbol]['orderQuantity']}, % of PF: {symbol_quantities[symbol]['pct_of_total_buying_power']}%" for symbol in  sequence_of_symbols])
+            msg = "Current Open Positions: " + msg
+        except Exception as e:
+            msg = "Current Open Positions: "
+            self.logger.error({'symbol_quantities':symbol_quantities, 'sequence_of_symbols':sequence_of_symbols})
             
         return msg
     
-    def get_stoploss_orders_print_msg(self, unfilled_orders):
+    def get_stoploss_orders_print_msg(self, unfilled_orders, open_order, live_bool, sequence_of_symbols, market_data_df):
         symbol_quantities = {}
-        for trade in unfilled_orders:
-            symbol = trade.contract.symbol
-            order_quantity = trade.order.totalQuantity
-            exit_price = trade.order.auxPrice
-            if trade.order.action == 'SELL':
-                order_quantity = -order_quantity
-            symbol_quantities[symbol] = (order_quantity, exit_price)
+        if live_bool:
+            for trade in unfilled_orders:
+                symbol = trade.contract.symbol
+                order_quantity = trade.order.totalQuantity
+                sl_price = trade.order.auxPrice
+                if trade.order.action == 'SELL':
+                    order_quantity = -order_quantity
+
+                min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
+                close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'close')
+                # self.logger.debug({'symbol':symbol, 'close_prices':close_prices})
+                close_prices.dropna(inplace=True)
+                close_prices = close_prices.tolist()
+                latest_price = close_prices[-1] if len(close_prices) > 0 else sl_price
+                symbol_quantities[symbol] = (order_quantity, sl_price, latest_price)
+        else:
+            for order_pair in open_order:
+                for order in order_pair:
+                    if order['status'] in ['pending', 'open']:
+                        symbol = order['symbol']
+                        order_quantity = order['orderQuantity']
+                        try:
+                            sl_price = order['stoploss_abs']
+                        except:
+                            self.logger.debug({'order':order})
+                        if order['orderDirection'] == 'SELL':
+                            order_quantity = -order_quantity
+                        latest_price = list(order['symbol_ltp'].values())[-1] if 'symbol_ltp' in order else None
+                        symbol_quantities[symbol] = (order_quantity, sl_price, latest_price)
 
         # Create the message string
-        msg = ' | '.join([f"{symbol}: {quantity}, StopLoss Price: {exit_price}" for symbol, (quantity, exit_price) in symbol_quantities.items()])
+        msg = ' | '.join([f"{Fore.BLUE}{symbol}{Style.RESET_ALL}: {symbol_quantities[symbol][0]}, SL: {round(symbol_quantities[symbol][1], 2) if type(symbol_quantities[symbol][1]) != type(None) else None}, LTP: {symbol_quantities[symbol][2]}, SL Dist.: {round(((abs(symbol_quantities[symbol][2]-symbol_quantities[symbol][1])/symbol_quantities[symbol][1])* 100), 2)}%" for symbol in sequence_of_symbols])
         msg = "Current Stoploss Orders: " + msg
         
         return msg

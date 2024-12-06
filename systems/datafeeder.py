@@ -27,7 +27,8 @@ class DataFeeder:
         self.market_data_df = None
         self.datafeeder_system_timestamp = None
         self.indicators = Indicators()
-        self.lookback_dict = self.create_lookback_dict()
+        self.lookback_dict_original = self.create_lookback_dict()
+        self.lookback_dict = deepcopy(self.lookback_dict_original)
         self.first_run = True
         self.previous_config_dict = None
     
@@ -153,8 +154,14 @@ class DataFeeder:
         return prev_market_open
 
     def get_previous_market_close(self, current_datetime):
+        # Get the NYSE calendar
         nyse = mcal.get_calendar('NYSE')
+        # Get the schedule for the past 30 days
         schedule = nyse.schedule(start_date=current_datetime - datetime.timedelta(days=30), end_date=current_datetime)
+        # Ensure the 'market_close' column is timezone-aware
+        schedule['market_close'] = schedule['market_close'].dt.tz_convert(pytz.UTC)
+        # Filter out any future market close times
+        schedule = schedule[schedule['market_close'] <= current_datetime]
         previous_close = schedule.iloc[-1]['market_close']
         return previous_close    
     
@@ -229,6 +236,37 @@ class DataFeeder:
             return True
         return False
     
+    def trim_current_market_data_df(self, current_market_data_df):
+        for interval in current_market_data_df.index.get_level_values(0).unique():
+            lookback = self.lookback_dict_original[interval] if interval in self.lookback_dict_original.keys() else 0
+            # self.logger.debug(f'Interval: {interval} | Lookback: {lookback} | Market Data DF Shape: {current_market_data_df.loc[interval].shape[0]}')
+            if current_market_data_df.loc[interval].shape[0] > int(lookback * 2) and lookback > 0:
+                # self.logger.debug(f'Market Data DF BEFORE TRIM: Shape: {current_market_data_df.loc[interval].shape}')
+                # current_market_data_df.loc[pd.IndexSlice[interval, :], :] = current_market_data_df.loc[pd.IndexSlice[interval, :], :].iloc[int(-lookback * 1.25):].dropna()
+                # Extract the slice for '1m'
+                slice_to_process = current_market_data_df.loc[pd.IndexSlice[interval, :], :]
+                # Take the last 120 rows and drop NaNs
+                processed_slice = slice_to_process.iloc[int(-lookback * 1.25):].dropna()
+                # Remove the old slice and reinsert only the cleaned data
+                current_market_data_df = current_market_data_df.drop(index=slice_to_process.index)
+                current_market_data_df = pd.concat([current_market_data_df, processed_slice])
+                # self.logger.debug(f'Market Data DF Trimmed: Shape: {current_market_data_df.loc[interval].shape}')
+                # time.sleep(2)
+            elif current_market_data_df.loc[interval].shape[0] > 120 * 2 and lookback == 0:
+                # self.logger.debug(f'Market Data DF BEFORE TRIM:: Shape: {current_market_data_df.loc[interval].shape}')
+                # current_market_data_df.loc[pd.IndexSlice[interval, :], :] = current_market_data_df.loc[pd.IndexSlice[interval, :], :].iloc[-120:].dropna()
+                # current_market_data_df.loc[pd.IndexSlice[interval, :], :] = current_market_data_df.loc[pd.IndexSlice[interval, :], :].iloc[int(-lookback * 1.25):].dropna()
+                # Extract the slice for '1m'
+                slice_to_process = current_market_data_df.loc[pd.IndexSlice[interval, :], :]
+                # Take the last 120 rows and drop NaNs
+                processed_slice = slice_to_process.iloc[-120:].dropna()
+                # Remove the old slice and reinsert only the cleaned data
+                current_market_data_df = current_market_data_df.drop(index=slice_to_process.index)
+                current_market_data_df = pd.concat([current_market_data_df, processed_slice])
+                # self.logger.debug(f'Market Data DF Trimmed: Shape: {current_market_data_df.loc[interval].shape}')
+                # time.sleep(2)
+        return current_market_data_df            
+    
     def next(self, system_timestamp, run_mode, start_date, end_date, sleep_time=0, live_bool=False):
         throttle_secs = 1 if run_mode in [1,2] else 60
         # update data and return the updated data
@@ -274,7 +312,7 @@ class DataFeeder:
                     historical_data_update_bool = True
                     pass
                 else:# self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date})
-                    sleeper(sleep_time, f'Live Bool: {live_bool} | System Sleeping: Time to next timestamp')
+                    sleeper(min(sleep_time, 60*60*2), f'Live Bool: {live_bool} | System Sleeping: Time to next timestamp')
                 
             # self.logger.info({'start_date':start_date, 'end_date':end_date})
             # msg = 'market_data_df Shape: '
@@ -318,5 +356,5 @@ class DataFeeder:
                 first_rows = None
         else:
                 first_rows = None
-
+        # self.logger.debug({'market_data_df':self.market_data_df})
         return first_rows

@@ -122,7 +122,7 @@ class MarketDataExtractor:
         return list(market_data_df.loc[granularity].columns.get_level_values(0).unique())
 
     def get_market_data_df_symbols(self, market_data_df, granularity):
-        return list(market_data_df.loc['1d'].columns.get_level_values(1).unique())
+        return list(market_data_df.loc[granularity].columns.get_level_values(1).unique())
 
     def get_market_data_df_symbol_prices(self, market_data_df, granularity, symbol, column):
         if symbol not in market_data_df.loc[granularity].columns.get_level_values(1).unique():

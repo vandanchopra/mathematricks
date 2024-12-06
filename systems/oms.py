@@ -38,6 +38,7 @@ class OMS:
         self.granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
         self.unfilled_orders = []
         self.telegram_bot = TelegramBot()
+        self.update_telegram = self.config_dict['update_telegram']
         
     def get_strategy_margin_available(self, strategy_name):
         num_of_strategy_count = len(self.config_dict["strategies"])
@@ -243,6 +244,10 @@ class OMS:
                 for unfilled_order in unfilled_orders_ibkr:
                     if unfilled_order.contract.symbol == symbol and unfilled_order.order.orderType.lower() not in ['stp']:
                         ibkr_orderDirection_multiplier = 1 if unfilled_order.order.action == 'BUY' else -1
+                        if symbol not in total_ratio_of_each_order_to_net_liquidation_value:
+                            total_ratio_of_each_order_to_net_liquidation_value[symbol] = {}
+                        if 'quantity_bought' not in total_ratio_of_each_order_to_net_liquidation_value[symbol]:
+                            total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] = 0
                         total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] += unfilled_order.order.totalQuantity * ibkr_orderDirection_multiplier
                         # self.logger.debug({'symbol':symbol, 'Quantity bought':unfilled_order.order.totalQuantity * ibkr_orderDirection_multiplier})
                         
@@ -388,7 +393,7 @@ class OMS:
                             current_stoploss_quantity += unfilled_order.order.totalQuantity
                             current_stoploss_list.append(unfilled_order)
                             stoploss_order_location = 'unfilled_orders_ibkr'
-                            self.logger.debug(f'Found in unfilled_orders_ibkr: {unfilled_order}')
+                            # self.logger.debug(f'Found in unfilled_orders_ibkr: {unfilled_order}')
                             break
                         
                     if not stoploss_order_temp:
@@ -648,7 +653,7 @@ class OMS:
         '''Update the available margin after executing the order.'''
         if response_order['status'] == 'closed':
             # self.logger.debug({f'system_timestamp':system_timestamp, 'response_order':response_order})
-            strategy_name = response_order['strategy_name'] if  response_order['strategy_name'] != 'Unknown' else 'strategy_3_1'
+            strategy_name = response_order['strategy_name'] if  response_order['strategy_name'] != 'Unknown' else self.config_dict['strategies'][0].split('.')[-1]
             symbol = response_order['symbol']
             orderDirection = response_order['orderDirection']
             orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
@@ -813,8 +818,14 @@ class OMS:
                     else:
                         msg += f" | Profit: {profit}"
                     self.logger.info(msg)
-                    if live_bool:
+                    if live_bool and self.update_telegram:
                         self.telegram_bot.send_message(msg)                    
+                    
+                    self.available_granularities = market_data_df.index.get_level_values(0).unique()
+                    # if '1m' in self.available_granularities:
+                    #     self.logger.debug({'Symbol':updated_order['symbol'], 'updated_order_last_prices':list(updated_order['symbol_ltp'].values())[-5:]})
+                    #     self.logger.debug({'Symbol':updated_order['symbol'], 'current_price': self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, updated_order['symbol'], 'close').iloc[-1]})
+                    #     input('Press Enter to continue...')
         
         updated_open_orders, closed_orders = self.remove_closed_orders_from_open_orders_list(open_orders, closed_orders)
         # self.logger.debug({'updated_open_orders':len(updated_open_orders), 'closed_orders':len(closed_orders)})

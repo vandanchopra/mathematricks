@@ -286,9 +286,9 @@ class Data:
                 else:
                     try:
                         existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
+                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
+                        
                         # Add timedelta 1 day to the index column
-                        if interval == '1d':
-                            existing_data.index = existing_data.index + pd.Timedelta(days=1)
                         if not existing_data.empty:
                             # existing_data_first_date = existing_data.index.min().tz_convert('UTC')
                             existing_data_last_date = existing_data.index.max().tz_convert('UTC')
@@ -296,12 +296,15 @@ class Data:
                             yday_date = pd.Timestamp.today().tz_localize('UTC').replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(days=1)
                             # replace hours, minutes, seconds with 0
                             # if interval == '1d':
-                                # self.logger.debug({'symbol':symbol, 'interval':interval,'existing_data_last_date':existing_data_last_date, 'yday_date':yday_date, 'end_date':end_date, 'timestamp_test_bool':existing_data_last_date >= yday_date})
+                            # self.logger.debug({'symbol':symbol, 'interval':interval,'existing_data_last_date':existing_data_last_date, 'yday_date':yday_date, 'end_date':end_date, 'timestamp_test_bool':existing_data_last_date >= yday_date})
+                            # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
                             
                             if (end_date is not None and existing_data_last_date >= end_date) or (existing_data_last_date >= yday_date and interval == '1d'):
                             # if end_date is not None and existing_data_last_date >= end_date:
                                 # prune the data using the back_test_start_date and back_test_end_date
+                                # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
                                 existing_data = existing_data.loc[:end_date]
+                                # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
                                 existing_data_dict[interval][symbol] = existing_data
                                 stock_symbols_with_full_data[interval].append(symbol)
                             else:
@@ -484,7 +487,7 @@ class Data:
                     asset_data_df = self.restructure_asset_data_df(asset_data_df)
                     asset_data_df['symbol'] = symbol
                     asset_data_df['interval'] = interval
-                    asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
+                    # asset_data_df = asset_data_df.iloc[:-1] if interval == '1d' else asset_data_df
                     
                     # Remove all cols not needed
                     asset_data_df = self.remove_unwanted_cols(interval_inputs, interval, asset_data_df)
@@ -492,6 +495,7 @@ class Data:
                     # Update it to the data_frames list
                     # self.logger.debug({'symbol':symbol, 'interval':interval, 'asset_data_df':asset_data_df})
                     data_frames.append(asset_data_df)
+                    self.logger.debug({'symbol':symbol, 'interval':interval, 'asset_data_df':asset_data_df.shape})
                     pbar.update(1)
                 pbar.close()
         
@@ -548,124 +552,6 @@ class Data:
             combined_df['data_source'] = 'ibkr'
         else:
             combined_df = pd.DataFrame()
-        
-        return combined_df
-
-    def update_price_data_old(self, stock_symbols,interval_inputs=['1d'], data_folder='db/data/ibkr', throttle_secs=1,back_test_start_date=None,back_test_end_date=None, lookback=None):
-        data_frames = []
-        pbar = tqdm(stock_symbols, desc='Updating data: ')
-
-        # Break the list into two lists. ones that don't have data and ones that have data
-        stock_symbols_no_data = { k:[] for k in interval_inputs}
-        stock_symbols_with_data = { k:[] for k in interval_inputs}
-        for interval in interval_inputs:
-            for symbol in stock_symbols:
-                csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
-                if not os.path.exists(csv_file_path):
-                    stock_symbols_no_data[interval].append(symbol)
-                else:
-                    stock_symbols_with_data[interval].append(symbol)
-                
-        # self.logger.debug({'stock_symbols_no_data': stock_symbols_no_data})
-        # self.logger.debug({'stock_symbols_with_data': stock_symbols_with_data})
-            
-        # Get the data for the ones that don't have data
-        loop = asyncio.get_event_loop()
-        asset_data_df_dict = loop.run_until_complete(self.update_price_data_batch(stock_symbols_no_data, start_date=None))
-        
-        for interval in asset_data_df_dict:
-            data_input_folder = os.path.join(data_folder,interval)
-            if not os.path.exists(data_input_folder):
-                os.makedirs(data_input_folder)
-            for symbol in asset_data_df_dict[interval]:
-                asset_data_df = asset_data_df_dict[interval][symbol]
-                csv_file_path = os.path.join(data_input_folder, f"{symbol}.csv")
-
-                asset_data_df['date'] = pd.to_datetime(asset_data_df['date'],utc=True)
-                asset_data_df.set_index(['date'],inplace=True)
-                asset_data_df.index = asset_data_df.index.tz_convert('UTC')
-                asset_data_df.index.names = ['datetime']
-                cols = list(asset_data_df.columns)
-                asset_data_df['symbol'] = symbol
-                asset_data_df['interval'] = interval
-                asset_data_df = asset_data_df.dropna(how='all')
-                asset_data_df.to_csv(csv_file_path)
-                data_frames.append(asset_data_df)
-                pbar.update(1)
-        
-        # Update the existing data. Get the minimum start date for the ones that have data. Then update the new downloaded data to the existing data
-        start_date = None
-        for interval in stock_symbols_with_data:
-            for symbol in stock_symbols_with_data[interval]:
-                csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
-                existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
-                last_date = existing_data.index.max()
-                start_date = last_date if start_date is None else min(start_date, last_date)
-                
-        self.logger.debug({'start_date': start_date})
-        
-        loop = asyncio.get_event_loop()
-        asset_data_df_dict = loop.run_until_complete(self.update_price_data_batch(stock_symbols_with_data, start_date=start_date))
-        
-        for interval in asset_data_df_dict:
-            for symbol in asset_data_df_dict[interval]:
-                asset_data_df = asset_data_df_dict[interval][symbol]
-                asset_data_df['date'] = pd.to_datetime(asset_data_df['date'],utc=True)
-                asset_data_df.set_index(['date'],inplace=True)
-                asset_data_df.index = asset_data_df.index.tz_convert('UTC')
-                asset_data_df.index.names = ['datetime']
-                cols = list(asset_data_df.columns)
-                asset_data_df['symbol'] = symbol
-                asset_data_df['interval'] = interval
-
-                csv_file_path = os.path.join(data_folder,interval, f"{symbol}.csv")
-                existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
-                # get the start date of asset_data_df
-                symbol_start_date = asset_data_df.index.min()
-                # self.logger.debug({'symbol_start_date': symbol_start_date})
-                # prune the existing_data to only include data before the start date
-                # self.logger.debug(type(existing_data.index[0]))
-                # self.logger.debug(type(symbol_start_date))
-                symbol_start_date = symbol_start_date.to_pydatetime()
-                existing_data = existing_data[existing_data.index < symbol_start_date]
-                # self.logger.debug({'asset_data_df-shape': asset_data_df.shape})
-                # self.logger.debug({'existing_data-shape': existing_data.shape})
-                # concatenate the existing data and the new data
-                updated_data = pd.concat([existing_data, asset_data_df])
-                updated_data['symbol'] = symbol
-                updated_data['interval'] = interval
-                updated_data = updated_data.dropna(how='all')
-                # updated_data.to_csv(csv_file_path)
-                self.logger.debug({f"NOT --- Updated data for {symbol} to {csv_file_path}"})
-                data_frames.append(updated_data)
-                pbar.update(1)
-        
-        # Combine all DataFrames into a single DataFrame
-        combined_df = pd.concat(data_frames)
-        combined_df.reset_index(drop=False,inplace=True)
-        
-        # Set multi-index
-        combined_df.set_index(['datetime','symbol'],inplace=True)
-        cols = asset_data_df
-        combined_df = combined_df.reset_index().pivot_table(values=cols, index=['interval','datetime'], columns=['symbol'], aggfunc='mean')
-        # combined_df = combined_df.unstack(level='symbol')
-
-        # Sort the index
-        combined_df.sort_index(inplace=True)  
-        if back_test_start_date is None and back_test_end_date is None:
-            return combined_df
-
-        if back_test_start_date is not None and back_test_end_date is not None:
-            combined_df = combined_df.loc[(combined_df.index.get_level_values(1) >= back_test_start_date) & (combined_df.index.get_level_values(1) <= back_test_end_date),:]
-        
-        if back_test_start_date is not None:
-            combined_df = combined_df.loc[combined_df.index.get_level_values(1) >= back_test_start_date,:]
-    
-        if back_test_end_date is not None:
-            combined_df = combined_df.loc[combined_df.index.get_level_values(1) <= back_test_end_date,:]      
-        
-        '''STEP 9: Add a column for data_source= 'yahoo' '''
-        combined_df['data_source'] = 'ibkr'
         
         return combined_df
 
@@ -1142,7 +1028,7 @@ class IBKR_Execute:
         account_balance_dict[trading_currency]['total_buying_power'] = float(account_balance_dict[trading_currency]['buying_power_available']) + float(account_balance_dict[trading_currency]['buying_power_used'])
         account_balance_dict[trading_currency]['pct_of_margin_used'] = float(account_balance_dict[trading_currency]['pledge_to_margin_used']) / float(account_balance_dict[trading_currency]['total_account_value'])
         
-        self.logger.debug({'IBKR: account_balance_dict':account_balance_dict})
+        # self.logger.debug({'IBKR: account_balance_dict':account_balance_dict})
         
         return account_balance_dict
     

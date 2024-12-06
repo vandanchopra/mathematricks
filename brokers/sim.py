@@ -1,3 +1,4 @@
+from math import e
 import os, hashlib, time, json, logging, sys
 from numpy import isin
 import pandas as pd
@@ -7,6 +8,7 @@ from tqdm import tqdm
 from copy import deepcopy
 from datetime import datetime
 from colorama import Fore, Style
+from systems.utils import MarketDataExtractor
 
 # Main Simulation Class
 class Sim():
@@ -19,6 +21,7 @@ class SIM_Execute():
     def __init__(self):
         self.logger = create_logger(log_level='DEBUG', logger_name='SIM_Execute', print_to_console=True)
         self.granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
+        self.market_data_extractor = MarketDataExtractor()
         
     def place_order(self, order, market_data_df, system_timestamp):
         """
@@ -66,8 +69,13 @@ class SIM_Execute():
         '''if the order is open, check if it's filled'''
         system_timestamp = market_data_df.index.get_level_values(1)[-1]
         symbol = order['symbol']
-        granularity = order['granularity'] if ('granularity' in order and order['granularity'].lower() != 'unknown') else '1d'
-        current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
+        # granularity = order['granularity'] if ('granularity' in order and order['granularity'].lower() != 'unknown') else '1d'
+        # current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
+        min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
+        close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'close')
+        close_prices.dropna(inplace=True)
+        close_prices = close_prices.tolist()
+        current_price = close_prices[-1]
         
         if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
             if order['orderDirection'].lower() == 'buy' and current_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_price <= order['exitPrice']:
