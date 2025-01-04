@@ -14,8 +14,10 @@ from tqdm.asyncio import tqdm as tqdm_asyncio
 # from datetime import datetime, timedelta
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from systems.utils import create_logger, generate_hash_id, sleeper, project_path
+import pandas_market_calendars as mcal
+import pytz
 
 nest_asyncio.apply()
 
@@ -69,6 +71,7 @@ class Data:
         self.ib = ib
         self.connect_to_IBKR = connect_to_IBKR
         self.interval_lookup = {"1m": "1 min", "2m": "2min", "5m":"5 min","1d":"1 day"} # update this to include all provided interval from yahoo and ibkr
+        self.market_open_bool = self.is_market_open(pd.Timestamp.now().tz_localize('UTC'))
 
     def check_ib_connection(self):
         if not self.ib:
@@ -263,10 +266,65 @@ class Data:
         
         return asset_data_df[to_use_cols]
     
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'db/data/ibkr', throttle_secs=1, start_date=None, end_date=None, lookback=None, update_data=True, run_mode=4):
-        data_frames = []
-        batch_size = 75
+    def is_market_open(self, current_datetime):
+        """
+        Check if the market is open at the given datetime.
+
+        Parameters:
+        current_datetime (datetime): The datetime to check.
+
+        Returns:
+        bool: True if the market is open, False otherwise.
+        """
+        # convert current_datetime to 'UTC' timezone
+        current_datetime = current_datetime.astimezone(pytz.timezone('UTC'))
+        current_date = current_datetime.date()
+        nyse = mcal.get_calendar('NYSE')
+        schedule = nyse.schedule(start_date=current_datetime - timedelta(days=4), end_date=current_datetime)
+        current_date_str = current_date.strftime('%Y-%m-%d')
+        if current_date_str in schedule.index:
+            if current_datetime >= schedule.loc[current_date_str]['market_open'] and current_datetime <= schedule.loc[current_date_str]['market_close']:
+                market_open_bool = True
+            else:
+                market_open_bool = False
+        else:
+            market_open_bool = False
         
+        return market_open_bool
+    
+    def get_previous_market_close(self, current_datetime):
+        # Get the NYSE calendar
+        nyse = mcal.get_calendar('NYSE')
+        # Get the schedule for the past 30 days
+        schedule = nyse.schedule(start_date=current_datetime - timedelta(days=30), end_date=current_datetime)
+        # Ensure the 'market_close' column is timezone-aware
+        schedule['market_close'] = schedule['market_close'].dt.tz_convert(pytz.UTC)
+        # Filter out any future market close times
+        schedule = schedule[schedule['market_close'] <= current_datetime]
+        previous_close = schedule.iloc[-1]['market_close']
+        return previous_close
+    
+    def get_last_expected_timestamp(self, interval, end_date):
+        if end_date is not None:
+            last_expected_timestamp = end_date
+        else:
+            now_utc = pd.Timestamp.now().tz_localize('UTC')
+            self.market_open_bool = self.is_market_open(now_utc)
+            if self.market_open_bool:
+                if interval == '1d':
+                    last_expected_timestamp = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                elif interval == '1m':
+                    last_expected_timestamp = now_utc.replace(second=0, microsecond=0) - pd.Timedelta(minutes=1)
+            else:
+                last_expected_timestamp = self.get_previous_market_close(now_utc)
+                if interval == '1d':
+                    last_expected_timestamp = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                if interval == '1m':
+                    last_expected_timestamp = last_expected_timestamp.replace(second=0, microsecond=0) - pd.Timedelta(minutes=1)
+        self.logger.debug({'interval':interval, 'last_expected_timestamp':str(last_expected_timestamp),'end_date':end_date})
+        return last_expected_timestamp
+    
+    def run_data_availability_segmentation(self, interval_inputs, stock_symbols, start_date, end_date, data_folder):
         '''STEP 1: Bifurcate the list of stock symbols into three lists: 1) ones that have data 2) ones that don't have data 3) Ones that have partial data'''
         # Break the list into two lists. ones that don't have data and ones that have data
         stock_symbols_no_data = { k:[] for k in interval_inputs}
@@ -276,6 +334,7 @@ class Data:
         
         for interval in interval_inputs:
             csv_loader_pbar = tqdm(stock_symbols, desc=f'Fetching {interval} CSV data & Bifurcating Batches: ')
+            last_expected_timestamp = self.get_last_expected_timestamp(interval, end_date)
             
             for symbol in stock_symbols:
                 symbol = symbol.replace('/','-') if '/' in symbol else symbol
@@ -284,44 +343,35 @@ class Data:
                 if not os.path.exists(csv_file_path):
                     stock_symbols_no_data[interval].append(symbol)
                 else:
-                    try:
-                        existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
-                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
-                        
-                        # Add timedelta 1 day to the index column
-                        if not existing_data.empty:
-                            # existing_data_first_date = existing_data.index.min().tz_convert('UTC')
-                            existing_data_last_date = existing_data.index.max().tz_convert('UTC')
-                            # self.logger.debug({'symbol':symbol, 'existing_data_last_date':existing_data_last_date.astimezone('US/Eastern')})
-                            yday_date = pd.Timestamp.today().tz_localize('UTC').replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(days=1)
-                            # replace hours, minutes, seconds with 0
-                            # if interval == '1d':
-                            # self.logger.debug({'symbol':symbol, 'interval':interval,'existing_data_last_date':existing_data_last_date, 'yday_date':yday_date, 'end_date':end_date, 'timestamp_test_bool':existing_data_last_date >= yday_date})
-                            # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
-                            
-                            if (end_date is not None and existing_data_last_date >= end_date) or (existing_data_last_date >= yday_date and interval == '1d'):
-                            # if end_date is not None and existing_data_last_date >= end_date:
-                                # prune the data using the back_test_start_date and back_test_end_date
-                                # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
-                                existing_data = existing_data.loc[:end_date]
-                                # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
-                                existing_data_dict[interval][symbol] = existing_data
-                                stock_symbols_with_full_data[interval].append(symbol)
-                            else:
-                                existing_data_dict[interval][symbol] = existing_data
-                                stock_symbols_with_partial_data[interval].append(symbol)
-                                
-                        else: 
-                            stock_symbols_no_data[interval].append(symbol)
-                            
-                    except Exception as e:
-                        raise Exception(f"Error reading {csv_file_path}. Error: {e}")
+                    existing_data = pd.read_csv(csv_file_path, index_col='datetime', parse_dates=True)
+                    # Last Timestamp in the existing data
+                    last_timestamp_on_file = existing_data.index.max().tz_convert('UTC') if not existing_data.empty else None
+                    
+                    if last_timestamp_on_file is None:
+                        stock_symbols_no_data[interval].append(symbol)
+                    else:
+                        if last_timestamp_on_file >= last_expected_timestamp:
+                            existing_data = existing_data.loc[:last_expected_timestamp]
+                            existing_data_dict[interval][symbol] = existing_data
+                            stock_symbols_with_full_data[interval].append(symbol)
+                        else:
+                            existing_data_dict[interval][symbol] = existing_data
+                            stock_symbols_with_partial_data[interval].append(symbol)
                 csv_loader_pbar.update(1)
             csv_loader_pbar.close()
+            
+        return stock_symbols_no_data, stock_symbols_with_partial_data, stock_symbols_with_full_data, existing_data_dict
+    
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'db/data/ibkr', throttle_secs=1, start_date=None, end_date=None, lookback=None, update_data=True, run_mode=4):
+        data_frames = []
+        batch_size = 75
+        
+        '''STEP 1: Bifurcate the list of stock symbols into three lists: 1) ones that have data 2) ones that don't have data 3) Ones that have partial data'''
+        # Break the list into two lists. ones that don't have data and ones that have data
+        stock_symbols_no_data, stock_symbols_with_partial_data, stock_symbols_with_full_data, existing_data_dict = self.run_data_availability_segmentation(interval_inputs, stock_symbols, start_date, end_date, data_folder)
 
         for interval in interval_inputs:
             self.logger.info({'interval':interval, 'stock_symbols_no_data':len(stock_symbols_no_data[interval]), 'stock_symbols_with_partial_data':len(stock_symbols_with_partial_data[interval]), 'stock_symbols_with_full_data':len(stock_symbols_with_full_data[interval])})
-            # if interval == '1d':
                 # self.logger.debug({'partial_data_symbols':stock_symbols_with_full_data[interval]})
         # sleeper(5, 'Giving you time to read the above Message')
         
@@ -351,7 +401,7 @@ class Data:
                         asset_data_df['symbol'] = symbol
                         asset_data_df['interval'] = interval
                         
-                        if interval == '1d':
+                        if interval == '1d' and self.market_open_bool:
                             today = pd.Timestamp(datetime.now()).tz_localize('UTC')
                             today = today.replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(minutes=1)
                             asset_data_df = asset_data_df.loc[:today]
@@ -411,6 +461,8 @@ class Data:
                     for symbol in batch:
                         # Extract the data from the yahoo batch response
                         asset_data_df = batch_asset_data_df_dict[symbol]
+                        # self.logger.debug({'symbol':symbol, 'interval':interval, 'asset_data_df':asset_data_df})
+                        
                         # self.logger.info({'symbol':symbol, 'asset_data_df':asset_data_df.shape})
                         # asset_data_df = asset_data_df.xs(symbol, axis=1, level='Ticker')
                         asset_data_df = self.restructure_asset_data_df(asset_data_df)
@@ -420,7 +472,8 @@ class Data:
                         # get the start date of asset_data_df
                         symbol_start_date = asset_data_df.index.min() if not asset_data_df.empty else start_date
                         # prune the existing_data to only include data before the start date
-                        symbol_start_date = symbol_start_date.to_pydatetime()
+                        if isinstance(symbol_start_date, pd.Timestamp):
+                            symbol_start_date = symbol_start_date.to_pydatetime()
                         # self.logger.debug({'symbol':symbol, 'symbol_start_date':symbol_start_date})
                         # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.index})
                         # self.logger.debug({'symbol':symbol, 'interval':interval, 'existing_data':existing_data.shape})
@@ -440,7 +493,7 @@ class Data:
                         updated_data['symbol'] = symbol
                         updated_data['interval'] = interval
                         # self.logger.debug({'symbol':symbol, 'interval':interval, 'updated_data':updated_data})
-                        if interval == '1d':
+                        if interval == '1d' and self.market_open_bool:
                             today = pd.Timestamp(datetime.now()).tz_localize('UTC')
                             today = today.replace(hour=0, minute=0, second=0, microsecond=0) - pd.Timedelta(minutes=1)
                             updated_data = updated_data.loc[:today]
@@ -449,7 +502,10 @@ class Data:
                         # self.logger.info({'symbol':symbol, 'existing_data':existing_data.shape, 'updated_data':updated_data.shape, 'asset_data_df':asset_data_df.shape})
                         # Save it to the csv file
                         # if update_data is not an empty DataFrame, then save it to the csv file
-                        
+                        if interval == '1m':
+                            self.logger.debug({'symbol':symbol, 'interval':interval, 'updated_data':updated_data})
+                            raise Exception('Testing')
+                            
                         if not updated_data.empty and not asset_data_df.empty:
                             symbol = symbol.replace('/','-') if '/' in symbol else symbol
                             csv_file_path = os.path.join(data_folder, interval, f"{symbol}.csv")
@@ -495,14 +551,18 @@ class Data:
                     # Update it to the data_frames list
                     # self.logger.debug({'symbol':symbol, 'interval':interval, 'asset_data_df':asset_data_df})
                     data_frames.append(asset_data_df)
-                    self.logger.debug({'symbol':symbol, 'interval':interval, 'asset_data_df':asset_data_df.shape})
+                    # self.logger.debug({'symbol':symbol, 'interval':interval, 'asset_data_df':asset_data_df.shape})
                     pbar.update(1)
                 pbar.close()
         
         '''Step 5: Add 1d timedelta to date'''
+        min_data_exists = False
+        
         for dataframe in data_frames:
             if '1d' in dataframe['interval'].unique():
                 dataframe.index = dataframe.index + pd.Timedelta(hours=23, minutes=59, seconds=59)
+            if '1m' in dataframe['interval'].unique():
+                min_data_exists = True
         
         '''Step 6: Trim the data to the back_test_start_date and back_test_end_date'''
         for count, data_frame in enumerate(data_frames):
@@ -686,12 +746,13 @@ class IBKR_Execute:
         
             open_orders_ibkr.append(multi_leg_order)
         
-        for open_order_ibkr in open_orders_ibkr:
-            msg = f"Open Order IBKR: Symbol: {open_order_ibkr[0]['symbol']}, Position Size: {open_order_ibkr[0]['orderQuantity']}, Entry Price: {open_order_ibkr[0]['entryPrice']}"
-            if len(open_order_ibkr) > 1:
-                msg += f", Exit Price: {open_order_ibkr[1]['exitPrice']}"
-            self.logger.info(msg)
-                
+        for order_pair_ibkr in open_orders_ibkr:
+            for open_order_ibkr in order_pair_ibkr:
+                msg = "Open Order IBKR: "
+                for key in ['symbol', 'orderQuantity', 'orderType', 'status', 'entryPrice', 'exitPrice']:
+                    if key in open_order_ibkr:
+                        msg += f"{key}: {open_order_ibkr[key]}, "
+                self.logger.debug(msg)                    
         return open_orders_ibkr, self.unfilled_orders_ibkr
     
     def place_order(self, order, multi_leg_order, market_data_df):

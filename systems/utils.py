@@ -114,6 +114,25 @@ def load_symbols_universe_df():
 
     return symbols_universe_df
 
+def create_open_positions_from_open_orders(open_orders, strategy_name=None):
+    symbol_quantities = {}
+    for order_pair in open_orders:
+        for order in order_pair:
+            if order['status'] == 'closed' and (strategy_name and order['strategy_name'] == strategy_name):
+                symbol = order['symbol']
+                order_quantity = order['orderQuantity']
+                if order['orderDirection'] == 'SELL':
+                    order_quantity = -order_quantity
+                if symbol in symbol_quantities:
+                    symbol_quantities[symbol]['orderQuantity'] += order_quantity
+                else:
+                    if symbol not in symbol_quantities:
+                        symbol_quantities[symbol] = {}
+                    symbol_quantities[symbol]['orderQuantity'] = order_quantity
+    
+    portfolio = symbol_quantities
+    return portfolio
+
 class MarketDataExtractor:
     def get_market_data_granularities(self, market_data_df):
         return list(market_data_df.index.get_level_values(0).unique())
@@ -143,6 +162,7 @@ class MarketDataExtractor:
         min_granularity = list(granularity_lookup_dict.keys())[list(granularity_lookup_dict.values()).index(min_granularity_val)]
         
         return min_granularity
+    
 
 if __name__ == '__main__':
     logger = create_logger(log_level=logging.DEBUG, logger_name='mathematricks2', print_to_console=True)

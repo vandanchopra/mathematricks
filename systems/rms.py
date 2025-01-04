@@ -236,16 +236,22 @@ class RMS:
                 current_price = list(signal["symbol_ltp"].values())[-1]
                 entry_orderDirection = signal["orderDirection"]
                 stoploss_abs = signal["stoploss_abs"]
-                # stoploss_pct = signal["stoploss_pct"]
-                orderQuantity = signal["orderQuantity"]
-                # self.logger.debug({'current_price':current_price, 'stoploss_abs':stoploss_abs, 'entry_orderDirection':entry_orderDirection, 'orderQuantity':orderQuantity})
-                total_risk = abs(current_price - stoploss_abs) * orderQuantity if entry_orderDirection == 'BUY' else abs(stoploss_abs - current_price) * orderQuantity
                 broker = 'sim' if not live_bool else 'ibkr'
                 base_account_number = self.config_dict['base_account_numbers'][broker]
                 trading_currency = self.config_dict['trading_currency']
                 strategy_name = signal['strategy_name']
                 total_buying_power_strategy = margin_available[broker][base_account_number][strategy_name][trading_currency]['total_buying_power']
-                max_risk_per_bet_abs = self.max_risk_per_bet * total_buying_power_strategy
+                max_risk_per_bet_abs = total_buying_power_strategy * self.max_risk_per_bet
+                # stoploss_pct = signal["stoploss_pct"]
+                if "orderQuantity" in signal:
+                    signal['orderQuantity'] = signal["orderQuantity"]
+                elif "orderValue" in signal:
+                    signal['orderQuantity'] = signal["orderValue"] / current_price
+                elif "signal_strength" in signal:
+                    signal['orderQuantity'] = int((signal["signal_strength"] * max_risk_per_bet_abs) / current_price)
+                # self.logger.debug({'current_price':current_price, 'stoploss_abs':stoploss_abs, 'entry_orderDirection':entry_orderDirection, 'orderQuantity':orderQuantity})
+                total_risk = abs(current_price - stoploss_abs) * signal['orderQuantity'] if entry_orderDirection == 'BUY' else abs(stoploss_abs - current_price) * signal['orderQuantity']
+                
                 # self.logger.debug({'total_risk':total_risk, 'max_risk_per_bet_abs':max_risk_per_bet_abs})
                 if total_risk > max_risk_per_bet_abs:
                     signal['status'] = 'rejected'
@@ -327,7 +333,8 @@ class RMS:
                             'granularity': signal['granularity'],
                             "status": 'pending',
                             "signal_id": signal["signal_id"],
-                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]},
+                            'decision_matrix':signal['decision_matrix'] if 'decision_matrix' in signal else None,
                             }
                         signal_orders.append(order_leg)
                     except Exception as e:
@@ -350,7 +357,8 @@ class RMS:
                             'granularity': signal['granularity'],
                             "status": 'pending',
                             "signal_id": signal["signal_id"],
-                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]},
+                            'decision_matrix':signal['decision_matrix'] if 'decision_matrix' in signal else None,
                             }
                         signal_orders.append(order_leg)
                         
@@ -371,7 +379,8 @@ class RMS:
                             'granularity': signal['granularity'],
                             "status": 'pending',
                             "signal_id": signal["signal_id"],
-                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]},
+                            'decision_matrix':signal['decision_matrix'] if 'decision_matrix' in signal else None,
                             }
                         signal_orders.append(order_leg)
                         
@@ -390,7 +399,8 @@ class RMS:
                             'granularity': signal['granularity'],
                             "status": 'pending',
                             "signal_id": signal["signal_id"],
-                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
+                            "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]},
+                            'decision_matrix':signal['decision_matrix'] if 'decision_matrix' in signal else None,
                             }
                         signal_orders.append(order_leg)
                         
@@ -436,6 +446,7 @@ class RMS:
         return signal_orders
         
     def convert_signals_to_orders(self, new_signals, margin_available, open_orders, system_timestamp, live_bool):
+        margin_available_local = deepcopy(margin_available)
         all_new_signals = []
         '''Step 1: Add Signals to all_new_signals'''
         for signal in new_signals["signals"]:
@@ -450,7 +461,6 @@ class RMS:
                 # self.logger.debug({'ideal_portfolio_signal':signal})
         '''Step 3: Convert all_new_signals to orders'''
         new_orders = []
-        margin_available_local = deepcopy(margin_available)
         for signal in all_new_signals:
             # add signal ids if not present
             if 'signal_id' not in signal:
@@ -465,5 +475,3 @@ class RMS:
                 new_orders.append(signal_orders)
         
         return new_orders
-        
-            

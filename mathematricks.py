@@ -80,7 +80,7 @@ class Mathematricks:
                 last_timestamp_tz = self.prev_market_close
                 last_timestamp_tz = last_timestamp_tz.astimezone(pytz.timezone('US/Eastern'))
             # self.logger.debug({'system_timestamp_tz':system_timestamp_tz, 'last_timestamp_tz':last_timestamp_tz})
-            self.logger.debug({'system_timestamp':system_timestamp_tz, 'now_tz':now_tz, 'prev_market_close':self.prev_market_close, 'market_open_bool':self.market_open_bool, 'next_expected_timestamp_on_now':self.next_expected_timestamp_on_now, 'Go LIVE BOOL':system_timestamp_tz >= last_timestamp_tz - datetime.timedelta(minutes=2)})
+            # self.logger.debug({'system_timestamp':system_timestamp_tz, 'now_tz':now_tz, 'prev_market_close':self.prev_market_close, 'market_open_bool':self.market_open_bool, 'next_expected_timestamp_on_now':self.next_expected_timestamp_on_now, 'Go LIVE BOOL':system_timestamp_tz >= last_timestamp_tz - datetime.timedelta(minutes=2)})
             # if next_expected_timestamp <= min_granularity_seconds:
             # self.logger.debug(f"Now: {now_tz}, System Timestamp: {system_timestamp_tz}, Last Timestamp: {last_timestamp_tz}, Next Expected Timestamp: {self.next_expected_timestamp_on_now}, Market Open: {self.market_open_bool}, 'Time to Go Live: {system_timestamp_tz >= last_timestamp_tz - datetime.timedelta(minutes=1)}")
             # if system_timestamp_tz + datetime.timedelta(minutes=1) >= last_timestamp_tz:
@@ -200,9 +200,14 @@ class Mathematricks:
         for symbol in sequence_of_symbols:
             for open_order in self.oms.open_orders:
                 if open_order[0]['symbol'] == symbol:
-                    filled_timestamp = open_order[0]['filled_timestamp']
-                    msg += f"Symbol: {symbol}, Filled Timestamp: {filled_timestamp} | "
-        self.logger.debug(msg)
+                    try:
+                        filled_timestamp = open_order[0]['filled_timestamp'] if 'filled_timestamp' in open_order[0].keys() else 'None'
+                        msg += f"Symbol: {Fore.BLUE}{symbol}{Style.RESET_ALL}, Entry: {filled_timestamp} | "
+                    except Exception as e:
+                        self.logger.error({'Symbol':symbol, 'open_order':open_order})
+                        raise e    
+                    
+        self.logger.info(msg)
                         
     def run(self):
         run_mode = config_dict['run_mode']
@@ -234,7 +239,7 @@ class Mathematricks:
                 end_date = end_date.astimezone(pytz.timezone('UTC'))
             
         '''Start Running the System'''
-        start = time.time()
+        # start = time.time()
         if run_mode in [1,2,3]:
             while True:
                 # for interval in self.current_market_data_df.index.get_level_values(0).unique():
@@ -260,7 +265,7 @@ class Mathematricks:
                                     # self.logger.info(f"next_rows: {next_rows}")
                             
                             # Generate Signals from the Strategies (signals)
-                            new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
+                            new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp, self.oms.open_orders)
                             self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
                             
                             # Check if we're going live

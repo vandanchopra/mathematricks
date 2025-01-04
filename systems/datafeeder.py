@@ -183,7 +183,7 @@ class DataFeeder:
         else:
             # calculate the number of seconds until the next market open
             next_open = self.get_next_market_open(now_tz)
-            self.logger.debug({'next_open':next_open, 'now':now_tz})
+            # self.logger.debug({'next_open':next_open, 'now':now_tz})
             next_expected_timestamp = int((next_open - now).total_seconds())
             # self.logger.debug({'next_open':next_open, 'sleep_time':sleep_time})
         return next_expected_timestamp
@@ -273,7 +273,7 @@ class DataFeeder:
         if self.previous_config_dict != self.config_dict:
             # self.logger.debug({'system_timestamp':system_timestamp, 'start_date':start_date, 'end_date':end_date, 'self.lookback_dict':self.lookback_dict})
             start_date = system_timestamp if self.previous_config_dict else start_date
-            end_date = start_date + pd.Timedelta(days=10) if not end_date else end_date
+            # end_date = start_date + pd.Timedelta(days=10) if not end_date else end_date
             # self.logger.debug(f'Config Dict Updated: Fetching data for {start_date} to {end_date} | System Timestamp: {system_timestamp}, Lookback Dict: {self.lookback_dict}')
             self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=throttle_secs, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
             self.previous_config_dict = deepcopy(self.config_dict)

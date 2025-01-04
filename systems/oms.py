@@ -281,7 +281,7 @@ class OMS:
         def create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr, open_orders_ibkr):
             new_entry_orders = []
             new_cancellation_orders = []
-            
+            self.logger.debug({'unfilled_orders_ibkr':unfilled_orders_ibkr})
             for symbol, actual_symbol_quantity in actual_quantity_to_buy.items():
                 mkt_exit_bool = True if 'MKT_EXIT' in symbol else False
                 if not mkt_exit_bool:
@@ -497,6 +497,7 @@ class OMS:
             # Create a log msg with the keys and values of the ideal_quantity_to_buy seperated by a ' | '
             self.logger.info("Ideal Position Size: " + ' | '.join(f"{key}: {value}" for key, value in ideal_quantity_to_buy.items()))
             self.logger.info("Actual Qty to Buy:   " + ' | '.join(f"{key}: {value}" for key, value in actual_quantity_to_buy.items()))
+            raise AssertionError('MANUAL STOP')
             # Create new orders
             new_entry_orders = create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr, open_orders_ibkr)
             new_entry_orders, open_orders_ibkr = create_exit_orders_for_sync(sim_open_orders, new_entry_orders, system_timestamp, ideal_quantity_to_buy, unfilled_orders_ibkr, open_orders_ibkr)
@@ -551,7 +552,7 @@ class OMS:
 
                 current_stoploss = order['exitPrice']
                 ideal_stoploss = current_price * (1 - stoploss_pct) if orderDirection == 'SELL' else current_price * (1 + stoploss_pct)
-                acceptable_loss_pct_deviation = stoploss_pct/5
+                acceptable_loss_pct_deviation = stoploss_pct * 2
                 acceptable_spotloss = current_price * (1 - (stoploss_pct+acceptable_loss_pct_deviation)) if orderDirection == 'SELL' else current_price * (1 + (stoploss_pct-acceptable_loss_pct_deviation))
                 update_stoploss = current_stoploss < acceptable_spotloss and ideal_stoploss > current_stoploss if orderDirection == 'SELL' else current_stoploss > acceptable_spotloss and ideal_stoploss < current_stoploss
                 
@@ -689,7 +690,7 @@ class OMS:
                     # self.logger.info(f"Order Closed | Symbol: {symbol} | Profit: {round(profit, 2)} | Order Quantiy: {orderQuantity}")
                 # self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
                 # self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
-                self.logger.info({'broker':broker, 'base_account_number':base_account_number, 'strategy_name':strategy_name, 'trading_currency':trading_currency})
+                # self.logger.info({'broker':broker, 'base_account_number':base_account_number, 'strategy_name':strategy_name, 'trading_currency':trading_currency})
                 margin_used_by_entry_order = round((margin_used_by_order - (profit * (orderDirection_multiplier * -1))), 10)
                 self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] -= margin_used_by_entry_order
                 self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] -= margin_used_by_entry_order
@@ -726,9 +727,14 @@ class OMS:
             closing_buying_power_used = self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']
             change_in_buying_power_available = closing_buying_power_available-opening_buying_power_available
             change_in_buying_power_used = closing_buying_power_used-opening_buying_power_used
+            total_buying_power = closing_buying_power_available + closing_buying_power_used
             margin_math = (change_in_buying_power_available - profit) + change_in_buying_power_used
-            # if margin_math != 0:
-            # self.logger.debug(f"Margin Math: {margin_math} | Profit: {profit} | Opening Buying Power Available: {opening_buying_power_available} | Opening Buying Power Used: {opening_buying_power_used} | Closing Buying Power Available: {closing_buying_power_available} | Closing Buying Power Used: {closing_buying_power_used} | Change in Buying Power Available: {change_in_buying_power_available} | Change in Buying Power Used: {change_in_buying_power_used}")
+            if round(margin_math, 3) != 0:
+                self.logger.debug(f"Margin Math: {margin_math} | Profit: {profit} | Opening Buying Power Available: {opening_buying_power_available} | Opening Buying Power Used: {opening_buying_power_used} | Closing Buying Power Available: {closing_buying_power_available} | Closing Buying Power Used: {closing_buying_power_used} | Change in Buying Power Available: {change_in_buying_power_available} | Change in Buying Power Used: {change_in_buying_power_used}")
+                raise AssertionError(f"Margin Math is not equal to 0: {margin_math}")
+            
+            if total_buying_power <= 0:
+                raise AssertionError(f"Closing Buying Power Used is less than or equal to 0: {closing_buying_power_used}")
             
             return profit
     
@@ -809,7 +815,7 @@ class OMS:
                     else:
                         price = None
                     fill_price = updated_order['fill_price'] if 'fill_price' in updated_order else 'Not Filled'
-                    orderValue = updated_order['orderQuantity'] * fill_price if isinstance(fill_price, float) else None
+                    orderValue = round(updated_order['orderQuantity'] * fill_price, 2) if isinstance(fill_price, float) else None
                     if 'fresh_update' in updated_order:
                         self.logger.info(f"Symbol: {updated_order['symbol']} | Fresh Update: {updated_order['fresh_update']} | Type: {updated_order['orderType']} | Dir: {updated_order['orderDirection']} | Qty: {updated_order['orderQuantity']} | Symbol LTP: {list(updated_order['symbol_ltp'].values())[-5:]}")
                     msg = f"ORDER UPDATED: Symbol:{updated_order['symbol']} | Type:{updated_order['orderType']} | Dir:{updated_order['orderDirection']} | Qty:{updated_order['orderQuantity']} | Price:{price} | Fill Price:{fill_price} | orderValue: {orderValue} | Status:{updated_order['status']} | Msg:{updated_order['message']}"

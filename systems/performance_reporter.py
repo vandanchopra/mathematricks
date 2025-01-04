@@ -1,4 +1,4 @@
-from systems.utils import project_path
+from systems.utils import project_path, create_open_positions_from_open_orders
 import os, json, pickle
 from systems.utils import create_logger, sleeper, generate_hash_id
 import pandas as pd
@@ -7,6 +7,7 @@ import plotly.express as px
 from datetime import timedelta, datetime
 import numpy as np
 from colorama import Fore, Style
+import yfinance as yf
 
 class PerformanceReporter:
     def __init__(self, market_data_extractor):
@@ -123,7 +124,20 @@ class PerformanceReporter:
         self.backtest_performance_metrics['Average_Loss'] = round(sum(losses_list) / len(losses_list), 2) if len(losses_list) > 0 else 0
         self.backtest_performance_metrics['long_Average'] = round(sum(long_list) / len(long_list), 2) if len(long_list) > 0 else 0
         self.backtest_performance_metrics['short_Average'] = round(sum(short_list) / len(short_list), 2) if len(short_list) > 0 else 0
-        self.backtest_performance_metrics['sharpe_ratio'] = sharpe
+        open_orders_list = self.clean_up_order_list(open_orders, drop_history=True)
+        #Processing Closed orders to remove history
+        closed_orders_list = self.clean_up_order_list(closed_orders, drop_history=True)
+        #Merge both orders
+        final_list = closed_orders_list + open_orders_list
+        # Step 2: Sort the filtered orders by exit order `filled_timestamp`
+        sorted_orders = sorted(final_list, key=lambda x: x[1]['filled_timestamp'])
+        # Step 3: Fetch the first and last `filled_timestamp` with buffer
+        start_date = sorted_orders[0][1]['filled_timestamp'] - timedelta(days=365)
+        end_date = sorted_orders[-1][1]['filled_timestamp'] + timedelta(days=365)
+        rolling_window = int(max(60, (end_date - start_date).days / 20))
+        trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(final_list, index_data_dict={}, starting_capital=72181)
+        account_value = trade_df_by_date['account_value']
+        self.backtest_performance_metrics['sharpe_ratio'] = self.calculate_sharpe_ratio(account_value, risk_free_rate=0.0415)
         
         return self.backtest_performance_metrics
 
@@ -177,21 +191,8 @@ class PerformanceReporter:
         return self.test_folder_path, testname
 
     def get_open_orders_print_msg(self, open_orders, total_buying_power, sequence_of_symbols):
-        symbol_quantities = {}
-        for order_pair in open_orders:
-            for order in order_pair:
-                if order['status'] == 'closed':
-                    symbol = order['symbol']
-                    order_quantity = order['orderQuantity']
-                    if order['orderDirection'] == 'SELL':
-                        order_quantity = -order_quantity
-                    if symbol in symbol_quantities:
-                        symbol_quantities[symbol]['orderQuantity'] += order_quantity
-                    else:
-                        if symbol not in symbol_quantities:
-                            symbol_quantities[symbol] = {}
-                        symbol_quantities[symbol]['orderQuantity'] = order_quantity
-
+        
+        symbol_quantities = create_open_positions_from_open_orders(open_orders, strategy_name=None)
         # for order_pair in open_orders:
         #     for order in order_pair:
         #         if order['status'] in ['pending', 'open']:
@@ -261,7 +262,6 @@ class PerformanceReporter:
         
         return msg
 
-class StrategyReporter:
     def load_backtest_output(self, test_folder_path):
         backtest_orders_path = os.path.join(test_folder_path, 'backtest_output.pkl')
         with open(backtest_orders_path, 'rb') as f:
@@ -415,7 +415,7 @@ class StrategyReporter:
         
         daily_profit_loss["account_value"] = daily_profit_loss["cumulative_pnl"] + starting_capital
         # pct growth for cumulative pnl
-        daily_profit_loss["cumulative_return"] = ((daily_profit_loss["account_value"] / daily_profit_loss["account_value"].iloc[0]) - 1) * 100
+        daily_profit_loss["cumulative_return"] = ((daily_profit_loss["account_value"] / daily_profit_loss["account_value"].iloc[0])) * 100
         
         # # Forward-fill missing dates if needed
         daily_profit_loss = daily_profit_loss.set_index("filled_timestamp")
@@ -432,9 +432,12 @@ class StrategyReporter:
     
     def plot_cumulative_returns_and_indices(self, trade_df, index_data_dict):
         min_max = [0 , 0]
-        for index_data in index_data_dict.values():
+        test_start_date = trade_df.index[0]
+        test_end_date = trade_df.index[-1]
+        for index_name, index_data in index_data_dict.items():
             # Calculate percentage growth
-            index_data["cumulative_return"] = ((index_data["close"] / index_data["close"].iloc[0]) - 1) * 100
+            normalization_index = index_data_dict['^IXIC'].index.get_loc(index_data_dict[index_name][index_data_dict[index_name].index <= test_start_date].index[-1])
+            index_data["cumulative_return"] = ((index_data["close"] / index_data["close"].iloc[normalization_index])) * 100
             min_max[0] = min(min_max[0], index_data["cumulative_return"].min())
             min_max[1] = max(min_max[1], index_data["cumulative_return"].max())
         
@@ -447,7 +450,7 @@ class StrategyReporter:
             y=trade_df['cumulative_return'],
             mode='lines',
             name='Strategy',
-            line=dict(color='red'),
+            line=dict(width=3),
             yaxis="y1"  # Use the left y-axis
         ))
 
@@ -455,20 +458,29 @@ class StrategyReporter:
         index_colors = ['cyan', 'pink', 'orange']
         
         # Plot index growth
+        index_cagr_dict = {}
         for i, (index_name, df) in enumerate(index_data_dict.items()):
             fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df['cumulative_return'],
-                mode='lines',
-                name=index_name,
-                line=dict(color=index_colors[i % len(index_colors)]),  # Cycle through the colors
-                yaxis="y2"  # Use the right y-axis
+            x=df.index,
+            y=df['cumulative_return'],
+            mode='lines',
+            name=index_name,
+            line=dict(color=index_colors[i % len(index_colors)], width=0.5, dash='solid'),  # Cycle through the colors and set line width to 1
+            opacity=0.6,  # Set the transparency
+            yaxis="y2"  # Use the right y-axis
             ))
+            df_test_period = df[(df.index >= test_start_date) & (df.index <= test_end_date)]
+            cagr = self.calculate_cagr(df_test_period['close'])
+            index_cagr_dict[index_name] = cagr
 
         # Update layout for dual y-axis with adjustments to ensure text and lines don't overlap
-        cagr = self.calculate_cagr(trade_df)
+        cagr = self.calculate_cagr(trade_df['account_value'])
+        title = f"CAGR: Backtest: {cagr * 100:.2f}% | "
+        for index_name, cagr in index_cagr_dict.items():
+            title += f"{index_name}: {cagr * 100:.2f}% | "
+            
         fig.update_layout(
-            title=f"Backtest CAGR: {cagr * 100:.2f}%",
+            title=title,
             xaxis=dict(
                 title="Date",
                 titlefont=dict(size=12),
@@ -496,82 +508,51 @@ class StrategyReporter:
         # Make the legend horizontal and on the top right, and outside the plot area
         fig.update_layout(legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1))
         fig.show()
+        return fig
+    
+    def plot_cumulative_returns_log_scale(self, log_cumulative_returns, log_index_data):
+        fig = go.Figure()
+        # Plot cumulative returns for trade data
+        log_cumulative_returns = log_cumulative_returns/log_cumulative_returns[0]
+        log_index_data = log_index_data/log_index_data[0]
+        fig.add_trace(go.Scatter(x=log_cumulative_returns.index, y=log_cumulative_returns, mode='lines', name='Strategy', line=dict(width=2), yaxis="y1"))
+        fig.add_trace(go.Scatter(x=log_index_data.index, y=log_index_data, mode='lines', name='Index', yaxis="y1", line=dict(color='green', width=0.5), opacity=0.6))
         
+        # Make the legend horizontal and on the top right, and outside the plot area
+        fig.update_layout(title=f"Log Scaled Cummulative Returns", template="plotly_dark", autosize=True)
+        fig.update_layout(legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1))
+        fig.show()
+        return fig
+     
     ## Sharpe Ratio Calculation
-    def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
-        df1 = trade_df_cumulative['account_value']
-        df2 = index_data_dict['close']
-        df1.index = pd.to_datetime(df1.index)
-        df2.index = pd.to_datetime(df2.index)
-        # Add 1 minute to df1 index
-        df1.index = df1.index + timedelta(seconds=1)
-        df1_df = df1.to_frame()
-        df2_df = df2.to_frame()
-        
-        merged_df = df1_df.merge(df2_df, left_index=True, right_index=True, how='inner')
-        # Drop rows with NaN values (if any)
-        merged_df = merged_df.dropna()
-        # rename 'Close' to DJI
-        merged_df.rename(columns={'close': 'index'}, inplace=True)
-        # make the values of the columns float
-        merged_df['account_value'] = merged_df['account_value'].astype(float)
-        merged_df['index'] = merged_df['index'].astype(float)
-        
-        # Calculate sharpe ratio for the strategy
-        strategy_cum_returns = merged_df['account_value']
-        index_values = merged_df['index']
-        # Calculate periodic returns from cumulative returns
-        if strategy_cum_returns.iloc[0] == 0:
-            strategy_cum_returns.iloc[0] = 0.000000001
-        strategy_returns = strategy_cum_returns.pct_change().dropna()
-        index_returns = index_values.pct_change().dropna()
+    def calculate_sharpe_ratio(self, account_value, risk_free_rate):
         periods_per_year = 252
-        # Calculate excess returns
-        excess_returns = strategy_returns - index_returns
-        # print(excess_returns)
+        strategy_returns = account_value.pct_change().dropna()
+        returns = np.array(strategy_returns)
+        mean_return = np.mean(returns) * periods_per_year
+        std_dev = np.std(returns, ddof=1) * np.sqrt(periods_per_year)
+        sharpe = (mean_return - risk_free_rate) / std_dev
+        return sharpe
 
-        # Annualized return
-        mean_excess_return = excess_returns.mean() * periods_per_year
+    def calculate_rolling_sharpe_ratio(self, account_value, index_value, risk_free_rate, window=120):
+        rolling_sharpe = account_value.rolling(window).apply(lambda x: self.calculate_sharpe_ratio(x, risk_free_rate))
+        rolling_sharpe_index = index_value.rolling(window).apply(lambda x: self.calculate_sharpe_ratio(x, risk_free_rate))
+        # rolling_sharpe = account_value.rolling(window).apply(calculate_sharpe_ratio)
+        absolute_sharpe_ratio = self.calculate_sharpe_ratio(account_value, risk_free_rate)
+        absolute_sharpe_ratio_index = self.calculate_sharpe_ratio(index_value, risk_free_rate)
+        return rolling_sharpe, rolling_sharpe_index, absolute_sharpe_ratio, absolute_sharpe_ratio_index
 
-        # Annualized volatility
-        annualized_volatility = excess_returns.std() * np.sqrt(periods_per_year)
-        
-        # Sharpe Ratio
-        sharpe_ratio = mean_excess_return / annualized_volatility
-        
-        return sharpe_ratio
-
-    def calculate_rolling_sharpe_ratio(self, trade_df_cumulative, index_data_dict, index_name, window):
-        rolling_sharpe_data = []  # Initialize an empty list to store rows
-
-        for i in range(window, len(trade_df_cumulative)):
-            # Calculate Sharpe Ratio
-            prev_i = i - window
-            trimmed_trade_df = trade_df_cumulative.iloc[prev_i:i]
-            trimmed_index_df = index_data_dict[index_name][str(trimmed_trade_df.index[0]):str(trimmed_trade_df.index[-1])]
-            sharpe_ratio = self.calculate_sharpe_ratio(trimmed_trade_df, trimmed_index_df)
-
-            # Append row data as a dictionary
-            rolling_sharpe_data.append({
-                'datetime': trade_df_cumulative.index[i],
-                'rolling_sharpe_ratio': sharpe_ratio
-            })
-
-        # Convert list of dictionaries to DataFrame
-        rolling_sharpe_df = pd.DataFrame(rolling_sharpe_data)
-        rolling_sharpe_df.set_index('datetime', inplace=True)
-
-        return rolling_sharpe_df
-
-    def plot_rolling_sharpe_ratio(self, rolling_sharpe_df, index_data_dict):
+    def plot_rolling_sharpe_ratio(self, rolling_sharpe, rolling_sharpe_index, absolute_sharpe_ratio, absolute_sharpe_ratio_index, risk_free_rate, window):
         # Create a plotly figure for the rolling sharpe ratio
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=rolling_sharpe_df.index, y=rolling_sharpe_df['rolling_sharpe_ratio'], mode='lines', name='Rolling Sharpe Ratio'))
-        fig.update_layout(title='Rolling Sharpe Ratio', xaxis_title='Date', yaxis_title='Sharpe Ratio', showlegend=True, template="plotly_dark", autosize=True)
-        fig.update_layout(xaxis=dict(range=[min(index_data_dict['^DJI'].index), max(index_data_dict['^DJI'].index)]))
+        fig.add_trace(go.Scatter(x=rolling_sharpe.index, y=rolling_sharpe, mode='lines', name='Rolling Sharpe Strategy'))
+        fig.add_trace(go.Scatter(x=rolling_sharpe_index.index, y=rolling_sharpe_index, mode='lines', name=rolling_sharpe_index.name, line=dict(color='green', width=0.5), opacity=0.6))
+        fig.update_layout(title=f'Rolling Window: {window}| Strategy Sharpe Ratio: {round(absolute_sharpe_ratio, 2)} | {rolling_sharpe_index.name} Sharpe Ratio: {round(absolute_sharpe_ratio_index, 2)} | Risk Free Return: {risk_free_rate * 100}%', xaxis_title='Date', yaxis_title='Sharpe Ratio', showlegend=True, template="plotly_dark", autosize=True)
+        # fig.update_layout(xaxis=dict(range=[min(index_data_dict['^DJI'].index), max(index_data_dict['^DJI'].index)]))
         # Make the legend horizontal and on the top right, and outside the plot area
         fig.update_layout(legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1))
         fig.show()
+        return fig
         
     def prepare_trade_data_df_by_order(self, final_list):
         """
@@ -589,12 +570,13 @@ class StrategyReporter:
                 exit_timestamp = exit_trade['filled_timestamp']
                 trade_type = 'long' if entry_trade['orderDirection'] == 'BUY' else 'short'
                 profit_loss = (exit_price - entry_price) * entry_trade['orderQuantity'] if trade_type == 'long' else (entry_price - exit_price) * entry_trade['orderQuantity']
-                trade_data.append([exit_timestamp, profit_loss, trade_type])
+                entry_value = entry_price * entry_trade['orderQuantity']
+                trade_data.append([exit_timestamp, entry_value, profit_loss, trade_type])
             except KeyError as e:
                 continue
 
         # Convert to DataFrame
-        trade_df = pd.DataFrame(trade_data, columns=['filled_timestamp', 'profit_loss', 'trade_type'])
+        trade_df = pd.DataFrame(trade_data, columns=['filled_timestamp', 'order_value', 'profit_loss', 'trade_type'])
         
         # Convert 'exit_timestamp' to datetime and floor to day
         trade_df['filled_timestamp'] = pd.to_datetime(trade_df['filled_timestamp']).dt.floor('D')
@@ -620,6 +602,11 @@ class StrategyReporter:
         
         # Calculate rolling win percentage
         trade_df['rolling_win_pct'] = trade_df['is_win'].rolling(window=window).mean() * 100
+        trade_df['rolling_win_pct_long'] = trade_df[trade_df['trade_type'] == 'long']['is_win'].rolling(window=window).mean() * 100
+        trade_df['rolling_win_pct_short'] = trade_df[trade_df['trade_type'] == 'short']['is_win'].rolling(window=window).mean() * 100
+        # Forward fill rolling_win_pct_long and rolling_win_pct_short
+        trade_df['rolling_win_pct_long'] = trade_df['rolling_win_pct_long'].ffill()
+        trade_df['rolling_win_pct_short'] = trade_df['rolling_win_pct_short'].ffill()
 
         # Plot using Plotly
         fig = px.line(
@@ -630,25 +617,95 @@ class StrategyReporter:
             labels={'rolling_win_pct': 'Rolling Win Percentage (%)', 'filled_timestamp': 'Filled Timestamp'},
             template='plotly_dark'
         )
+        
+        # Add long and short win percentages
+        fig.add_trace(go.Scatter(
+            x=trade_df['filled_timestamp'], 
+            y=trade_df['rolling_win_pct_long'], 
+            mode='lines', 
+            name='Win %: Long', 
+            line=dict(color='green', width=0.5), 
+            opacity=0.6
+        ))
+        fig.add_trace(go.Scatter(
+            x=trade_df['filled_timestamp'], 
+            y=trade_df['rolling_win_pct_short'], 
+            mode='lines', 
+            name='Win %: Short', 
+            line=dict(color='red', width=0.5), 
+            opacity=0.6
+        ))
+        
         fig.update_layout(yaxis=dict(ticksuffix='%'))
         fig.update_layout(xaxis=dict(range=[min(index_data_dict['^DJI'].index), max(index_data_dict['^DJI'].index)]))
         # Make the legend horizontal and on the top right, and outside the plot area
         fig.update_layout(legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1))
         fig.show()
+        return fig
         
+    def calculate_risk_reward_ratio(self, pnl_pct_wins, pnl_pct_losses):
+        return pnl_pct_wins.mean() / pnl_pct_losses.mean() * -1
+
+    def calculate_rolling_risk_reward_ratio(self, trade_df_by_order, window):
+        # set 'filled_timestamp' as index
+        trade_df_by_order = trade_df_by_order.set_index('filled_timestamp')
+        trade_df_by_order['pnl_pct'] = trade_df_by_order['profit_loss'] / trade_df_by_order['order_value'] * 100
+        rolling_risk_reward_ratio = trade_df_by_order['pnl_pct'].rolling(window).apply(lambda x: self.calculate_risk_reward_ratio(x[x > 0], x[x < 0]))
+        rolling_risk_reward_ratio_long = trade_df_by_order[trade_df_by_order['trade_type'] == 'long']['pnl_pct'].rolling(window).apply(lambda x: self.calculate_risk_reward_ratio(x[x > 0], x[x < 0]))
+        rolling_risk_reward_ratio_short = trade_df_by_order[trade_df_by_order['trade_type'] == 'short']['pnl_pct'].rolling(window).apply(lambda x: self.calculate_risk_reward_ratio(x[x > 0], x[x < 0]))
+        return rolling_risk_reward_ratio, rolling_risk_reward_ratio_long, rolling_risk_reward_ratio_short
+
+    def plot_rolling_risk_reward_ratio(self, rolling_risk_reward_ratio, rolling_risk_reward_ratio_long, rolling_risk_reward_ratio_short, rolling_window, index_data_dict):
+        # Plot using Plotly
+        fig = px.line(
+            rolling_risk_reward_ratio,
+            x=rolling_risk_reward_ratio.index,
+            y=rolling_risk_reward_ratio,
+            title=f'Rolling Risk Reward Ratio (Window Size: {rolling_window})',
+            labels={'y': 'Rolling Risk Reward Ratio', 'filled_timestamp': 'Filled Timestamp'},
+            template='plotly_dark'
+        )
+
+        # Add long and short win percentages
+        fig.add_trace(go.Scatter(
+            x=rolling_risk_reward_ratio_long.index,
+            y=rolling_risk_reward_ratio_long,
+            mode='lines', 
+            name='R/R Ratio: Long', 
+            line=dict(color='green', width=0.5), 
+            opacity=0.6
+        ))
+        fig.add_trace(go.Scatter(
+            x=rolling_risk_reward_ratio_short.index,
+            y=rolling_risk_reward_ratio_short,
+            mode='lines', 
+            name='R/R Ratio: Short', 
+            line=dict(color='red', width=0.5), 
+            opacity=0.6
+        ))
+
+        # fig.update_layout(yaxis=dict(ticksuffix='%'))
+        fig.update_layout(xaxis=dict(range=[min(index_data_dict['^DJI'].index), max(index_data_dict['^DJI'].index)]))
+        # Make the legend horizontal and on the top right, and outside the plot area
+        fig.update_layout(legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1))
+        fig.show()
+        return fig
+    
     # calculate CAGR for the backtest
-    def calculate_cagr(self, trade_df_by_date):
+    def calculate_cagr(self, series_data):
         # Calculate the CAGR for the backtest
-        start_date = trade_df_by_date.index[0]
-        end_date = trade_df_by_date.index[-1]
+        start_date = series_data.index[0]
+        end_date = series_data.index[-1]
         days = (end_date - start_date).days
-        cagr = (trade_df_by_date['account_value'].iloc[-1] / trade_df_by_date['account_value'].iloc[0]) ** (365.0 / days) - 1
+        cagr = (series_data.iloc[-1] / series_data.iloc[0]) ** (365.0 / days) - 1
         return cagr
     
     def calculate_drawdowns(self, trade_df_by_date):
         # calculate drawdowns in % based on 'Account Value' column
-        trade_df_by_date['drawdown'] = trade_df_by_date['account_value'].cummax() - trade_df_by_date['account_value']
-        trade_df_by_date['drawdown_pct'] = trade_df_by_date['drawdown'] / trade_df_by_date['account_value'] * 100 * -1
+        # Mark all the parts that are the high water mark
+        trade_df_by_date['high_water_mark'] = trade_df_by_date['account_value'].expanding().max()
+        trade_df_by_date['drawdown'] = trade_df_by_date['account_value'] - trade_df_by_date['high_water_mark']
+        trade_df_by_date['drawdown_pct'] = trade_df_by_date['drawdown'] / trade_df_by_date['high_water_mark'] * 100
         return trade_df_by_date
 
     def plot_drawdown(self, trade_df_by_date, index_data_dict):
@@ -674,6 +731,7 @@ class StrategyReporter:
         # Make the legend horizontal and on the top right, and outside the plot area
         underwater_fig.update_layout(legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1))
         underwater_fig.show()
+        return underwater_fig
         
     def process_and_plot_orders(self, data, symbol, save_folder):
         # Step 1: Filter orders for the given symbol
@@ -685,8 +743,8 @@ class StrategyReporter:
         sorted_orders = sorted(filtered_orders, key=lambda x: x[1]['filled_timestamp'])
         
         # Convert filled_timestamp to datetime for comparison
-        first_timestamp = sorted_orders[0][1]['filled_timestamp'] - timedelta(days=365)
-        last_timestamp = sorted_orders[-1][1]['filled_timestamp'] + timedelta(days=365)
+        first_timestamp = sorted_orders[0][0]['filled_timestamp'] - timedelta(days=365)
+        last_timestamp = sorted_orders[-1][-1]['filled_timestamp'] + timedelta(days=365)
 
         # first_timestamp = start_date.replace(tzinfo=None)
         # last_timestamp = end_date.replace(tzinfo=None)
@@ -764,3 +822,25 @@ class StrategyReporter:
         
         # Display the chart
         fig.show()
+        
+    def save_to_html_file(self, figures, testname, test_folder_path, strategies):
+        # Create a single HTML file with all figures
+        import plotly.io as pio
+
+        for fig in figures:
+            fig.update_layout(height=400)  # Default to 400 if height is not set
+
+        html_content = f""" 
+        <h1 style="font-family: Arial; margin-bottom: 2px;"> BackTest Performance </h1>
+        <p style="font-family: Arial; margin-top: 0; margin-bottom: 2px;"> Test Name: {testname} | Strategies: {' | '.join(strategies)}</p>
+        <hr style="border: 1px solid grey;">
+        """
+        for i, fig in enumerate(figures):
+            html_content += pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
+            html_content += f"<h2>  </h2>"
+
+        # Save the combined HTML content to a file
+        with open(test_folder_path + '/' +"backtest_figures.html", "w") as f:
+            f.write(html_content)
+            
+        print(f"HTML file saved: \n{test_folder_path + '/' + 'backtest_figures.html'}")

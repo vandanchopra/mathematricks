@@ -98,7 +98,7 @@ class BacktestQueue:
                                     # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
                                     },
                                 'strategies':['strategy_dev.strategy_3'], # 'strategy_1', 'strategy_dev.strategy_3'
-                                'data_update_inputs': {'data_sources':{'sim':'yahoo', 'live':'ibkr'}}, # 'yahoo', 'ibkr'
+                                'data_update_inputs': {'data_sources':{'sim':'ibkr', 'live':'ibkr'}}, # 'yahoo', 'ibkr'
                                 'sleep_time':60,
                                 'account_info':{'sim':{'sim_1': {base_currency:{'total_account_value': sim_account_starting_value_base, 
                                                                                 'buying_power_available':sim_account_starting_value_base * sim_account_margin_multiplier, 
@@ -109,7 +109,8 @@ class BacktestQueue:
                                                     }
                                                 },
                                 'base_account_numbers':{'sim':'sim_1', 'ibkr':'U13152795'},
-                                'risk_management': {'max_risk_per_bet':0.05, 'maximum_margin_used_pct':0.80}
+                                'risk_management': {'max_risk_per_bet':0.05, 'maximum_margin_used_pct':0.80},
+                                'update_telegram': False,
                                 }
         
         config_dict = deepcopy(config_dict_template)

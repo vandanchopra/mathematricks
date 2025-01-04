@@ -44,7 +44,9 @@ class SIM_Execute():
                 response_order['order_id'] = generate_hash_id(order_, system_timestamp)
             response_order['broker_order_id'] = response_order['order_id']
             response_order['fresh_update'] = True
-            response_order['message'] = 'Order filled at market price.'
+            response_order['message'] = 'Market Order filled at market price.' if order['orderType'].lower() == 'market' else 'Market Exit Order filled at market price.'
+            # if order['orderType'].lower() == 'market_exit':
+                # raise AssertionError(f"MARKET EXIT ORDER FILLED. symbol: {response_order['symbol']}")
             
         elif order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
             response_order = deepcopy(order)
@@ -72,23 +74,32 @@ class SIM_Execute():
         # granularity = order['granularity'] if ('granularity' in order and order['granularity'].lower() != 'unknown') else '1d'
         # current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
         min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
-        close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'close')
-        close_prices.dropna(inplace=True)
-        close_prices = close_prices.tolist()
-        current_price = close_prices[-1]
+        # close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'close')
+        low_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'low')
+        high_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'high')
+        # close_prices.dropna(inplace=True)
+        # close_prices = close_prices.tolist()
+        high_prices.dropna(inplace=True)
+        low_prices.dropna(inplace=True)
+        high_prices = high_prices.tolist()
+        low_prices = low_prices.tolist()
+        # current_close_price = close_prices[-1]
+        current_low_price = low_prices[-1]
+        current_high_price = high_prices[-1]
         
         if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
-            if order['orderDirection'].lower() == 'buy' and current_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_price <= order['exitPrice']:
+            if order['orderDirection'].lower() == 'buy' and current_high_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_low_price <= order['exitPrice']:
                 response_order = deepcopy(order)
                 response_order['status'] = 'closed'
                 self.available_granularities = market_data_df.index.get_level_values(0).unique()
                 self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
                 self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
-                fill_price = order['exitPrice'] if self.min_granularity == '1d' else current_price
+                fill_price = order['exitPrice'] if self.min_granularity == '1d' else order['exitPrice']
                 response_order['fill_price'] = fill_price
                 response_order['filled_timestamp'] = system_timestamp
                 response_order['fresh_update'] = True
                 response_order['message'] = 'Stop-loss order filled.'
+                # raise AssertionError(f"STOP-LOSS ORDER FILLED. symbol: {response_order['symbol']}")
             else:
                 response_order = deepcopy(order)
                 response_order['status'] = 'open'
