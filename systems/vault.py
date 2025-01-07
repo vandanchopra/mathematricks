@@ -14,7 +14,13 @@ class Vault:
         strategies_dict = {}
         for strategy in strategy_names:
             # import strategy module and get the class
-            strategies_dict[strategy] = getattr(__import__('vault.{}'.format(strategy), fromlist=[strategy]), 'Strategy')(config_dict)
+            module = __import__('vault.{}'.format(strategy), fromlist=[strategy])
+            # Try to get the strategy class with both naming conventions
+            strategy_name = strategy.split('.')[-1]
+            # Convert snake_case to CamelCase for strategy class name
+            strategy_class_name = ''.join(word.title() for word in strategy_name.split('_')) + 'Strategy'
+            strategy_class = getattr(module, 'Strategy', None) or getattr(module, strategy_class_name)
+            strategies_dict[strategy] = strategy_class(config_dict)
         return strategies_dict
     
     def create_datafeeder_config(self, config_dict, strategies):
@@ -31,7 +37,7 @@ class Vault:
         data_inputs = {}
         list_of_symbols = []
         for strategy_name, strategy in strategies.items():
-            data_input_temp , list_of_symbols_temp = strategy.datafeeder_inputs()
+            data_input_temp , list_of_symbols_temp = strategy.datafeeder_inputs['get_inputs']()
             self.tickers_dict[strategy_name] = list_of_symbols_temp
             data_inputs = data_inputs | data_input_temp
 
