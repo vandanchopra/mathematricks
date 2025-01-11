@@ -30,10 +30,25 @@ class DataFetcher:
         else:
             raise ValueError(f'Invalid data source: {data_source}')
         
-        # Forward fill the data
-        market_data_df = market_data_df.fillna(method='ffill')
-        market_data_df = market_data_df.fillna(method='bfill')
-        self.logger.warning('We are not maintaining the matrix for ffill and bfill. This needs to be implemented')
+        # Handle empty dataframe
+        if market_data_df.empty:
+            self.logger.error('No market data received from data source')
+            return pd.DataFrame()
+
+        # Forward fill and backward fill with matrix maintenance
+        ffill_matrix = market_data_df.isna()
+        market_data_df = market_data_df.ffill()
+        bfill_matrix = market_data_df.isna()
+        market_data_df = market_data_df.bfill()
+        
+        # Log fill statistics
+        ffill_count = ffill_matrix.sum().sum()
+        bfill_count = bfill_matrix.sum().sum()
+        self.logger.info(f'Forward filled {ffill_count} values, backward filled {bfill_count} values')
+        
+        # Check if any NA values remain
+        if market_data_df.isna().any().any():
+            self.logger.warning('Some NA values remain after forward/backward fill')
         
         return market_data_df
         

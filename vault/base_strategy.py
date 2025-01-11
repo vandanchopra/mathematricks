@@ -4,10 +4,11 @@ import pandas as pd
 from systems.utils import create_logger, sleeper
 
 class BaseStrategy:
-    def __init__(self):
+    def __init__(self, config_dict=None):
         self.strategy_name = 'BaseStrategy'
         self.logger = create_logger(log_level='DEBUG', logger_name='Vault-Strategy', print_to_console=True)
         self.sleeper = sleeper
+        self.config_dict = config_dict
         
     def get_name(self):
         return self.strategy_name

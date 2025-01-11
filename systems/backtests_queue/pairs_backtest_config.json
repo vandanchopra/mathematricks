@@ -1,0 +1,17 @@
+{
+    "strategy_name": "pairs_trading",
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31",
+    "initial_capital": 100000,
+    "tickers": ["AAPL", "MSFT", "GOOG", "SPY", "GLD", "CL"],
+    "parameters": {
+        "correlation_threshold": 0.5,
+        "adf_p_value_threshold": 0.2,
+        "entry_threshold": 1.2,
+        "exit_threshold": 0.8,
+        "lookback_period": 60,
+        "position_size": 0.2,
+        "max_risk_per_bet": 0.05,
+        "min_opportunity_score": 0.15
+    }
+}

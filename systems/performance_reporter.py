@@ -12,7 +12,7 @@ import yfinance as yf
 class PerformanceReporter:
     def __init__(self, market_data_extractor):
         self.market_data_extractor = market_data_extractor
-        self.backtest_folder_path = project_path + 'db/vault/backtest_reports'
+        self.backtest_folder_path = 'db/vault/backtest_reports'
         self.backtest_performance_metrics = None
         self.backtest_report = None
         self.logger = create_logger(log_level='DEBUG', logger_name='REPORTER', print_to_console=True)
@@ -129,12 +129,42 @@ class PerformanceReporter:
         closed_orders_list = self.clean_up_order_list(closed_orders, drop_history=True)
         #Merge both orders
         final_list = closed_orders_list + open_orders_list
+        # Handle empty orders case
+        if not final_list:
+            self.logger.warning('No orders generated during backtest')
+            return {
+                'profit': 0,
+                'win_pct': 0,
+                'long_count': 0,
+                'short_count': 0,
+                'Average_Profit': 0,
+                'Average_Loss': 0,
+                'long_Average': 0,
+                'short_Average': 0,
+                'sharpe_ratio': 0
+            }
+            
         # Step 2: Sort the filtered orders by exit order `filled_timestamp`
         sorted_orders = sorted(final_list, key=lambda x: x[1]['filled_timestamp'])
+        
         # Step 3: Fetch the first and last `filled_timestamp` with buffer
-        start_date = sorted_orders[0][1]['filled_timestamp'] - timedelta(days=365)
-        end_date = sorted_orders[-1][1]['filled_timestamp'] + timedelta(days=365)
-        rolling_window = int(max(60, (end_date - start_date).days / 20))
+        try:
+            start_date = sorted_orders[0][1]['filled_timestamp'] - timedelta(days=365)
+            end_date = sorted_orders[-1][1]['filled_timestamp'] + timedelta(days=365)
+            rolling_window = int(max(60, (end_date - start_date).days / 20))
+        except Exception as e:
+            self.logger.error(f'Error processing order timestamps: {str(e)}')
+            return {
+                'profit': 0,
+                'win_pct': 0,
+                'long_count': 0,
+                'short_count': 0,
+                'Average_Profit': 0,
+                'Average_Loss': 0,
+                'long_Average': 0,
+                'short_Average': 0,
+                'sharpe_ratio': 0
+            }
         trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(final_list, index_data_dict={}, starting_capital=72181)
         account_value = trade_df_by_date['account_value']
         self.backtest_performance_metrics['sharpe_ratio'] = self.calculate_sharpe_ratio(account_value, risk_free_rate=0.0415)

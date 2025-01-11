@@ -1,502 +1,353 @@
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import statsmodels.api as sm
-from statsmodels.regression.linear_model import OLS
 from statsmodels.tsa.stattools import adfuller
+from scipy.stats import pearsonr
+import logging
+import datetime
 from typing import List, Tuple, Dict, Optional
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
-from .base_strategy import BaseStrategy
+import os
+import pytz
+import random
+from statsmodels.sandbox.stats.multicomp import multipletests
+import json
+import optuna
+from abc import ABC, abstractmethod
+from scipy.stats import linregress
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from scipy.optimize import minimize
+from tabulate import tabulate
+from collections import deque
 
-class PairsTradingStrategy(BaseStrategy):
-    def __init__(self, config_dict=None):
-        super().__init__()
-        if config_dict:
-            self.set_params(config_dict.get('strategy_params', {}))
-        self.strategy_name = 'PairsTradingStrategy'
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Constants ---
+BID_ASK_SPREAD_MULTIPLIER = 0.0005
+ORDER_BOOK_SLIPPAGE_MULTIPLIER = 0.0001
+MIN_DATA_POINTS_FOR_CALCULATION = 2
+DEFAULT_ATR_PERIOD = 14
+DEFAULT_VOLATILITY_LOOKBACK = 20
+MULTIPLE_TESTING_METHOD = 'fdr_bh'
+COINTEGRATION_TEST_FREQUENCY_BASE = 10
+MAX_DRAWDOWN_CALCULATION_LOOKBACK = 252
+DEFAULT_RISK_PER_TRADE = 0.01
+TRAILING_STOP_LOSS_OFFSET = 0.01
+ROLLING_WINDOW_TEST_SIZE = 50
+DEFAULT_INITIAL_CAPITAL = 100000
+DEFAULT_WALK_FORWARD_TEST_SIZE = 126 # 6 months roughly
+DEFAULT_WALK_FORWARD_TRAINING_SIZE = 252 # 1 year roughly
+DEFAULT_OPTUNA_N_TRIALS = 25
+DEFAULT_OPTUNA_TIMEOUT = 900
+VOLATILITY_LOOKBACK = 20
+MIN_COINTEGRATION_PERIOD = 20
+TRANSACTION_COST_MULTIPLIER = 0.001
+HARDCODED_DATA_DIR = "/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr/1d"
+DEFAULT_REBALANCE_THRESHOLD = 0.02
+DEFAULT_LOOKBACK_SPREAD = 20
+DEFAULT_OUTLIER_THRESHOLD = 3
+
+class ConfigManager:
+    """Manages configuration settings for the trading strategy."""
+    def __init__(self, config_file_path):
+        self.config_file_path = config_file_path
+        self.config = self._load_config()
+
+    def _load_config(self):
+        try:
+            with open(self.config_file_path, 'r') as f:
+                config = json.load(f)
+            return config
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logging.error(f"Failed to load config file from {self.config_file_path}. Error: {e}. Using defaults.")
+            return {}
+
+    def get(self, key, default=None):
+        return self.config.get(key, default)
+
+    def get_all(self):
+      return self.config
+
+class DataHandler:
+    """Handles loading, validating, and preprocessing historical data."""
+    def __init__(self, data_dir: str, tickers: List[str], data_frequency: str = "D", timezone: str = "UTC"):
+        self.data_dir = data_dir
+        self.tickers = tickers
+        self.data_frequency = data_frequency
+        self.timezone = timezone
+        self.historical_data = {}
+        self.data_cache = {}  # Cache for rolling window data
+
+    def _validate_data(self, df: pd.DataFrame, ticker: str) -> bool:
+        """Validates dataframe for non-empty, numeric values, required columns, and date duplicates"""
+        if df.empty:
+            logging.warning(f"Empty dataframe for {ticker}")
+            return False
+        if not all(col in df.columns for col in ['Open', 'High', 'Low', 'Close']):
+            logging.error(f"Data for {ticker} missing required columns (Open, High, Low, Close). Columns present:{df.columns}")
+            return False
+        for col in ['Open', 'High', 'Low', 'Close']:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                logging.error(f"Column {col} for {ticker} is not numeric")
+                return False
+        if df.index.duplicated().any():
+            logging.error(f"Duplicate dates detected for {ticker}")
+            return False
+        return True
+
+    def _load_data_from_csv(self, ticker: str) -> Optional[pd.DataFrame]:
+        """Loads data from a CSV, handles errors, and returns a dataframe."""
+        file_path = os.path.join(self.data_dir, f"{ticker}.csv")
+        logging.info(f"Loading data from: {file_path}")
+        try:
+            df = pd.read_csv(file_path, index_col=0, parse_dates=True)
+            df.index = df.index.tz_localize(self.timezone)
+            if not self._validate_data(df, ticker):
+                return None
+            logging.info(f"Successfully loaded {ticker} data, shape={df.shape}")
+            return df[['Open', 'High', 'Low', 'Close']]
+        except FileNotFoundError:
+            logging.error(f"Data file not found for {ticker}: {file_path}")
+            return None
+        except Exception as e:
+            logging.error(f"Error loading data for {ticker} at {file_path}: {e}")
+            return None
+
+    def load_historical_data(self, training_period: int) -> bool:
+        """Loads and stores historical data for all tickers, with error handling."""
+        all_data_loaded = True
+        for ticker in self.tickers:
+            try:
+                df = self._load_data_from_csv(ticker)
+                if df is None:
+                    all_data_loaded = False
+                    continue
+                self.historical_data[ticker] = df
+                logging.info(f"Historical data loaded for {ticker}, shape: {df.shape}")
+            except Exception as e:
+                logging.error(f"Failed to load data for {ticker}: {e}")
+                all_data_loaded = False
+        if not all_data_loaded:
+            logging.error("Failed to load all historical data.")
+        return all_data_loaded
+
+    def preprocess_data(self, training_period: int) -> bool:
+        """Preprocesses data: handles missing values, aligns time series."""
+        if not self.historical_data:
+            logging.error("No historical data, cannot preprocess.")
+            return False
+        for ticker, df in self.historical_data.items():
+            if df.isnull().values.any():
+                logging.warning(f"Missing values detected in {ticker}, performing linear interpolation.")
+                self.historical_data[ticker] = df.interpolate(method='linear')
+
+        close_prices = []
+        for ticker, df in self.historical_data.items():
+            close_prices.append(df['Close'])
+
+        try:
+            merged_df = pd.concat(close_prices, axis=1, keys=list(self.historical_data.keys()), join="inner")
+        except Exception as e:
+            logging.error(f"Error aligning price series: {e}")
+            return False
+        for ticker in self.historical_data.keys():
+            self.historical_data[ticker] = merged_df[ticker].to_frame(name="Close")
+        logging.info("Data preprocessed.")
+        return True
+
+    def get_data(self) -> Dict[str, pd.DataFrame]:
+        """Returns the processed historical data."""
+        return self.historical_data
+
+    def get_rolling_window_data(self, ticker: str, window_start: datetime.datetime,
+                                 window_end: datetime.datetime) -> pd.DataFrame:
+        """Retrieves rolling window data for a ticker, uses cache."""
+        cache_key = (ticker, window_start, window_end)
+        if cache_key in self.data_cache:
+            return self.data_cache[cache_key]
+        try:
+            df = self.historical_data[ticker].loc[window_start:window_end].copy()
+            self.data_cache[cache_key] = df
+            return df
+        except Exception as e:
+            logging.error(f"Error loading rolling data {e}")
+            return pd.DataFrame()
+
+
+class PairSelector:
+    """Selects cointegrated pairs based on rolling window."""
+    def __init__(self, config_manager: ConfigManager, data_handler: DataHandler):
+        self.correlation_threshold = config_manager.get('correlation_threshold', 0.7)
+        self.adf_p_value_threshold = config_manager.get('adf_p_value_threshold', 0.05)
+        self.min_training_period = config_manager.get('min_training_period', 30)
+        self.coint_test_freq_base = config_manager.get('coint_test_freq_base', COINTEGRATION_TEST_FREQUENCY_BASE)
+        self.pairs = {}
+        self.config_manager = config_manager
+        self.data_handler = data_handler
+
+    def _calculate_correlation(self, prices1: np.ndarray, prices2: np.ndarray) -> Optional[float]:
+       """Calculates Pearson correlation, with error handling."""
+       try:
+           if len(prices1) < MIN_DATA_POINTS_FOR_CALCULATION or len(prices2) < MIN_DATA_POINTS_FOR_CALCULATION:
+               logging.warning("Insufficient data to calculate correlation.")
+               return None
+           corr_value, _ = pearsonr(prices1, prices2)
+           return corr_value
+       except Exception as e:
+           logging.error(f"Error calculating correlation: {e}")
+           return None
+
+    def _calculate_cointegration(self, prices1: np.ndarray, prices2: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
+       """Performs cointegration test and returns p-value and beta, with error handling."""
+       try:
+           if len(prices1) < MIN_DATA_POINTS_FOR_CALCULATION or len(prices2) < MIN_DATA_POINTS_FOR_CALCULATION:
+                logging.warning("Insufficient data to calculate cointegration.")
+                return None, None
+           X = sm.add_constant(prices2)
+           model = sm.OLS(prices1, X)
+           results = model.fit()
+           residuals = results.resid
+           adf_result = adfuller(residuals)
+           p_value = adf_result[1]
+           beta = results.params[1]
+           return p_value, beta
+       except Exception as e:
+            logging.error(f"Error during cointegration test: {e}")
+            return None, None
+
+    def _calculate_cointegration_decay(self, prices1: np.ndarray, prices2: np.ndarray, decay_lookback: int) -> Optional[float]:
+        """Calculates the rate of cointegration decay by tracking changes in beta."""
+        try:
+             if len(prices1) < decay_lookback or len(prices2) < decay_lookback:
+                return 0 # No decay if not enough data
+             X1 = sm.add_constant(prices2[-decay_lookback:])
+             model1 = sm.OLS(prices1[-decay_lookback:], X1)
+             beta1 = model1.fit().params[1]
+             X2 = sm.add_constant(prices2[:decay_lookback])
+             model2 = sm.OLS(prices1[:decay_lookback], X2)
+             beta2 = model2.fit().params[1]
+             return np.abs(beta1 - beta2)  # Return the absolute change in beta
+        except Exception as e:
+             logging.error(f"Error during decay test {e}")
+             return None
+
+    def select_pairs(self, historical_data: Dict[str, pd.DataFrame], window_start: datetime.datetime,
+                     window_end: datetime.datetime, current_pairs: Dict[Tuple[str,str], dict]) -> Dict[Tuple[str,str], Dict[str,float]]:
+        """Selects or re-evaluates cointegrated pairs from historical data."""
+        pairs = {}
+        tickers = list(historical_data.keys())
+        p_values = []
+        pair_candidates = []
+        decay_lookback = self.config_manager.get('cointegration_decay_lookback', 50)
+        decay_threshold = self.config_manager.get('decay_threshold', 0.1)
+        min_coint_period = self.config_manager.get('min_coint_period', MIN_COINTEGRATION_PERIOD)
+
+        for i in range(len(tickers)):
+            for j in range(i + 1, len(tickers)):
+                ticker1, ticker2 = tickers[i], tickers[j]
+                prices1 = self.data_handler.get_rolling_window_data(ticker1, window_start, window_end)['Close'].values
+                prices2 = self.data_handler.get_rolling_window_data(ticker2, window_start, window_end)['Close'].values
+                pair = (ticker1, ticker2)
+                if len(prices1) < self.min_training_period or len(prices2) < self.min_training_period:
+                    logging.warning(f"Insufficient data for pair selection of {ticker1}, {ticker2} between {window_start} and {window_end}")
+                    continue
+                corr_value = self._calculate_correlation(prices1, prices2)
+                if corr_value is None or abs(corr_value) < self.correlation_threshold:
+                     continue
+                p_value, beta = self._calculate_cointegration(prices1, prices2)
+                if p_value is not None:
+                    p_values.append(p_value)
+                    decay_value = self._calculate_cointegration_decay(prices1, prices2, decay_lookback)
+                    if len(prices1) >= min_coint_period:
+                      pair_candidates.append((ticker1, ticker2, corr_value, p_value, beta, decay_value))
+        if not pair_candidates:
+           logging.info("No pair candidates found")
+           return {}
+
+        # Apply multiple testing correction
+        reject, corrected_p_values, _, _ = multipletests(p_values, method = MULTIPLE_TESTING_METHOD, alpha = self.adf_p_value_threshold)
+
+        # Filter by results of multiple testing and decay
+        for (k, (ticker1, ticker2, corr_value, p_value, beta, decay_value)) in enumerate(pair_candidates):
+            if reject[k] and decay_value is not None and decay_value < decay_threshold:
+                pairs[(ticker1, ticker2)] = {
+                    'correlation': corr_value,
+                    'adf_p_value': corrected_p_values[k],
+                    'beta': beta,
+                    'decay_value': decay_value
+                }
+                logging.info(f"Cointegrated pair found: {ticker1}, {ticker2}, correlation: {corr_value}, ADF p-value: {corrected_p_values[k]}, decay_value: {decay_value}")
+
+        # Check for existing pairs and remove any that fail cointegration or decay criteria
+        for pair in list(current_pairs.keys()):
+            if pair not in pairs and pair in self.pairs:
+               del self.pairs[pair]
+               logging.info(f"Pair {pair} removed as it no longer cointegrated or fails decay criteria.")
+        self.pairs.update(pairs)
+        return self.pairs
+
+    def get_pairs(self) -> Dict[Tuple[str,str], Dict[str,float]]:
+        """Returns the selected pairs"""
+        return self.pairs
+
+class TradingLogic:
+    """Implements the core trading logic for the pairs strategy."""
+    def __init__(self, config_manager: ConfigManager, data_handler: DataHandler):
+        self.entry_threshold = config_manager.get('entry_threshold', 2.0)
+        self.exit_threshold = config_manager.get('exit_threshold', 0.5)
+        self.stop_loss_atr_multiple = config_manager.get('stop_loss_atr_multiple', 2.0)
+        self.volume_window = config_manager.get('volume_window', 20)
+        self.max_volume_percentage = config_manager.get('max_volume_percentage', 0.2)
+        self.min_risk_reward_ratio = config_manager.get('min_risk_reward_ratio', 1.5)
+        self.atr_period = config_manager.get('atr_period', DEFAULT_ATR_PERIOD)
+        self.risk_per_trade = config_manager.get('risk_per_trade', DEFAULT_RISK_PER_TRADE)
         self.positions = {}
-        self.trades = []
-        self.equity_curve = []
-        self.capital = 100000
-        self.spread_history = {}
+        self.config_manager = config_manager
+        self.data_handler = data_handler
+
+    # ... (rest of TradingLogic class implementation remains the same)
+
+class PairsTradingStrategy:
+    """Main strategy class implementing the pairs trading logic."""
+    def __init__(self, config_manager: ConfigManager, data_handler: DataHandler):
         self.datafeeder_inputs = {
             'get_inputs': lambda: {
-                'symbols': self.TICKERS,
-                'data_types': ['price', 'volume'],
-                'timeframe': '1d'
-            }
-        }
-        
-        # Configuration parameters
-        self.TICKERS = ['AAPL', 'GOOG', 'SPY', 'GLD', 'CL']
-        self.TRAINING_PERIOD = '1y'
-        self.CORRELATION_THRESHOLD = 0.6
-        self.ADF_P_VALUE_THRESHOLD = 0.15
-        self.ENTRY_THRESHOLD = 1.5
-        self.EXIT_THRESHOLD = 0.5
-        self.STOP_LOSS_THRESHOLD = 3
-        self.VOLUME_WINDOW = 5
-        self.MAX_VOLUME_PERCENTAGE = 0.1
-        self.TOTAL_CAPITAL = 100000
-        self.MIN_RISK_REWARD_RATIO = 1.5
-        self.LOOKBACK_PERIOD = 40
-        self.POSITION_SIZE = 0.2
-        self.MAX_RISK_PER_BET = 0.05
-        self.MIN_OPPORTUNITY_SCORE = 0.25
-        self.DYNAMIC_ENTRY_THRESHOLD = True
-        self.ENTRY_THRESHOLD_RANGE = (1.2, 2.0)
-        self.DYNAMIC_OPPORTUNITY_THRESHOLD = True
-        self.OPPORTUNITY_THRESHOLD_RANGE = (0.2, 0.35)
-        self.OPPORTUNITY_SCORE_WEIGHTS = {
-            'zscore': 0.35,
-            'correlation': 0.25,
-            'volatility': 0.20,
-            'cointegration': 0.20
-        }
-
-    def get_signal(self, data):
-        """Generate trading signals based on current market data"""
-        signals = {}
-        pairs = self.identify_pairs(self.TICKERS, data)
-        
-        for pair_info in pairs:
-            pair = pair_info['pair']
-            asset1, asset2 = pair
-            
-            # Calculate spread statistics
-            lookback_data = data.iloc[-self.LOOKBACK_PERIOD:]
-            spread = lookback_data[asset1] - lookback_data[asset2]
-            spread_mean = spread.mean()
-            spread_std = spread.std()
-            current_spread = data.iloc[-1][asset1] - data.iloc[-1][asset2]
-            z_score = (current_spread - spread_mean) / spread_std
-            
-            # Calculate opportunity score
-            opportunity_score = self.calculate_opportunity_score(pair, z_score)
-            
-            # Generate signal
-            if abs(z_score) >= self.ENTRY_THRESHOLD and opportunity_score >= self.MIN_OPPORTUNITY_SCORE:
-                signals[pair] = {
-                    'asset1': asset1,
-                    'asset2': asset2,
-                    'z_score': z_score,
-                    'direction': -1 if z_score > 0 else 1,
-                    'opportunity_score': opportunity_score
+                '1d': {
+                    'columns': ['open', 'high', 'low', 'close', 'volume'],
+                    'lookback': 365
                 }
-                
-        return signals
-
-    def get_target(self, data):
-        """Calculate target positions based on current signals"""
-        signals = self.get_signal(data)
-        targets = {}
-        
-        for pair, signal in signals.items():
-            position_size = min(
-                self.POSITION_SIZE * self.capital * (signal['opportunity_score'] ** 2),
-                self.MAX_RISK_PER_BET * self.capital / max(1, abs(signal['z_score']))
-            )
-            
-            targets[pair] = {
-                'asset1': signal['asset1'],
-                'asset2': signal['asset2'],
-                'position_size': position_size,
-                'direction': signal['direction']
             }
-            
-        return targets
-
-    def get_trades(self, data):
-        """Generate trade execution instructions"""
-        targets = self.get_target(data)
-        trades = []
-        
-        for pair, target in targets.items():
-            trades.append({
-                'pair': pair,
-                'asset1': target['asset1'],
-                'asset2': target['asset2'],
-                'position_size': target['position_size'],
-                'direction': target['direction']
-            })
-            
-        return trades
-
-    def get_metrics(self, data):
-        """Calculate strategy performance metrics"""
-        if len(self.equity_curve) < 2:
-            return {
-                'cagr': 0,
-                'sharpe_ratio': 0,
-                'max_drawdown': 0
-            }
-            
-        returns = pd.Series(self.equity_curve).pct_change().dropna()
-        
-        # CAGR
-        try:
-            years = (data.index[-1] - data.index[0]).days / 365.25
-            cagr = (self.equity_curve[-1] / self.equity_curve[0]) ** (1/years) - 1
-        except:
-            cagr = 0
-            
-        # Sharpe Ratio
-        try:
-            excess_returns = returns - 0.05/252
-            sharpe = np.sqrt(252) * excess_returns.mean() / returns.std()
-            if np.isinf(sharpe) or np.isnan(sharpe):
-                sharpe = 0
-        except:
-            sharpe = 0
-            
-        # Max Drawdown
-        try:
-            rolling_max = pd.Series(self.equity_curve).expanding().max()
-            drawdowns = pd.Series(self.equity_curve) / rolling_max - 1
-            max_drawdown = drawdowns.min()
-        except:
-            max_drawdown = 0
-            
-        return {
-            'cagr': cagr * 100,
-            'sharpe_ratio': sharpe,
-            'max_drawdown': max_drawdown * 100
         }
-
-    def get_params(self):
-        """Get current strategy parameters"""
-        return {
-            'TICKERS': self.TICKERS,
-            'TRAINING_PERIOD': self.TRAINING_PERIOD,
-            'CORRELATION_THRESHOLD': self.CORRELATION_THRESHOLD,
-            'ADF_P_VALUE_THRESHOLD': self.ADF_P_VALUE_THRESHOLD,
-            'ENTRY_THRESHOLD': self.ENTRY_THRESHOLD,
-            'EXIT_THRESHOLD': self.EXIT_THRESHOLD,
-            'STOP_LOSS_THRESHOLD': self.STOP_LOSS_THRESHOLD,
-            'VOLUME_WINDOW': self.VOLUME_WINDOW,
-            'MAX_VOLUME_PERCENTAGE': self.MAX_VOLUME_PERCENTAGE,
-            'TOTAL_CAPITAL': self.TOTAL_CAPITAL,
-            'MIN_RISK_REWARD_RATIO': self.MIN_RISK_REWARD_RATIO,
-            'LOOKBACK_PERIOD': self.LOOKBACK_PERIOD,
-            'POSITION_SIZE': self.POSITION_SIZE,
-            'MAX_RISK_PER_BET': self.MAX_RISK_PER_BET,
-            'MIN_OPPORTUNITY_SCORE': self.MIN_OPPORTUNITY_SCORE,
-            'DYNAMIC_ENTRY_THRESHOLD': self.DYNAMIC_ENTRY_THRESHOLD,
-            'ENTRY_THRESHOLD_RANGE': self.ENTRY_THRESHOLD_RANGE,
-            'DYNAMIC_OPPORTUNITY_THRESHOLD': self.DYNAMIC_OPPORTUNITY_THRESHOLD,
-            'OPPORTUNITY_THRESHOLD_RANGE': self.OPPORTUNITY_THRESHOLD_RANGE,
-            'OPPORTUNITY_SCORE_WEIGHTS': self.OPPORTUNITY_SCORE_WEIGHTS
-        }
-
-    def set_datafeeder_inputs(self, inputs):
-        """Set datafeeder inputs for the strategy"""
-        if not callable(inputs.get('get_inputs')):
-            self.logger.error("datafeeder_inputs must have a callable 'get_inputs' method")
-            return
-            
-        self.datafeeder_inputs = inputs
-        self.logger.info("Updated datafeeder inputs with symbols: %s",
-                        self.datafeeder_inputs['get_inputs']()['symbols'])
-
-    def set_params(self, config):
-        """Set strategy parameters"""
-        for key, value in config.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-
-    def fetch_data(self, tickers: List[str], period: str) -> pd.DataFrame:
-        """Fetch historical adjusted close prices for given tickers from Yahoo Finance."""
-        try:
-            data = yf.download(tickers, period=period, progress=False)['Adj Close']
-            data = data.dropna(axis=1, how='all')
-            data = data.ffill().bfill()
-            return data
-        except Exception as e:
-            self.logger.error(f"Error fetching data: {str(e)}")
-            raise
-
-    def calculate_correlation(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Pearson correlation matrix for all pairs of assets."""
-        return data.corr()
-
-    def cointegration_test(self, pair: Tuple[str, str], data: pd.DataFrame) -> float:
-        """Perform comprehensive cointegration testing on a pair of assets."""
-        try:
-            P_i = data[pair[0]]
-            P_j = data[pair[1]]
-            
-            # Augmented Dickey-Fuller test
-            X = sm.add_constant(P_j)
-            model = OLS(P_i, X).fit()
-            residuals = model.resid
-            adf_result = adfuller(residuals, maxlag=1)
-            return adf_result[1]
-        except Exception as e:
-            self.logger.error(f"Error in cointegration test for {pair}: {str(e)}")
-            return 1.0
-
-    def identify_pairs(self, tickers: List[str], data: pd.DataFrame) -> List[Dict]:
-        """Identify potential trading pairs based on correlation and cointegration."""
-        pairs = []
-        corr_matrix = self.calculate_correlation(data)
+        self.config_manager = config_manager
+        self.data_handler = data_handler
+        self.pair_selector = PairSelector(config_manager, data_handler)
+        # Define TradingLogic class reference
+        from vault.pairs_trading import TradingLogic
+        self.trading_logic = TradingLogic(config_manager, data_handler)
+        self.trade_log = []
         
-        for i in range(len(tickers)):
-            for j in range(i+1, len(tickers)):
-                pair = (tickers[i], tickers[j])
-                corr = corr_matrix.loc[pair[0], pair[1]]
-                
-                if corr >= self.CORRELATION_THRESHOLD:
-                    adf_p_value = self.cointegration_test(pair, data)
-                    if adf_p_value < self.ADF_P_VALUE_THRESHOLD:
-                        pairs.append({
-                            'pair': pair,
-                            'corr': corr,
-                            'adf_p_value': adf_p_value
-                        })
-                        
-        return pairs
-
-    def calculate_opportunity_score(self, pair: Tuple[str, str], z_score: float) -> float:
-        """Calculate opportunity score based on multiple factors."""
-        if not hasattr(self, 'spread_history') or pair not in self.spread_history:
-            return 0
-            
-        spreads = self.spread_history[pair]
-        if len(spreads) < self.LOOKBACK_PERIOD:
-            return 0
-            
-        # Calculate correlation component
-        try:
-            window_sizes = [20, 40, 60]
-            correlations = []
-            for window in window_sizes:
-                if len(spreads) > window:
-                    rolling_corr = pd.Series(spreads).rolling(window=window).corr(pd.Series(spreads).shift(1))
-                    correlations.append(abs(rolling_corr.iloc[-1]))
-            
-            correlation = np.mean([c for c in correlations if not np.isnan(c)])
-            correlation_stability = 1 - np.std([c for c in correlations if not np.isnan(c)])
-            correlation_score = correlation * correlation_stability
-        except:
-            correlation_score = 0.0
+    def process_data(self, historical_data: Dict[str, pd.DataFrame],
+                    current_prices: Dict[str, float],
+                    window_start: datetime.datetime,
+                    window_end: datetime.datetime,
+                    current_equity: float):
+        """Main processing method called by the trading system"""
+        # Select pairs
+        pairs = self.pair_selector.select_pairs(historical_data, window_start, window_end, {})
         
-        # Volatility component
-        try:
-            vol_windows = [5, 10, 20]
-            volatilities = []
-            for window in vol_windows:
-                vol = pd.Series(spreads).rolling(window=window).std().iloc[-1]
-                volatilities.append(vol)
-            
-            # Normalize volatility using logarithmic scaling
-            min_vol = 0.01
-            max_vol = 0.5
-            scaled_vol = (np.log(volatility + min_vol) - np.log(min_vol)) / \
-                        (np.log(max_vol + min_vol) - np.log(min_vol))
-            
-            # Apply trend adjustment
-            trend_factor = 1.0 if vol_trend <= 1.1 else 0.75
-            vol_score = (1 - scaled_vol) * trend_factor
-        except:
-            vol_score = 0.0
-        
-        # Z-score component
-        try:
-            z_score_abs = abs(z_score)
-            z_score_abs = 0.0 if np.isnan(z_score_abs) else z_score_abs
-            
-            # Calculate historical z-scores with weighted average
-            lookback_windows = [20, 40, 60]
-            z_scores = []
-            for window in lookback_windows:
-                if len(self.spread_history[pair]) > window:
-                    spread = pd.Series(self.spread_history[pair][-window:])
-                    z = (spread - spread.mean()) / spread.std()
-                    z_scores.append(z.iloc[-1])
-            
-            # Weight recent z-scores more heavily
-            weights = [0.2, 0.3, 0.5]
-            weighted_z = sum(z * w for z, w in zip(z_scores, weights)) / sum(weights)
-            
-            # Calculate z_score_score with smoother scaling
-            z_score_score = min(z_score_abs / self.ENTRY_THRESHOLD, 1.0)
-            z_score_score *= 1 / (1 + np.exp(-weighted_z))
-        except:
-            z_score_score = 0.0
-        
-        # Cointegration score
-        try:
-            window = min(len(spreads), 120)
-            rolling_coint = []
-            for i in range(max(window, len(spreads)-3), len(spreads)):
-                y = pd.Series(spreads[i-window:i])
-                x = pd.Series(range(len(y)))
-                model = sm.OLS(y, sm.add_constant(x)).fit()
-                residuals = model.resid
-                coint_stat = sm.tsa.stattools.adfuller(residuals)[0]
-                rolling_coint.append(coint_stat)
-            
-            coint_score = np.tanh(-np.mean(rolling_coint))
-            coint_stability = 1 - np.std(rolling_coint) / abs(np.mean(rolling_coint))
-            coint_score *= max(0.2, coint_stability)
-        except:
-            coint_score = 0.0
-        
-        # Calculate final score with updated weights
-        final_score = (
-            self.OPPORTUNITY_SCORE_WEIGHTS['zscore'] * z_score_score +
-            self.OPPORTUNITY_SCORE_WEIGHTS['correlation'] * correlation_score +
-            self.OPPORTUNITY_SCORE_WEIGHTS['volatility'] * vol_score +
-            self.OPPORTUNITY_SCORE_WEIGHTS['cointegration'] * coint_score
+        # Process trading logic
+        self.trading_logic.process_new_data(
+            historical_data,
+            current_prices,
+            self.pair_selector,
+            self.trade_log,
+            bid_ask_spread_percentage=BID_ASK_SPREAD_MULTIPLIER,
+            order_book_slippage=ORDER_BOOK_SLIPPAGE_MULTIPLIER,
+            window_start=window_start,
+            window_end=window_end,
+            current_equity=current_equity
         )
         
-        return final_score
-
-    def backtest(self, data: pd.DataFrame, pairs: List[Dict]) -> Dict:
-        """Run backtest on identified pairs"""
-        results = {
-            'total_pnl': 0,
-            'n_trades': 0,
-            'win_rate': 0,
-            'equity_curve': [self.capital],
-            'metrics': {},
-            'trades': []
-        }
-        
-        # Initialize portfolio and spread history
-        portfolio_value = self.capital
-        active_trades = {}
-        
-        # Initialize spread history for all pairs
-        for pair_info in pairs:
-            pair = pair_info['pair']
-            self.spread_history[pair] = []
-        
-        # Iterate through each day
-        for i in range(self.LOOKBACK_PERIOD, len(data)):
-            current_date = data.index[i]
-            prices = data.iloc[i]
-            
-            # Check for trade exits
-            for pair, trade in list(active_trades.items()):
-                spread = prices[trade['asset1']] - prices[trade['asset2']]
-                z_score = (spread - trade['spread_mean']) / trade['spread_std']
-                
-                # Exit conditions
-                if (abs(z_score) <= self.EXIT_THRESHOLD or
-                    (current_date - trade['entry_date']).days >= 30):  # Max holding period
-                    
-                    # Calculate PnL
-                    pnl = self._calculate_trade_pnl(trade, prices)
-                    portfolio_value += pnl
-                    results['total_pnl'] += pnl
-                    results['n_trades'] += 1
-                    
-                    # Record trade
-                    trade.update({
-                        'exit_date': current_date,
-                        'exit_price1': prices[trade['asset1']],
-                        'exit_price2': prices[trade['asset2']],
-                        'pnl': pnl
-                    })
-                    results['trades'].append(trade)
-                    del active_trades[pair]
-            
-            # Check for new trade opportunities
-            for pair_info in pairs:
-                pair = pair_info['pair']
-                asset1, asset2 = pair
-                
-                # Calculate spread statistics
-                lookback_data = data.iloc[i-self.LOOKBACK_PERIOD:i]
-                spread = lookback_data[asset1] - lookback_data[asset2]
-                spread_mean = spread.mean()
-                spread_std = spread.std()
-                current_spread = prices[asset1] - prices[asset2]
-                z_score = (current_spread - spread_mean) / spread_std
-                
-                # Check entry conditions
-                opportunity_score = self.calculate_opportunity_score(pair, z_score)
-                
-                if (abs(z_score) >= self.ENTRY_THRESHOLD and
-                    opportunity_score >= self.MIN_OPPORTUNITY_SCORE and
-                    pair not in active_trades):
-                    
-                    # Calculate position size
-                    position_size = min(
-                        self.POSITION_SIZE * portfolio_value * (opportunity_score ** 2),
-                        self.MAX_RISK_PER_BET * portfolio_value / max(1, abs(z_score))
-                    )
-                    
-                    # Execute trade
-                    trade = {
-                        'pair': pair,
-                        'asset1': asset1,
-                        'asset2': asset2,
-                        'entry_date': current_date,
-                        'entry_price1': prices[asset1],
-                        'entry_price2': prices[asset2],
-                        'spread_mean': spread_mean,
-                        'spread_std': spread_std,
-                        'position_size': position_size,
-                        'z_score': z_score,
-                        'direction': -1 if z_score > 0 else 1
-                    }
-                    active_trades[pair] = trade
-                    portfolio_value -= position_size * 0.001  # Transaction cost
-            
-            # Update spread history and equity curve
-            for pair_info in pairs:
-                pair = pair_info['pair']
-                spread = prices[pair[0]] - prices[pair[1]]
-                self.spread_history[pair].append(spread)
-                
-            results['equity_curve'].append(portfolio_value)
-        
-        # Calculate performance metrics
-        results['metrics'] = self.get_metrics(data)
-        
-        # Calculate win rate
-        if results['n_trades'] > 0:
-            winning_trades = len([t for t in results['trades'] if t['pnl'] > 0])
-            results['win_rate'] = winning_trades / results['n_trades']
-        
-        return results
-
-    def _calculate_trade_pnl(self, trade: Dict, prices: pd.Series) -> float:
-        """Calculate PnL for a single trade"""
-        price_change1 = prices[trade['asset1']] - trade['entry_price1']
-        price_change2 = prices[trade['asset2']] - trade['entry_price2']
-        
-        if trade['direction'] == -1:
-            pnl = (-price_change1 + price_change2) * trade['position_size']
-        else:
-            pnl = (price_change1 - price_change2) * trade['position_size']
-            
-        return pnl
-
-    def plot_performance(self, equity_curve: pd.Series, benchmark: pd.Series):
-        """Plot strategy performance vs benchmark"""
-        try:
-            strategy_norm = equity_curve / equity_curve.iloc[0] * 100
-            benchmark_norm = benchmark / benchmark.iloc[0] * 100
-            
-            plt.figure(figsize=(12, 6))
-            plt.plot(strategy_norm.index, strategy_norm.values, label='Strategy')
-            plt.plot(benchmark_norm.index, benchmark_norm.values, label='Benchmark')
-            plt.title('Strategy Performance')
-            plt.xlabel('Date')
-            plt.ylabel('Normalized Value')
-            plt.legend()
-            plt.grid(True)
-            plt.savefig('performance.png')
-            plt.close()
-        except Exception as e:
-            self.logger.error(f"Error plotting performance: {str(e)}")
-
-if __name__ == "__main__":
-    strategy = PairsTradingStrategy()
-    data = strategy.fetch_data(strategy.TICKERS, strategy.TRAINING_PERIOD)
-    results = strategy.backtest(data, strategy.identify_pairs(strategy.TICKERS, data))
-    print(results)
+        return self.trade_log

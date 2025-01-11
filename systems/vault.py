@@ -18,9 +18,23 @@ class Vault:
             # Try to get the strategy class with both naming conventions
             strategy_name = strategy.split('.')[-1]
             # Convert snake_case to CamelCase for strategy class name
-            strategy_class_name = ''.join(word.title() for word in strategy_name.split('_')) + 'Strategy'
-            strategy_class = getattr(module, 'Strategy', None) or getattr(module, strategy_class_name)
-            strategies_dict[strategy] = strategy_class(config_dict)
+            strategy_class_name = ''.join(word.title() for word in strategy_name.split('_'))
+            strategy_class = getattr(module, strategy_class_name, None) or getattr(module, strategy_class_name + 'Strategy')
+            # Create market data extractor if not already created
+            if not hasattr(self, 'market_data_extractor'):
+                from systems.utils import MarketDataExtractor
+                self.market_data_extractor = MarketDataExtractor()
+            
+            # Create data handler instance
+            from vault.pairs_trading import DataHandler
+            data_handler = DataHandler(
+                data_dir=config_dict['data_update_inputs']['data_paths']['ibkr'],
+                tickers=[],
+                data_frequency="D",
+                timezone="UTC"
+            )
+            
+            strategies_dict[strategy] = strategy_class(config_dict, data_handler)
         return strategies_dict
     
     def create_datafeeder_config(self, config_dict, strategies):
@@ -37,9 +51,15 @@ class Vault:
         data_inputs = {}
         list_of_symbols = []
         for strategy_name, strategy in strategies.items():
-            data_input_temp , list_of_symbols_temp = strategy.datafeeder_inputs['get_inputs']()
-            self.tickers_dict[strategy_name] = list_of_symbols_temp
-            data_inputs = data_inputs | data_input_temp
+            inputs = strategy.datafeeder_inputs['get_inputs']()
+            if isinstance(inputs, tuple):
+                data_input_temp, list_of_symbols_temp = inputs
+                self.tickers_dict[strategy_name] = list_of_symbols_temp
+                data_inputs = data_inputs | data_input_temp
+            else:
+                # Handle dictionary return type from pairs_trading
+                data_inputs = data_inputs | inputs
+                self.tickers_dict[strategy_name] = inputs.get('symbols', [])
 
         # self.logger.debug({'self.tickers_dict':self.tickers_dict})
         list_of_symbols = list(set([ticker for ticker_list in self.tickers_dict.values() for ticker in ticker_list]))

@@ -28,8 +28,22 @@ config_dict = {
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
     # 'live_start_date': datetime(year=2024, month=11, day=28, hour=9, minute=31, second=0).astimezone(pytz.timezone('US/Eastern')),
-    'strategies':['strategy_dev.strategy_5.strategy_5_1_6'], # 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set. strategy_3_1_take_profit_pct
-    'data_update_inputs': {'data_sources':{'sim':'ibkr', 'live':'ibkr'}}, # 'yahoo', 'ibkr'
+    'strategies':['pairs_trading'], # Using pairs trading strategy
+    'data_update_inputs': {
+        'data_sources': {'sim':'ibkr', 'live':'ibkr'},
+        'data_paths': {
+            'ibkr': '/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr/1d'
+        }
+    },
+    'datafeeder_config': {
+        'data_inputs': {
+            '1d': {
+                'columns': ['open', 'high', 'low', 'close', 'volume'],
+                'lookback': 365
+            }
+        },
+        'list_of_symbols': ['AAPL', 'MSFT']
+    },
     'sleep_time':60,
     'account_info':{
                     'ibkr':{IBKR_base_account_number:{base_currency:{}

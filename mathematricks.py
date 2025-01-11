@@ -14,9 +14,7 @@ from systems.telegram import TelegramBot
 from colorama import Fore, Style
 # warnings.filterwarnings("ignore")
 
-'''
-write the software for AAPL, MSFT only.
-'''
+
 
 class Mathematricks:
     def __init__(self, config_dict):
@@ -310,7 +308,11 @@ class Mathematricks:
                     self.logger.debug('Exiting...')
                     break
                 except Exception as e:
-                    raise Exception(e)
+                    self.logger.error(f"Error in main loop: {str(e)}", exc_info=True)
+                    if isinstance(e, IndexError):
+                        self.logger.error(f"Current market data: {self.current_market_data_df.shape if self.current_market_data_df is not None else 'None'}")
+                        self.logger.error(f"Next rows: {next_rows.shape if next_rows is not None else 'None'}")
+                    raise
                     
         elif run_mode == 4:
             self.datafeeder.update_all_historical_price_data(self.live_bool)
@@ -319,9 +321,12 @@ class Mathematricks:
             raise AssertionError('Invalid run_mode value: {}'.format(run_mode))
 
 if __name__ == '__main__':
-    logs_folder = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/logs'
+    logs_folder = '/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/logs'
     # Remove all .log files from logs folder
     for file in os.listdir(logs_folder):
         if file.endswith('.log'):
             os.remove(os.path.join(logs_folder, file))
-    Mathematricks(config_dict).run()
+    # Mathematricks(config_dict).run()
+    m = Mathematricks(config_dict)
+    m.logger.debug('testing')
+    m.logger.info('testing')

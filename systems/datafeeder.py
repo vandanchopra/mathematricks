@@ -69,9 +69,11 @@ class DataFeeder:
     
     def create_lookback_dict(self):
         lookback_dict = {}
-        for interval in self.config_dict['datafeeder_config']['data_inputs']:
-            lookback = self.config_dict['datafeeder_config']['data_inputs'][interval]['lookback']
-            lookback_dict[interval] = lookback
+        if isinstance(self.config_dict, dict) and 'datafeeder_config' in self.config_dict:
+            data_inputs = self.config_dict['datafeeder_config'].get('data_inputs', {})
+            for interval, config in data_inputs.items():
+                if isinstance(config, dict) and 'lookback' in config:
+                    lookback_dict[interval] = config['lookback']
         return lookback_dict
     
     def reset_lookback_dict(self):
@@ -94,7 +96,7 @@ class DataFeeder:
         current_datetime = current_datetime.astimezone(pytz.timezone('UTC'))
         current_date = current_datetime.date()
         nyse = mcal.get_calendar('NYSE')
-        schedule = nyse.schedule(start_date=current_datetime - datetime.timedelta(days=4), end_date=current_datetime)
+        schedule = nyse.schedule(start_date=current_datetime - datetime.timedelta(days=30), end_date=current_datetime + datetime.timedelta(days=30))
         current_date_str = current_date.strftime('%Y-%m-%d')
         if current_date_str in schedule.index:
             if current_datetime >= schedule.loc[current_date_str]['market_open'] and current_datetime <= schedule.loc[current_date_str]['market_close']:
@@ -167,7 +169,16 @@ class DataFeeder:
     
     def get_next_expected_timestamp(self, system_timestamp):
         interval_inputs = self.config_dict['datafeeder_config']['data_inputs']
-        next_expected_timestamp_temp = min([self.sleep_lookup[interval] for interval in interval_inputs])
+        if isinstance(interval_inputs, dict):
+            # Handle case where data_inputs contains 'get_inputs' method
+            if 'get_inputs' in interval_inputs:
+                inputs = interval_inputs['get_inputs']()
+                intervals = inputs.keys()
+            else:
+                intervals = interval_inputs.keys()
+        else:
+            intervals = []
+        next_expected_timestamp_temp = min([self.sleep_lookup[interval] for interval in intervals]) if intervals else 60
         now = datetime.datetime.now().astimezone(pytz.timezone('UTC'))
         now_tz = now.astimezone(pytz.timezone('US/Eastern'))
         passed_time = now - system_timestamp
@@ -336,17 +347,35 @@ class DataFeeder:
             if self.datafeeder_system_timestamp:
                 for interval in self.market_data_df.index.get_level_values(0).unique():
                     first_row = self.market_data_df.loc[interval,:].iloc[0]
+                    # Create DataFrame with proper MultiIndex
                     first_df = pd.DataFrame(first_row).T
-                    first_df.index.names = ['datetime']
-                    if first_df.index[0] == self.datafeeder_system_timestamp:
-                        self.datafeeder_system_timestamp = first_df.index[0]
-                        first_df.reset_index(drop=False,inplace=True)
-                        first_df['interval'] = interval
-                        first_df.set_index(['interval','datetime'],inplace=True)
+                    # Create DataFrame with proper index
+                    first_df = pd.DataFrame(first_row).T
+                    
+                    # Ensure we have a valid timestamp index
+                    if not isinstance(first_df.index, pd.DatetimeIndex):
+                        # If index is not datetime, try to parse it
+                        try:
+                            first_df.index = pd.to_datetime(first_df.index)
+                        except:
+                            # If parsing fails, create a new datetime index
+                            first_df.index = pd.date_range(start='2000-01-01', periods=len(first_df), freq='D')
+                    
+                    # Get the first timestamp
+                    timestamp = first_df.index[0]
+                    first_df.index = pd.MultiIndex.from_tuples(
+                        [(interval, timestamp)],
+                        names=['interval', 'datetime']
+                    )
+                    
+                    # Check if timestamp matches
+                    if first_df.index[0][1] == self.datafeeder_system_timestamp:
+                        self.datafeeder_system_timestamp = first_df.index[0][1]
                         first_rows.append(first_df)
-
-                        # remove the first row from the DataFrame
-                        self.market_data_df = self.market_data_df.drop((interval, first_row.name))
+                        
+                        # Remove the first row using the exact index
+                        idx_to_drop = first_df.index[0]
+                        self.market_data_df = self.market_data_df.drop(idx_to_drop)
                         # self.logger.debug({'market_data_df':len(self.market_data_df)})
                         
                     
