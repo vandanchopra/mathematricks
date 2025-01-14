@@ -13,9 +13,6 @@ from copy import deepcopy
 from systems.telegram import TelegramBot
 from colorama import Fore, Style
 # warnings.filterwarnings("ignore")
-
-
-
 class Mathematricks:
     def __init__(self, config_dict):
         self.logger = create_logger(log_level='DEBUG', logger_name='Mathematricks', print_to_console=True)
@@ -30,7 +27,8 @@ class Mathematricks:
         # Update the config_dict with the latest values from Vault
         self.config_dict = self.vault.config_dict
         self.rms = RMS(self.config_dict, self.market_data_extractor)
-        self.datafeeder = DataFeeder(self.config_dict)
+        # self.datafeeder = DataFeeder(self.config_dict)
+        self.datafeeder = DataFeeder(config_dict)
         self.live_bool = False
         self.reporter = PerformanceReporter(self.market_data_extractor)
         self.system_timestamp = pd.Timestamp('1901-01-01 00:00:00+0000', tz='UTC')
@@ -326,7 +324,7 @@ if __name__ == '__main__':
     for file in os.listdir(logs_folder):
         if file.endswith('.log'):
             os.remove(os.path.join(logs_folder, file))
-    # Mathematricks(config_dict).run()
-    m = Mathematricks(config_dict)
-    m.logger.debug('testing')
-    m.logger.info('testing')
+    Mathematricks(config_dict).run()
+    # m = Mathematricks(config_dict)
+    # m.logger.debug('testing')
+    # m.logger.info('testing')

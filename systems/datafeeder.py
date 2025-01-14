@@ -20,6 +20,7 @@ from systems.performance_reporter import PerformanceReporter
 class DataFeeder:
     def __init__(self, config_dict):
         self.config_dict = config_dict
+        print(f'Config Dict: {config_dict}')
         self.market_data_extractor = MarketDataExtractor()
         self.datafetcher = DataFetcher(self.config_dict, self.market_data_extractor)
         self.logger = create_logger(log_level='DEBUG', logger_name='datafeeder')
@@ -300,30 +301,28 @@ class DataFeeder:
             # self.logger.info({'first_timestamp_':first_timestamp_, 'last_timestamp_':last_timestamp_})
             # sleeper(20, 'Just taking a small break 1')
         # elif
-        while len(self.market_data_df) < 1 and run_mode in [1,2]:
+        if len(self.market_data_df) < 1 and run_mode in [1,2]:
             # self.logger.info({'Perpetual loop is running to fetch data...system_timestamp':system_timestamp})
             start_date = system_timestamp if system_timestamp else start_date
-            historical_data_update_bool = False
             self.lookback_dict = self.reset_lookback_dict()
             # self.logger.info({'start_date':start_date.astimezone(pytz.timezone('US/Eastern')), 'end_date':end_date, 'self.lookback_dict':self.lookback_dict})
             # self.logger.debug(f'Market Data DF Empty: Fetching data for {start_date} to {end_date} | System Timestamp: {system_timestamp}, Lookback Dict: {self.lookback_dict}, Live Bool: {live_bool}')
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=throttle_secs, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
-            # timestamps = self.market_data_extractor.get_market_data_df_timestamps(self.market_data_df)
-            # self.logger.info({'timestamp_0':timestamps[0].astimezone(pytz.timezone('US/Eastern')), 'timestamp_-1':timestamps[-1].astimezone(pytz.timezone('US/Eastern'))})
-            # self.logger.info({'self.market_data_df':self.market_data_df.head(5)})
+            self.market_data_df = self.datafetcher.fetch_updated_price_data(
+                start_date=start_date,
+                end_date=end_date,
+                throttle_secs=throttle_secs,
+                lookback=self.lookback_dict,
+                run_mode=self.config_dict['run_mode'],
+                live_bool=live_bool
+            )
             
-            # self.logger.info({'self.market_data_df':self.market_data_df})
             if len(self.market_data_df) < 1:
                 now_utc = pd.Timestamp.now().tz_localize('UTC')
                 sleep_time = self.get_next_expected_timestamp(now_utc)
-                min_hours_for_data_update = 60*60*4
-                if self.is_time_between_0001_and_0900() and sleep_time > min_hours_for_data_update and not historical_data_update_bool:
-                    self.logger.info(f"Live Bool: {live_bool} | Sleep time is more than 4 hours. Updating all historical data. Sleep Time: {int(sleep_time / 60)} minutes")
+                if self.is_time_between_0001_and_0900() and sleep_time > 60*60*4:
+                    self.logger.info(f"Live Bool: {live_bool} | Updating all historical data")
                     self.update_all_historical_price_data()
-                    historical_data_update_bool = True
-                    pass
-                else:# self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date})
-                    sleeper(min(sleep_time, 60*60*2), f'Live Bool: {live_bool} | System Sleeping: Time to next timestamp')
+                sleeper(min(sleep_time, 60*60*2), f'Live Bool: {live_bool} | System Sleeping')
                 
             # self.logger.info({'start_date':start_date, 'end_date':end_date})
             # msg = 'market_data_df Shape: '

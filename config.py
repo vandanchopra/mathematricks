@@ -32,7 +32,7 @@ config_dict = {
     'data_update_inputs': {
         'data_sources': {'sim':'ibkr', 'live':'ibkr'},
         'data_paths': {
-            'ibkr': '/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr/1d'
+            'ibkr': '/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr/'
         }
     },
     'datafeeder_config': {
@@ -40,6 +40,10 @@ config_dict = {
             '1d': {
                 'columns': ['open', 'high', 'low', 'close', 'volume'],
                 'lookback': 365
+            },
+            '1m': {
+                'columns': ['open', 'high', 'low', 'close', 'volume'],
+                'lookback': 1440
             }
         },
         'list_of_symbols': ['AAPL', 'MSFT']
@@ -52,7 +56,7 @@ config_dict = {
                     'sim':{'sim_1': {base_currency:{'total_account_value': sim_account_starting_value_base, 
                                                     'buying_power_available':sim_account_starting_value_base * sim_account_margin_multiplier, 
                                                     'buying_power_used':0, 'cushion':0, 'pledge_to_margin_used':0, 
-                                                    'pledge_to_margin_availble':sim_account_starting_value_base
+                                                    'pledge_to_margin_available':sim_account_starting_value_base
                                                     }
                                      }
                            }

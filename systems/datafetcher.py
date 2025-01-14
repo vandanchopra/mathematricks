@@ -21,7 +21,6 @@ class DataFetcher:
         data_source =  data_sources['live'] if live_bool else data_sources['sim']
         # self.logger.debug({'data_source':data_source, 'data_sources':data_sources})
         # sleeper(10, 'Giving you time to read the above Message 2')
-
         if data_source == 'yahoo':
             market_data_df = self.broker.sim.data.update_price_data(list_of_symbols, interval_inputs=interval_inputs, throttle_secs=throttle_secs, start_date=start_date, end_date=end_date, lookback=lookback, update_data=update_data, run_mode=run_mode)
             

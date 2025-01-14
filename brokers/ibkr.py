@@ -10,10 +10,8 @@ from datetime import datetime, timedelta
 from systems.utils import create_logger, project_path
 import pandas_market_calendars as mcal
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
 # --- Constants ---
-HARDCODED_DATA_DIR = "/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr/"
+HARDCODED_DATA_DIR = "/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr"
 
 
 class ConfigManager:
@@ -58,7 +56,7 @@ class IBKR(IBKRConnect):
 class Data:
     """Handles loading and processing historical data from local files."""
     def __init__(self):
-        self.logger = create_logger(log_level=logging.DEBUG, logger_name='IBKR-data', print_to_console=True)
+        self.glogger = create_logger(log_level=logging.DEBUG, logger_name='IBKR-data', print_to_console=True)
         self.interval_lookup = {"1m": "1 min", "2m": "2min", "5m": "5 min", "1d": "1 day"}
         self.market_open_bool = self.is_market_open(pd.Timestamp.now().tz_localize('UTC'))
 
@@ -67,36 +65,36 @@ class Data:
                          run_mode=4):
         """Fetches price data from local CSV files."""
         data_frames = []
-
-        self.logger.debug(f"Looking for data in folder: {data_folder}")
+        self.glogger.debug(f"Looking for data in folder: {data_folder}")
 
         for interval in interval_inputs:
-            interval_folder = data_folder
-            self.logger.debug(f"Checking interval folder: {interval_folder}")
+            interval_folder = os.path.join(data_folder, interval)
+            self.glogger.debug(f"Checking interval folder: {interval_folder}")
 
             if not os.path.exists(interval_folder):
-                self.logger.warning(f"Interval folder does not exist: {interval_folder}")
+                self.glogger.warning(f"Interval folder does not exist: {interval_folder}")
                 continue
+                
             
             for symbol in stock_symbols:
                 csv_path = os.path.join(interval_folder, f"{symbol}.csv")
-                self.logger.debug(f"Checking for file: {csv_path}")
+                self.glogger.debug(f"Checking for file: {csv_path}")
 
                 if os.path.exists(csv_path):
-                    self.logger.debug(f"Found file: {csv_path}")
+                    self.glogger.debug(f"Found file: {csv_path}")
                     try:
                         df = pd.read_csv(csv_path, index_col='datetime', parse_dates=True)
-                        self.logger.debug(f"Successfully read {csv_path} with {len(df)} rows")
+                        self.glogger.debug(f"Successfully read {csv_path} with {len(df)} rows")
                         df['symbol'] = symbol
                         df['interval'] = interval
                         data_frames.append(df)
                     except Exception as e:
-                        self.logger.error(f"Error reading {csv_path}: {str(e)}")
-                        self.logger.debug(f"File contents: {open(csv_path).read(100)}...")
+                        self.glogger.error(f"Error reading {csv_path}: {str(e)}")
+                        self.glogger.debug(f"File contents: {open(csv_path).read(100)}...")
                 else:
-                    self.logger.debug(f"File not found: {csv_path}")
+                    self.glogger.debug(f"File not found: {csv_path}")
         if not data_frames:
-           self.logger.error("No data files found")
+           self.glogger.error("No data files found")
            return pd.DataFrame()
         
         combined_df = pd.concat(data_frames)

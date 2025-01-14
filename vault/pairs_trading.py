@@ -51,34 +51,52 @@ DEFAULT_OUTLIER_THRESHOLD = 3
 
 class ConfigManager:
     """Manages configuration settings for the trading strategy."""
-    def __init__(self, config_file_path):
-        self.config_file_path = config_file_path
+    def __init__(self, config_input):
+        self.config_input = config_input
         self.config = self._load_config()
 
     def _load_config(self):
-        try:
-            with open(self.config_file_path, 'r') as f:
-                config = json.load(f)
-            return config
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logging.error(f"Failed to load config file from {self.config_file_path}. Error: {e}. Using defaults.")
+        if isinstance(self.config_input, dict):
+            return self.config_input
+        elif isinstance(self.config_input, (str, bytes, os.PathLike)):
+            try:
+                with open(self.config_input, 'r') as f:
+                    config = json.load(f)
+                return config
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                logging.error(f"Failed to load config file from {self.config_input}. Error: {e}. Using defaults.")
+                return {}
+        else:
+            logging.error(f"Invalid config input type: {type(self.config_input)}. Using defaults.")
             return {}
 
     def get(self, key, default=None):
-        return self.config.get(key, default)
+        """Get config value, supports dot notation for nested keys"""
+        keys = key.split('.')
+        value = self.config
+        try:
+            for k in keys:
+                value = value[k]
+            return value
+        except (KeyError, TypeError):
+            return default
 
     def get_all(self):
       return self.config
 
 class DataHandler:
     """Handles loading, validating, and preprocessing historical data."""
-    def __init__(self, data_dir: str, tickers: List[str], data_frequency: str = "D", timezone: str = "UTC"):
+    def __init__(self, data_dir: str, tickers: List[str], data_frequency: str = "D", timezone: str = "UTC",
+                 max_data_points: int = 1000, cache_size: int = 100, logger=None):
         self.data_dir = data_dir
         self.tickers = tickers
         self.data_frequency = data_frequency
         self.timezone = timezone
+        self.max_data_points = max_data_points
+        self.cache_size = cache_size
+        self.logger = logger or logging.getLogger(__name__)
         self.historical_data = {}
-        self.data_cache = {}  # Cache for rolling window data
+        self.data_cache = deque(maxlen=cache_size)  # Cache for rolling window data with size limit
 
     def _validate_data(self, df: pd.DataFrame, ticker: str) -> bool:
         """Validates dataframe for non-empty, numeric values, required columns, and date duplicates"""
@@ -179,10 +197,10 @@ class DataHandler:
 class PairSelector:
     """Selects cointegrated pairs based on rolling window."""
     def __init__(self, config_manager: ConfigManager, data_handler: DataHandler):
-        self.correlation_threshold = config_manager.get('correlation_threshold', 0.7)
-        self.adf_p_value_threshold = config_manager.get('adf_p_value_threshold', 0.05)
-        self.min_training_period = config_manager.get('min_training_period', 30)
-        self.coint_test_freq_base = config_manager.get('coint_test_freq_base', COINTEGRATION_TEST_FREQUENCY_BASE)
+        self.correlation_threshold = config_manager.get('parameters.correlation_threshold', 0.7)
+        self.adf_p_value_threshold = config_manager.get('parameters.adf_p_value_threshold', 0.05)
+        self.min_training_period = config_manager.get('parameters.min_training_period', 30)
+        self.coint_test_freq_base = config_manager.get('parameters.coint_test_freq_base', COINTEGRATION_TEST_FREQUENCY_BASE)
         self.pairs = {}
         self.config_manager = config_manager
         self.data_handler = data_handler
@@ -295,14 +313,14 @@ class PairSelector:
 class TradingLogic:
     """Implements the core trading logic for the pairs strategy."""
     def __init__(self, config_manager: ConfigManager, data_handler: DataHandler):
-        self.entry_threshold = config_manager.get('entry_threshold', 2.0)
-        self.exit_threshold = config_manager.get('exit_threshold', 0.5)
-        self.stop_loss_atr_multiple = config_manager.get('stop_loss_atr_multiple', 2.0)
-        self.volume_window = config_manager.get('volume_window', 20)
-        self.max_volume_percentage = config_manager.get('max_volume_percentage', 0.2)
-        self.min_risk_reward_ratio = config_manager.get('min_risk_reward_ratio', 1.5)
-        self.atr_period = config_manager.get('atr_period', DEFAULT_ATR_PERIOD)
-        self.risk_per_trade = config_manager.get('risk_per_trade', DEFAULT_RISK_PER_TRADE)
+        self.entry_threshold = config_manager.get('parameters.entry_threshold', 2.0)
+        self.exit_threshold = config_manager.get('parameters.exit_threshold', 0.5)
+        self.stop_loss_atr_multiple = config_manager.get('parameters.stop_loss_atr_multiple', 2.0)
+        self.volume_window = config_manager.get('parameters.volume_window', 20)
+        self.max_volume_percentage = config_manager.get('parameters.max_volume_percentage', 0.2)
+        self.min_risk_reward_ratio = config_manager.get('parameters.min_risk_reward_ratio', 1.5)
+        self.atr_period = config_manager.get('parameters.atr_period', DEFAULT_ATR_PERIOD)
+        self.risk_per_trade = config_manager.get('parameters.risk_per_trade', DEFAULT_RISK_PER_TRADE)
         self.positions = {}
         self.config_manager = config_manager
         self.data_handler = data_handler
@@ -323,6 +341,9 @@ class PairsTradingStrategy:
         self.config_manager = config_manager
         self.data_handler = data_handler
         self.pair_selector = PairSelector(config_manager, data_handler)
+        # Initialize RMS
+        from systems.rms import RMS
+        self.rms = RMS(config_manager.get_all(), self.data_handler)
         # Define TradingLogic class reference
         from vault.pairs_trading import TradingLogic
         self.trading_logic = TradingLogic(config_manager, data_handler)
@@ -334,11 +355,15 @@ class PairsTradingStrategy:
                     window_end: datetime.datetime,
                     current_equity: float):
         """Main processing method called by the trading system"""
+        # Get entry threshold from config manager
+        entry_threshold = self.config_manager.get('parameters.entry_threshold', 1.2)
+        exit_threshold = self.config_manager.get('parameters.exit_threshold', 0.8)
+        
         # Select pairs
         pairs = self.pair_selector.select_pairs(historical_data, window_start, window_end, {})
         
         # Process trading logic
-        self.trading_logic.process_new_data(
+        trade_signals = self.trading_logic.process_new_data(
             historical_data,
             current_prices,
             self.pair_selector,
@@ -347,7 +372,33 @@ class PairsTradingStrategy:
             order_book_slippage=ORDER_BOOK_SLIPPAGE_MULTIPLIER,
             window_start=window_start,
             window_end=window_end,
-            current_equity=current_equity
+            current_equity=current_equity,
+            entry_threshold=entry_threshold,
+            exit_threshold=exit_threshold
         )
+        
+        # Apply risk management
+        margin_available = {
+            'sim': {
+                'sim_1': {
+                    self.config_manager.get('trading_currency'): {
+                        'total_buying_power': current_equity,
+                        'buying_power_available': current_equity
+                    }
+                }
+            }
+        }
+        
+        # Convert signals to orders with risk management
+        orders = self.rms.convert_signals_to_orders(
+            {'signals': trade_signals, 'ideal_portfolios': []},
+            margin_available,
+            [],
+            window_end,
+            False
+        )
+        
+        # Add orders to trade log
+        self.trade_log.extend(orders)
         
         return self.trade_log

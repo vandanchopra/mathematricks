@@ -13,5 +13,12 @@
         "position_size": 0.2,
         "max_risk_per_bet": 0.05,
         "min_opportunity_score": 0.15
+    },
+    "margin_config": {
+        "buying_power_available": 100000,
+        "buying_power_used": 0,
+        "pledge_to_margin_used": 0,
+        "pledge_to_margin_available": 100000,
+        "total_account_value": 100000
     }
 }

@@ -149,7 +149,7 @@ class SIM_Execute():
             if base_currency != trading_currency and currency == base_currency:
                 base_currency_account_balance_dict = {}
                 base_currency_account_balance_dict[currency] = starting_account_inputs[currency]
-                base_currency_account_balance_dict[currency]['margin_multiplier'] = (float(base_currency_account_balance_dict[currency]['buying_power_available']) + float(base_currency_account_balance_dict[currency]['buying_power_used'])) / (float(base_currency_account_balance_dict[currency]['pledge_to_margin_used']) + float(base_currency_account_balance_dict[currency]['pledge_to_margin_availble']))
+                base_currency_account_balance_dict[currency]['margin_multiplier'] = (float(base_currency_account_balance_dict[currency]['buying_power_available']) + float(base_currency_account_balance_dict[currency]['buying_power_used'])) / (float(base_currency_account_balance_dict[currency]['pledge_to_margin_used']) + float(base_currency_account_balance_dict[currency]['pledge_to_margin_available']))
                 base_currency_account_balance_dict[currency]['total_buying_power'] = float(base_currency_account_balance_dict[currency]['buying_power_available']) + float(base_currency_account_balance_dict[currency]['buying_power_used'])
                 base_currency_account_balance_dict[currency]['pct_of_margin_used'] = float(base_currency_account_balance_dict[currency]['pledge_to_margin_used']) / float(base_currency_account_balance_dict[currency]['total_account_value'])
                 

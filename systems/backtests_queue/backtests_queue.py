@@ -10,7 +10,11 @@ class BacktestQueue:
     def __init__(self):
         self.spreadsheet_url = 'https://docs.google.com/spreadsheets/d/1FqOpXfHIci2BQ173dwDV35NjkyEn4QmioIlMEH-WiOA/edit?gid=0'
         self.backtests_queue_sheetname = 'Backtest Queue'
-        self.backtests_queue_worksheet = self.get_worksheet(self.backtests_queue_sheetname, self.spreadsheet_url)
+        try:
+            self.backtests_queue_worksheet = self.get_worksheet(self.backtests_queue_sheetname, self.spreadsheet_url)
+        except Exception as e:
+            print(f"Warning: Could not connect to Google Sheets - {str(e)}")
+            self.backtests_queue_worksheet = None
         self.completed_backtests_sheetname = 'Completed Backtests'
         self.completed_backtests_worksheet = self.get_worksheet(self.completed_backtests_sheetname, self.spreadsheet_url)
         self.path_to_backtests_queue_json = project_path + 'db/vault/backtests_queue.json'
@@ -20,7 +24,7 @@ class BacktestQueue:
     def get_worksheet(self, sheet_name, spreadsheet_url):
     # Define the scope
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-        path_to_google_sheets_json = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/secrets/mathematricks-222505-d8b1ccce2084.json'
+        path_to_google_sheets_json = '/home/vandan/.secrets/mathematricks-222505-d8b1ccce2084.json'
 
         # Load the credentials
         creds = Credentials.from_service_account_file(path_to_google_sheets_json, scopes=SCOPES)
@@ -151,16 +155,20 @@ if __name__ == '__main__':
     # mode = None 
     mode = 'add_backtest'
     if mode == 'add_backtest':
-        # Add a backtest to the queue
-        new_backtest_dict = config_dict
-        new_backtest_dict['backtest_inputs']['start_date'] = pd.Timestamp(datetime(2022,9,25)).tz_localize('UTC').tz_convert('EST')
-        new_backtest_dict['backtest_inputs']['end_date'] = pd.Timestamp(datetime(2024,9,27)).tz_localize('UTC').tz_convert('EST')
-        new_backtest_dict['strategies'] = ['strategy_dev.strategy_3']
-        new_backtest_dict['data_update_inputs'] = {'data_sources':['yahoo']}
-        new_backtest_dict['risk_management'] = {'max_risk_per_bet':0.05, 'max_margin_utilized':3, 'margin_reserve_pct':0.2}
-        new_backtest_dict['oms'] = {'funds_available':100000, 'margin_available':100000, 'portfolio':{}}
-        backtest_entry = backtest_queue.create_backtest_entry_from_config_dict(config_dict)
-        backtest_queue.add_backtest_to_queue(backtest_entry)
+        try:
+            # Add a backtest to the queue
+            new_backtest_dict = config_dict
+            new_backtest_dict['backtest_inputs']['start_date'] = pd.Timestamp(datetime(2022,9,25)).tz_localize('UTC').tz_convert('EST')
+            new_backtest_dict['backtest_inputs']['end_date'] = pd.Timestamp(datetime(2024,9,27)).tz_localize('UTC').tz_convert('EST')
+            new_backtest_dict['strategies'] = ['strategy_dev.strategy_3']
+            new_backtest_dict['data_update_inputs'] = {'data_sources':['yahoo']}
+            new_backtest_dict['risk_management'] = {'max_risk_per_bet':0.05, 'max_margin_utilized':3, 'margin_reserve_pct':0.2}
+            new_backtest_dict['oms'] = {'funds_available':100000, 'margin_available':100000, 'portfolio':{}}
+            backtest_entry = backtest_queue.create_backtest_entry_from_config_dict(config_dict)
+            backtest_queue.add_backtest_to_queue(backtest_entry)
+        except Exception as e:
+            backtest_name = new_backtest_dict.get('backtest_name', 'Unnamed_Backtest')
+            backtest_queue.logger.error(f"Error adding backtest {backtest_name}: {str(e)}")
     else:
        pass
     

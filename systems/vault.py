@@ -1,6 +1,8 @@
 import json, os
 from systems.utils import create_logger, sleeper
 
+HARDCODED_DATA_DIR = "/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr/1d"
+
 class Vault:
     def __init__(self, config_dict, market_data_extractor):
         self.tickers_dict = {}
@@ -10,6 +12,9 @@ class Vault:
         self.market_data_extractor = market_data_extractor
 
     def load_strategies(self, config_dict):
+        from vault.pairs_trading import ConfigManager
+        config_manager = ConfigManager(config_dict)
+        
         strategy_names = config_dict['strategies']
         strategies_dict = {}
         for strategy in strategy_names:
@@ -25,16 +30,30 @@ class Vault:
                 from systems.utils import MarketDataExtractor
                 self.market_data_extractor = MarketDataExtractor()
             
-            # Create data handler instance
+            # Create data handler instance with proper configuration
             from vault.pairs_trading import DataHandler
+            data_dir = config_dict.get('data_update_inputs', {}).get('data_paths', {}).get('ibkr', HARDCODED_DATA_DIR)
+            
+            # Validate data directory exists
+            if not os.path.exists(data_dir):
+                raise ValueError(f"Data directory does not exist: {data_dir}")
+                
+            # Get additional configuration from config_dict
+            data_handler_config = config_dict.get('data_handler_config', {})
+            
             data_handler = DataHandler(
-                data_dir=config_dict['data_update_inputs']['data_paths']['ibkr'],
+                data_dir=data_dir,
                 tickers=[],
-                data_frequency="D",
-                timezone="UTC"
+                data_frequency=data_handler_config.get('data_frequency', 'D'),
+                timezone=data_handler_config.get('timezone', 'UTC'),
+                max_data_points=data_handler_config.get('max_data_points', 1000),
+                cache_size=data_handler_config.get('cache_size', 100),
+                logger=self.logger
             )
             
-            strategies_dict[strategy] = strategy_class(config_dict, data_handler)
+            self.logger.info(f"Initialized DataHandler for strategy {strategy_name} with config: {data_handler_config}")
+            
+            strategies_dict[strategy] = strategy_class(config_manager, data_handler)
         return strategies_dict
     
     def create_datafeeder_config(self, config_dict, strategies):
@@ -118,8 +137,52 @@ if __name__ == '__main__':
     
     logger.debug({'signals_output':signals_output['signals']})
     # logger.debug({'signals_output':signals_output})
-    rms = RMS(config_dict)
-    orders = rms.convert_signals_to_orders(signals_output)
+    from systems.utils import MarketDataExtractor
+    market_data_extractor = MarketDataExtractor()
+    try:
+        from vault.pairs_trading import ConfigManager
+        config_manager = ConfigManager(config_dict)
+        # Initialize RMS with proper error handling
+        rms_instance = RMS(config_manager, market_data_extractor)
+        
+        # Initialize required parameters for convert_signals_to_orders
+        margin_available = {
+            'sim': {
+                'sim_1': {
+                    'CAD': {
+                        'total_buying_power': 100000,
+                        'buying_power_available': 100000
+                    }
+                }
+            }
+        }
+        open_orders = []
+        system_timestamp = pd.Timestamp(datetime.now())
+        live_bool = False
+        
+        # Validate signals structure
+        if not isinstance(signals_output, dict) or 'signals' not in signals_output:
+            raise ValueError("Invalid signals structure - missing 'signals' key")
+            
+        # Add required fields if missing
+        for signal in signals_output['signals']:
+            if 'symbol_ltp' not in signal:
+                signal['symbol_ltp'] = {str(system_timestamp): 0.0}
+            if 'timestamp' not in signal:
+                signal['timestamp'] = system_timestamp
+            if 'strategy_name' not in signal:
+                signal['strategy_name'] = 'pairs_trading'
+                
+        orders = rms_instance.convert_signals_to_orders(
+            signals_output,
+            margin_available,
+            open_orders,
+            system_timestamp,
+            live_bool
+        )
+    except Exception as e:
+        logger.error(f"Error in RMS processing: {str(e)}")
+        orders = []
     logger.debug({'orders_count':len(orders)})
     logger.debug({'orders':orders})
     
