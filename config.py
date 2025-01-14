@@ -32,7 +32,7 @@ config_dict = {
     'data_update_inputs': {
         'data_sources': {'sim':'ibkr', 'live':'ibkr'},
         'data_paths': {
-            'ibkr': '/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr/'
+            'ibkr': '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/data/ibkr'
         }
     },
     'datafeeder_config': {

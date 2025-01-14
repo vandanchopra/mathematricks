@@ -70,7 +70,7 @@ class Vault:
         data_inputs = {}
         list_of_symbols = []
         for strategy_name, strategy in strategies.items():
-            inputs = strategy.datafeeder_inputs['get_inputs']()
+            inputs = strategy.datafeeder_inputs()
             if isinstance(inputs, tuple):
                 data_input_temp, list_of_symbols_temp = inputs
                 self.tickers_dict[strategy_name] = list_of_symbols_temp

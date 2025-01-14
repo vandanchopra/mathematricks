@@ -11,8 +11,6 @@ from systems.utils import create_logger, project_path
 import pandas_market_calendars as mcal
 
 # --- Constants ---
-HARDCODED_DATA_DIR = "/mnt/VANDAN_DISK/code_stuff/projects/mathematricks_gagan/db/data/ibkr"
-
 
 class ConfigManager:
     """Manages configuration settings for the trading strategy."""
@@ -60,7 +58,7 @@ class Data:
         self.interval_lookup = {"1m": "1 min", "2m": "2min", "5m": "5 min", "1d": "1 day"}
         self.market_open_bool = self.is_market_open(pd.Timestamp.now().tz_localize('UTC'))
 
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder=HARDCODED_DATA_DIR,
+    def update_price_data(self, stock_symbols, interval_inputs, data_folder="./db/data/ibkr",
                          throttle_secs=1, start_date=None, end_date=None, lookback=None, update_data=False,
                          run_mode=4):
         """Fetches price data from local CSV files."""
@@ -78,13 +76,10 @@ class Data:
             
             for symbol in stock_symbols:
                 csv_path = os.path.join(interval_folder, f"{symbol}.csv")
-                self.glogger.debug(f"Checking for file: {csv_path}")
-
                 if os.path.exists(csv_path):
-                    self.glogger.debug(f"Found file: {csv_path}")
                     try:
                         df = pd.read_csv(csv_path, index_col='datetime', parse_dates=True)
-                        self.glogger.debug(f"Successfully read {csv_path} with {len(df)} rows")
+                        # self.glogger.debug(f"Successfully read {csv_path} with {len(df)} rows")
                         df['symbol'] = symbol
                         df['interval'] = interval
                         data_frames.append(df)

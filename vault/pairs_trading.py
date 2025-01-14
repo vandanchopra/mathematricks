@@ -330,14 +330,6 @@ class TradingLogic:
 class PairsTradingStrategy:
     """Main strategy class implementing the pairs trading logic."""
     def __init__(self, config_manager: ConfigManager, data_handler: DataHandler):
-        self.datafeeder_inputs = {
-            'get_inputs': lambda: {
-                '1d': {
-                    'columns': ['open', 'high', 'low', 'close', 'volume'],
-                    'lookback': 365
-                }
-            }
-        }
         self.config_manager = config_manager
         self.data_handler = data_handler
         self.pair_selector = PairSelector(config_manager, data_handler)
@@ -348,7 +340,13 @@ class PairsTradingStrategy:
         from vault.pairs_trading import TradingLogic
         self.trading_logic = TradingLogic(config_manager, data_handler)
         self.trade_log = []
-        
+    
+    def datafeeder_inputs(self):
+        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        # tickers = ['MSFT', 'NVDA']
+        data_inputs = {'1d': {'columns': ['open', 'high', 'low', 'close', 'volume'] , 'lookback':32}} #'1m': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':100}
+        return data_inputs, tickers
+    
     def process_data(self, historical_data: Dict[str, pd.DataFrame],
                     current_prices: Dict[str, float],
                     window_start: datetime.datetime,

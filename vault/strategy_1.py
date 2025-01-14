@@ -8,7 +8,7 @@ import sys, time, os
 import pandas as pd
 
 
-class Strategy (BaseStrategy):
+class Strategy(BaseStrategy):
     def __init__(self, config_dict):
         super().__init__()
         self.strategy_name = 'strategy_1'
