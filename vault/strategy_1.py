@@ -6,7 +6,7 @@ from vault.base_strategy import BaseStrategy
 import numpy as np
 import sys, time
 
-class Strategy (BaseStrategy):
+class Strategy(BaseStrategy):
     def __init__(self, config_dict):
         super().__init__()
         self.strategy_name = 'strategy_1'

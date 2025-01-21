@@ -16,6 +16,46 @@ class PerformanceReporter:
         self.backtest_report = None
         self.logger = create_logger(log_level='DEBUG', logger_name='REPORTER', print_to_console=True)
     
+    def create_data_input_for_cumulative_returns_and_indices(self, trade_data, index_data_dict, starting_capital):
+        # Extract profit/loss data
+        trade_timestamps = []
+        profit_loss = []
+        
+        for trade in trade_data:
+            entry_order, exit_order = trade
+                
+            # Check order direction to determine long or short
+            if entry_order['orderDirection'] == 'BUY':  # Long trade
+                profit = (exit_order['fill_price'] - entry_order['fill_price']) * entry_order['orderQuantity']
+            elif entry_order['orderDirection'] == 'SELL':  # Short trade
+                profit = (entry_order['fill_price'] - exit_order['fill_price']) * entry_order['orderQuantity']
+            else:
+                profit = 0  # Handle any undefined order direction
+
+            trade_timestamps.append(exit_order['filled_timestamp'])
+            profit_loss.append(profit)
+        
+        # Create a DataFrame for sorting
+        trade_df = pd.DataFrame({
+            "filled_timestamp": trade_timestamps,
+            "profit_loss": profit_loss
+        })
+        
+        # Sort the data by exit timestamp
+        trade_df = trade_df.sort_values(by="filled_timestamp").reset_index(drop=True)
+        daily_profit_loss = trade_df.groupby("filled_timestamp")["profit_loss"].sum().reset_index()
+        daily_profit_loss["cumulative_pnl"] = daily_profit_loss["profit_loss"].cumsum()
+        daily_profit_loss["account_value"] = daily_profit_loss["cumulative_pnl"] + starting_capital
+        daily_profit_loss["cumulative_return"] = ((daily_profit_loss["account_value"] / daily_profit_loss["account_value"].iloc[0]) - 1) * 100
+        
+        daily_profit_loss = daily_profit_loss.set_index("filled_timestamp")
+        daily_profit_loss = daily_profit_loss.asfreq("D", method="ffill").reset_index()
+        trade_df_by_date = daily_profit_loss
+        trade_df_by_date.rename(columns={'filled_timestamp':'datetime'}, inplace=True)
+        trade_df_by_date.set_index('datetime', inplace=True)
+        
+        return trade_df_by_date
+
     def calculate_unrealized_pnl(self, open_orders, unfilled_orders):
         unrealized_pnl_abs_dict = {}
         unrealized_pnl_pct_dict = {}
@@ -81,8 +121,21 @@ class PerformanceReporter:
         
         return round(total_profit, 10), total_profit / total_order_value if total_order_value > 0 else 0
     
+    def calculate_cagr(self, trade_df_by_date):
+        """Calculate the Compound Annual Growth Rate"""
+        try:
+            start_date = trade_df_by_date.index[0]
+            end_date = trade_df_by_date.index[-1]
+            days = (end_date - start_date).days
+            if days > 0:
+                cagr = (trade_df_by_date['account_value'].iloc[-1] / trade_df_by_date['account_value'].iloc[0]) ** (365.0 / days) - 1
+                return cagr
+            return 0.0
+        except Exception as e:
+            self.logger.error(f"Error calculating CAGR: {e}")
+            return 0.0
+
     def calculate_backtest_performance_metrics(self, config_dict, open_orders, closed_orders, market_data_df_root, unfilled_orders):
-        # Implementation for calculating performance metrics
         self.backtest_performance_metrics = {}
         profit = 0
         profits_list = []
@@ -93,12 +146,14 @@ class PerformanceReporter:
         loss_count = 0
         long_count = 0
         short_count = 0
-        sharpe = 'NOT COMPUTED'
         
+        trade_df_by_date = None
+        sharpe_ratio = 'NOT COMPUTED'
+        cagr = 0.0
+        
+        # Process trades and calculate metrics
         for count, multi_leg_order in enumerate(closed_orders):
-            # Implementation for calculating performance metrics
             signal_open_date = multi_leg_order[0]['timestamp']
-            # self.logger.debug({'signal_open_date':signal_open_date, 'start_time':config_dict['backtest_inputs']['start_time'], 'end_time':config_dict['backtest_inputs']['end_time']})
             if signal_open_date > config_dict['backtest_inputs']['start_time'] and signal_open_date < config_dict['backtest_inputs']['end_time']:
                 signal_profit, signal_profit_pct = self.calculate_multi_leg_order_pnl(multi_leg_order, unfilled_orders, force_close=False)
                 profit += signal_profit
@@ -108,30 +163,78 @@ class PerformanceReporter:
                 else:
                     loss_count += 1
                     losses_list.append(signal_profit)
-                # self.logger.debug({'multi_leg_order':multi_leg_order})
+
                 if multi_leg_order[0]['orderDirection'] == 'BUY':
                     long_count += 1
                     long_list.append(signal_profit)
                 elif multi_leg_order[0]['orderDirection'] == 'SELL':
                     short_count += 1
                     short_list.append(signal_profit)
-        self.backtest_performance_metrics['profit'] = profit
-        self.backtest_performance_metrics['win_pct'] = round((win_count / (win_count + loss_count)) * 100, 2) if (win_count + loss_count) > 0 else 0
-        self.backtest_performance_metrics['long_count'] = long_count
-        self.backtest_performance_metrics['short_count'] = short_count
-        self.backtest_performance_metrics['Average_Profit'] = round(sum(profits_list) / len(profits_list), 2) if len(profits_list) > 0 else 0
-        self.backtest_performance_metrics['Average_Loss'] = round(sum(losses_list) / len(losses_list), 2) if len(losses_list) > 0 else 0
-        self.backtest_performance_metrics['long_Average'] = round(sum(long_list) / len(long_list), 2) if len(long_list) > 0 else 0
-        self.backtest_performance_metrics['short_Average'] = round(sum(short_list) / len(short_list), 2) if len(short_list) > 0 else 0
-        self.backtest_performance_metrics['sharpe_ratio'] = sharpe
+                    
+        # Calculate CAGR and Sharpe Ratio if there's enough data
+        if len(closed_orders) > 0:
+            starting_capital = 100000  # Example starting capital
+            trade_data = [(order[0], order[1]) for order in closed_orders]
+            # Get index data safely handling different DataFrame structures
+            try:
+                # Handle market data based on DataFrame structure
+                # Handle different market data structures
+                if isinstance(market_data_df_root.columns, pd.MultiIndex):
+                    # For multi-index columns (symbol, field)
+                    first_symbol = market_data_df_root.columns.get_level_values(0)[0]
+                    index_data = {'close': market_data_df_root['close'][first_symbol]}
+                else:
+                    # For single-level columns
+                    first_symbol = market_data_df_root.columns[0]
+                    index_data = {'close': market_data_df_root[first_symbol]}
+            except Exception as e:
+                self.logger.error(f"Error processing market data: {e}")
+                self.logger.debug(f"Market data structure: {market_data_df_root.head()}")
+                index_data = {'close': pd.Series()}  # Empty series as fallback
+            
+            trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(trade_data, index_data, starting_capital)
+            
+            if trade_df_by_date is not None and not trade_df_by_date.empty:
+                try:
+                    cagr = self.calculate_cagr(trade_df_by_date)
+                    sharpe_ratio = round(self.calculate_sharpe_ratio(trade_df_by_date, index_data), 2)
+                except Exception as e:
+                    self.logger.error(f"Error calculating CAGR or Sharpe Ratio: {e}")
+                    cagr = 0.0
+                    sharpe_ratio = 'NOT COMPUTED'
+        
+        # Store metrics
+        self.backtest_performance_metrics.update({
+            'profit': profit,
+            'win_pct': round((win_count / (win_count + loss_count)) * 100, 2) if (win_count + loss_count) > 0 else 0,
+            'long_count': long_count,
+            'short_count': short_count,
+            'Average_Profit': round(sum(profits_list) / len(profits_list), 2) if len(profits_list) > 0 else 0,
+            'Average_Loss': round(sum(losses_list) / len(losses_list), 2) if len(losses_list) > 0 else 0,
+            'long_Average': round(sum(long_list) / len(long_list), 2) if len(long_list) > 0 else 0,
+            'short_Average': round(sum(short_list) / len(short_list), 2) if len(short_list) > 0 else 0,
+            'sharpe_ratio': sharpe_ratio,
+            'cagr': round(cagr * 100, 2)  # Convert to percentage
+        })
         
         return self.backtest_performance_metrics
 
     def generate_report(self):
-        # Create a txt file with Key: Value followed by a new line from self.backtest_performance_metrics
-        self.backtest_report = ''
-        for key, value in self.backtest_performance_metrics.items():
-            self.backtest_report += f'{key}: {value}\n'
+        if not self.backtest_performance_metrics:
+            return
+            
+        self.backtest_report = '\n'.join([
+            f"profit: {self.backtest_performance_metrics['profit']}",
+            f"win_pct: {self.backtest_performance_metrics['win_pct']}",
+            f"long_count: {self.backtest_performance_metrics['long_count']}",
+            f"short_count: {self.backtest_performance_metrics['short_count']}",
+            f"Average_Profit: {self.backtest_performance_metrics['Average_Profit']}",
+            f"Average_Loss: {self.backtest_performance_metrics['Average_Loss']}",
+            f"long_Average: {self.backtest_performance_metrics['long_Average']}",
+            f"short_Average: {self.backtest_performance_metrics['short_Average']}",
+            f"sharpe_ratio: {self.backtest_performance_metrics['sharpe_ratio']}",
+            f"cagr: {self.backtest_performance_metrics['cagr']}%"
+        ])
         self.logger.info(f'Backtest Report: \n{self.backtest_report}')
     
     def save_backtest(self, config_dict, open_orders, closed_orders):
@@ -260,6 +363,8 @@ class PerformanceReporter:
         msg = "Current Stoploss Orders: " + msg
         
         return msg
+
+    
 
 class StrategyReporter:
     def load_backtest_output(self, test_folder_path):
@@ -429,6 +534,7 @@ class StrategyReporter:
         trade_df_by_date.set_index('datetime', inplace=True)
         
         return trade_df_by_date
+
     
     def plot_cumulative_returns_and_indices(self, trade_df, index_data_dict):
         min_max = [0 , 0]
@@ -499,47 +605,73 @@ class StrategyReporter:
         
     ## Sharpe Ratio Calculation
     def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
+        # Extract strategy and benchmark data
+        strategy_values = trade_df_cumulative['account_value']
+        benchmark_values = index_data_dict['close']  # Access close prices directly
+        
+        # Convert index to datetime and align timestamps
+        strategy_values.index = pd.to_datetime(strategy_values.index)
+        benchmark_values.index = pd.to_datetime(benchmark_values.index)
+        strategy_values.index = strategy_values.index + timedelta(seconds=1)  # Prevent exact match issues
+        
+        # Create DataFrames and merge
+        merged_df = pd.merge(
+            strategy_values.to_frame('strategy'),
+            benchmark_values.to_frame('benchmark'),
+            left_index=True,
+            right_index=True,
+            how='inner'
+        ).astype(float)
+        
+        # Calculate returns
+        strategy_returns = merged_df['strategy'].pct_change().fillna(0)
+        benchmark_returns = merged_df['benchmark'].pct_change().fillna(0)
+        
+        # Calculate Sharpe ratio components
+        excess_returns = strategy_returns - benchmark_returns
+        annualization_factor = np.sqrt(252)  # Trading days in a year
+        
+        if len(excess_returns) == 0:
+            return 0
+            
+        mean_excess_return = excess_returns.mean() * 252
+        volatility = excess_returns.std() * annualization_factor
+        
+        # Return Sharpe ratio, handling division by zero
+        if volatility == 0:
+            return 0
+            
+        return mean_excess_return / volatility
+
+    def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
+        """Calculate Sharpe Ratio for a strategy vs benchmark"""
         df1 = trade_df_cumulative['account_value']
-        df2 = index_data_dict['close']
+        df2 = next(iter(index_data_dict.values()))['close']  # Get first index's close prices
+        
         df1.index = pd.to_datetime(df1.index)
         df2.index = pd.to_datetime(df2.index)
-        # Add 1 minute to df1 index
-        df1.index = df1.index + timedelta(seconds=1)
+        df1.index = df1.index + timedelta(seconds=1)  # Add 1 second to prevent exact match issues
+        
+        # Merge data and process
         df1_df = df1.to_frame()
         df2_df = df2.to_frame()
-        
         merged_df = df1_df.merge(df2_df, left_index=True, right_index=True, how='inner')
-        # Drop rows with NaN values (if any)
         merged_df = merged_df.dropna()
-        # rename 'Close' to DJI
-        merged_df.rename(columns={'close': 'index'}, inplace=True)
-        # make the values of the columns float
-        merged_df['account_value'] = merged_df['account_value'].astype(float)
-        merged_df['index'] = merged_df['index'].astype(float)
+        merged_df.columns = ['account_value', 'index']
+        merged_df = merged_df.astype(float)
         
-        # Calculate sharpe ratio for the strategy
-        strategy_cum_returns = merged_df['account_value']
-        index_values = merged_df['index']
-        # Calculate periodic returns from cumulative returns
-        if strategy_cum_returns.iloc[0] == 0:
-            strategy_cum_returns.iloc[0] = 0.000000001
-        strategy_returns = strategy_cum_returns.pct_change().dropna()
-        index_returns = index_values.pct_change().dropna()
-        periods_per_year = 252
-        # Calculate excess returns
+        # Calculate returns
+        strategy_returns = merged_df['account_value'].pct_change().dropna()
+        index_returns = merged_df['index'].pct_change().dropna()
+        
+        # Calculate Sharpe components
         excess_returns = strategy_returns - index_returns
-        # print(excess_returns)
-
-        # Annualized return
+        periods_per_year = 252  # Trading days in a year
         mean_excess_return = excess_returns.mean() * periods_per_year
-
-        # Annualized volatility
         annualized_volatility = excess_returns.std() * np.sqrt(periods_per_year)
         
-        # Sharpe Ratio
-        sharpe_ratio = mean_excess_return / annualized_volatility
-        
-        return sharpe_ratio
+        # Return Sharpe ratio, handling division by zero
+        return 0 if annualized_volatility == 0 else mean_excess_return / annualized_volatility
 
     def calculate_rolling_sharpe_ratio(self, trade_df_cumulative, index_data_dict, index_name, window):
         rolling_sharpe_data = []  # Initialize an empty list to store rows
