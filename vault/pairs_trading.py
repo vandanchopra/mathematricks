@@ -105,7 +105,7 @@ class Strategy(BaseStrategy):
             returns1 = log_price1.diff().dropna()
             returns2 = log_price2.diff().dropna()
             correlation = returns1.corr(returns2)
-            self.logger.debug(f"Return correlation: {correlation:.4f}")
+            # self.logger.debug(f"Return correlation: {correlation:.4f}")
             
             # Adaptive window size based on data quality
             window_size = min(len(price1), self.lookback_window)
@@ -144,9 +144,9 @@ class Strategy(BaseStrategy):
                 return False, None
             
             # Success metrics
-            self.logger.info(f"Pair validated - Correlation: {correlation:.2f}, "
-                           f"Half-life: {half_life:.1f}, Hedge ratio: {hedge_ratio:.2f}, "
-                           f"ADF p-value: {adf_result[1]:.4f}")
+            # self.logger.info(f"Pair validated - Correlation: {correlation:.2f}, "
+            #                f"Half-life: {half_life:.1f}, Hedge ratio: {hedge_ratio:.2f}, "
+            #                f"ADF p-value: {adf_result[1]:.4f}")
             return True, hedge_ratio
             
         except Exception as e:
@@ -233,7 +233,7 @@ class Strategy(BaseStrategy):
                 return None, None
             
             # Log data availability
-            self.logger.info(f"Processing {pair} with {len(price1)} valid data points")
+            # self.logger.info(f"Processing {pair} with {len(price1)} valid data points")
                 
             # Check correlation first as quick filter
             if not self.check_correlation(price1, price2, self.correlation_threshold):
@@ -246,7 +246,7 @@ class Strategy(BaseStrategy):
                 self.logger.debug(f"Pair {pair} failed validation tests")
                 return None, None
             
-            self.logger.info(f"Pair {pair} passed all validation tests with hedge ratio {hedge_ratio:.2f}")
+            # self.logger.info(f"Pair {pair} passed all validation tests with hedge ratio {hedge_ratio:.2f}")
                 
             spread = price1 - hedge_ratio * price2
             return spread, hedge_ratio
@@ -301,7 +301,7 @@ class Strategy(BaseStrategy):
                 continue
 
             # Log z-score and threshold
-            self.logger.info(f"Pair {pair} - Z-score: {current_z:.2f}, Entry threshold: {entry_threshold:.2f}")
+            # self.logger.info(f"Pair {pair} - Z-score: {current_z:.2f}, Entry threshold: {entry_threshold:.2f}")
             
             # Calculate volatility factor for position sizing
             vol_factor = spread.rolling(self.volatility_window).std().iloc[-1] / spread.std()

@@ -68,6 +68,42 @@ class PerformanceReporter:
             
         return unrealized_pnl_abs_dict, unrealized_pnl_pct_dict
     
+    def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
+        """Calculate Sharpe Ratio for a strategy vs benchmark"""
+        df1 = trade_df_cumulative['account_value']
+        df2 = next(iter(index_data_dict.values()))['close']  # Get first index's close prices
+        
+        df1.index = pd.to_datetime(df1.index)
+        df2.index = pd.to_datetime(df2.index)
+        df1.index = df1.index + timedelta(seconds=1)  # Add 1 second to prevent exact match issues
+        
+        # Merge data and process
+        df1_df = df1.to_frame()
+        df2_df = df2.to_frame()
+        merged_df = df1_df.merge(df2_df, left_index=True, right_index=True, how='inner')
+        merged_df = merged_df.dropna()
+        merged_df.columns = ['account_value', 'index']
+        merged_df = merged_df.astype(float)
+        
+        # Calculate returns
+        strategy_returns = merged_df['account_value'].pct_change().dropna()
+        index_returns = merged_df['index'].pct_change().dropna()
+        
+        # Calculate Sharpe components
+        excess_returns = strategy_returns - index_returns
+        periods_per_year = 252  # Trading days in a year
+        mean_excess_return = excess_returns.mean() * periods_per_year
+        annualized_volatility = excess_returns.std() * np.sqrt(periods_per_year)
+        
+        # Return Sharpe ratio, handling division by zero
+        return 0 if annualized_volatility == 0 else mean_excess_return / annualized_volatility
+
+    def calculate_drawdowns(self, trade_df_by_date):
+        # calculate drawdowns in % based on 'Account Value' column
+        trade_df_by_date['drawdown'] = trade_df_by_date['account_value'].cummax() - trade_df_by_date['account_value']
+        trade_df_by_date['drawdown_pct'] = trade_df_by_date['drawdown'] / trade_df_by_date['account_value'] * 100 * -1
+        return trade_df_by_date
+
     def calculate_multi_leg_order_pnl(self, multi_leg_order, unfilled_orders, force_close=False):
         entry_orders = []
         exit_orders = []
@@ -364,8 +400,6 @@ class PerformanceReporter:
         
         return msg
 
-    
-
 class StrategyReporter:
     def load_backtest_output(self, test_folder_path):
         backtest_orders_path = os.path.join(test_folder_path, 'backtest_output.pkl')
@@ -535,7 +569,6 @@ class StrategyReporter:
         
         return trade_df_by_date
 
-    
     def plot_cumulative_returns_and_indices(self, trade_df, index_data_dict):
         min_max = [0 , 0]
         for index_data in index_data_dict.values():
