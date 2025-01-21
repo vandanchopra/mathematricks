@@ -1,3 +1,4 @@
+annotated-types==0.7.0
 appnope==0.1.4
 asttokens==2.4.1
 attrs==24.2.0
@@ -55,6 +56,7 @@ pandas==2.2.2
 pandas-datareader==0.10.0
 pandas_market_calendars==4.4.1
 parso==0.8.4
+patsy==1.0.1
 peewee==3.17.6
 pexpect==4.9.0
 pillow==10.4.0
@@ -68,6 +70,8 @@ ptyprocess==0.7.0
 pure_eval==0.2.3
 pyasn1==0.6.1
 pyasn1_modules==0.4.1
+pydantic==2.10.5
+pydantic_core==2.27.2
 Pygments==2.18.0
 pyluach==2.2.0
 pyparsing==3.1.4
@@ -81,9 +85,11 @@ requests==2.32.3
 requests-oauthlib==2.0.0
 rpds-py==0.21.0
 rsa==4.9
+scipy==1.15.1
 six==1.16.0
 soupsieve==2.6
 stack-data==0.6.3
+statsmodels==0.14.4
 tenacity==9.0.0
 toolz==0.12.1
 tornado==6.4.1

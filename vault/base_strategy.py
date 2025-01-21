@@ -2,6 +2,38 @@ import numpy as np
 from datetime import timedelta
 import pandas as pd
 from systems.utils import create_logger, sleeper
+from pydantic import BaseModel, Field, constr
+from typing import List, Dict, Optional, Union, Literal
+from datetime import datetime
+
+class Signal(BaseModel):
+    symbol: str
+    signal_strength: int
+    strategy_name: str
+    timestamp: datetime
+    entry_order_type: Literal["MARKET", "STOPLOSS-MARKET"]
+    exit_order_type: Literal["stoploss_pct", "sl_abs"]
+    stoploss_pct: float
+    symbol_ltp: Dict[datetime, float]
+    timeInForce: Literal["DAY", "Expiry", "IoC", "TTL"]
+    orderQuantity: int
+    orderDirection: Literal["BUY", "SELL"]
+    granularity: str
+    signal_type: Literal["BUY_SELL"]
+    market_neutral: bool
+
+    class Config:
+        allow_mutation = True  # Allow field updates
+        arbitrary_types_allowed = True
+
+class SignalResponse(BaseModel):
+    return_type: Optional[Literal["signals"]] = None
+    signals: List[Signal] = Field(default_factory=list)
+    tickers: List[str]
+
+    class Config:
+        allow_mutation = True
+        arbitrary_types_allowed = True
 
 class BaseStrategy:
     def __init__(self):
@@ -147,4 +179,3 @@ class Strategy(BaseStrategy):
 if __name__ == '__main__':
     bs = Strategy()
     bs.logger.debug('STRATEGY object created.')
-    
