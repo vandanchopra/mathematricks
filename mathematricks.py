@@ -292,12 +292,26 @@ class Mathematricks:
                         from pprint import pprint
                         # self.logger.info(pprint(self.config_dict))
                         self.logger.info(pprint(self.oms.margin_available))
-                        self.reporter.calculate_backtest_performance_metrics(self.config_dict, self.oms.open_orders, self.oms.closed_orders, self.current_market_data_df, self.oms.unfilled_orders)
+                        
+                        self.reporter.calculate_backtest_performance_metrics(
+                            self.config_dict,
+                            self.oms.open_orders,
+                            self.oms.closed_orders,
+                            self.current_market_data_df,
+                            self.oms.unfilled_orders
+                        )
+                        
                         self.reporter.generate_report()
+                        
                         if self.config_dict['backtest_inputs']['save_backtest_results']:
-                            self.test_folder_path, self.test_name = self.reporter.save_backtest(self.config_dict, self.oms.open_orders, self.oms.closed_orders)
+                            self.test_folder_path, self.test_name = self.reporter.save_backtest(
+                                self.config_dict,
+                                self.oms.open_orders,
+                                self.oms.closed_orders
+                            )
                             self.logger.info(f'Backtest results saved at: {self.test_folder_path}')
                             self.logger.info(f'Backtest Name: {self.test_name}')
+                        
                         break
                 
                 except KeyboardInterrupt:

@@ -4,6 +4,7 @@ from systems.utils import create_logger, sleeper, generate_hash_id
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 from datetime import timedelta, datetime
 import numpy as np
 from scipy import stats
@@ -18,44 +19,117 @@ class PerformanceReporter:
         self.logger = create_logger(log_level='DEBUG', logger_name='REPORTER', print_to_console=True)
     
     def create_data_input_for_cumulative_returns_and_indices(self, trade_data, index_data_dict, starting_capital):
-        # Extract profit/loss data
-        trade_timestamps = []
-        profit_loss = []
-        
-        for trade in trade_data:
-            entry_order, exit_order = trade
+        """
+        Create and validate trade data for metrics calculation with enhanced error handling.
+        """
+        try:
+            self.logger.info("Starting trade data preparation...")
+            
+            # Validate input parameters
+            if not trade_data:
+                self.logger.error("No trade data provided")
+                return None
                 
-            # Check order direction to determine long or short
-            if entry_order['orderDirection'] == 'BUY':  # Long trade
-                profit = (exit_order['fill_price'] - entry_order['fill_price']) * entry_order['orderQuantity']
-            elif entry_order['orderDirection'] == 'SELL':  # Short trade
-                profit = (entry_order['fill_price'] - exit_order['fill_price']) * entry_order['orderQuantity']
-            else:
-                profit = 0  # Handle any undefined order direction
+            if not isinstance(starting_capital, (int, float)) or starting_capital <= 0:
+                self.logger.error(f"Invalid starting capital: {starting_capital}")
+                return None
+            
+            # Extract profit/loss data with validation
+            trade_timestamps = []
+            profit_loss = []
+            
+            for trade in trade_data:
+                try:
+                    entry_order, exit_order = trade
+                    
+                    # Ensure required fields exist and are numeric
+                    if not all(key in entry_order and isinstance(entry_order[key], (int, float))
+                             for key in ['fill_price', 'orderQuantity']):
+                        self.logger.warning("Missing or invalid entry order fields")
+                        continue
+                        
+                    if not all(key in exit_order and isinstance(exit_order[key], (int, float))
+                             for key in ['fill_price']):
+                        self.logger.warning("Missing or invalid exit order fields")
+                        continue
+                    
+                    # Calculate profit based on order direction
+                    if entry_order['orderDirection'] == 'BUY':  # Long trade
+                        profit = (exit_order['fill_price'] - entry_order['fill_price']) * entry_order['orderQuantity']
+                    elif entry_order['orderDirection'] == 'SELL':  # Short trade
+                        profit = (entry_order['fill_price'] - exit_order['fill_price']) * entry_order['orderQuantity']
+                    else:
+                        self.logger.warning(f"Unknown order direction: {entry_order['orderDirection']}")
+                        continue
 
-            trade_timestamps.append(exit_order['filled_timestamp'])
-            profit_loss.append(profit)
-        
-        # Create a DataFrame for sorting
-        trade_df = pd.DataFrame({
-            "filled_timestamp": trade_timestamps,
-            "profit_loss": profit_loss
-        })
-        
-        # Sort the data by exit timestamp
-        trade_df = trade_df.sort_values(by="filled_timestamp").reset_index(drop=True)
-        daily_profit_loss = trade_df.groupby("filled_timestamp")["profit_loss"].sum().reset_index()
-        daily_profit_loss["cumulative_pnl"] = daily_profit_loss["profit_loss"].cumsum()
-        daily_profit_loss["account_value"] = daily_profit_loss["cumulative_pnl"] + starting_capital
-        daily_profit_loss["cumulative_return"] = ((daily_profit_loss["account_value"] / daily_profit_loss["account_value"].iloc[0]) - 1) * 100
-        
-        daily_profit_loss = daily_profit_loss.set_index("filled_timestamp")
-        daily_profit_loss = daily_profit_loss.asfreq("D", method="ffill").reset_index()
-        trade_df_by_date = daily_profit_loss
-        trade_df_by_date.rename(columns={'filled_timestamp':'datetime'}, inplace=True)
-        trade_df_by_date.set_index('datetime', inplace=True)
-        
-        return trade_df_by_date
+                    trade_timestamps.append(exit_order['filled_timestamp'])
+                    profit_loss.append(profit)
+                except Exception as e:
+                    self.logger.warning(f"Error processing trade: {e}")
+                    continue
+
+            if not trade_timestamps:
+                self.logger.error("No valid trades found")
+                return None
+
+            # Create DataFrame with validated data
+            try:
+                trade_df = pd.DataFrame({
+                    "filled_timestamp": pd.to_datetime(trade_timestamps),
+                    "profit_loss": np.array(profit_loss, dtype=float)
+                })
+                
+                # Sort and process the data
+                trade_df = trade_df.sort_values(by="filled_timestamp").reset_index(drop=True)
+                daily_profit_loss = trade_df.groupby("filled_timestamp")["profit_loss"].sum().reset_index()
+                
+                # Calculate and validate metrics
+                daily_profit_loss["cumulative_pnl"] = daily_profit_loss["profit_loss"].cumsum()
+                
+                # Calculate account value and validate
+                daily_profit_loss["account_value"] = daily_profit_loss["cumulative_pnl"] + starting_capital
+                if (daily_profit_loss["account_value"] <= 0).any():
+                    self.logger.error("Account value went negative, invalid trading scenario")
+                    return None
+                
+                # Calculate returns for CAGR
+                daily_profit_loss["daily_return"] = daily_profit_loss["account_value"].pct_change()
+                daily_profit_loss.loc[daily_profit_loss.index[0], "daily_return"] = (daily_profit_loss["account_value"].iloc[0] / starting_capital) - 1
+                
+                # Calculate cumulative returns using compounded daily returns
+                daily_profit_loss["cumulative_return"] = (1 + daily_profit_loss["daily_return"]).cumprod() - 1
+                daily_profit_loss["cumulative_return"] *= 100  # Convert to percentage
+                
+                self.logger.info(f"""Account value validation:
+                    Min: ${daily_profit_loss['account_value'].min():,.2f}
+                    Max: ${daily_profit_loss['account_value'].max():,.2f}
+                    Mean daily return: {daily_profit_loss['daily_return'].mean():.4%}
+                """)
+                
+                # Set up proper datetime index
+                daily_profit_loss = daily_profit_loss.set_index("filled_timestamp")
+                daily_profit_loss = daily_profit_loss.asfreq("D", method="ffill").reset_index()
+                trade_df_by_date = daily_profit_loss
+                trade_df_by_date.rename(columns={'filled_timestamp':'datetime'}, inplace=True)
+                trade_df_by_date.set_index('datetime', inplace=True)
+                
+                self.logger.info(f"""Trade data processing completed:
+                    Valid trades processed: {len(trade_timestamps)}
+                    Date range: {trade_df_by_date.index[0]} to {trade_df_by_date.index[-1]}
+                    Starting value: ${starting_capital:,.2f}
+                    Final value: ${trade_df_by_date['account_value'].iloc[-1]:,.2f}
+                    Total PnL: ${trade_df_by_date['cumulative_pnl'].iloc[-1]:,.2f}
+                """)
+                
+                return trade_df_by_date
+                
+            except Exception as e:
+                self.logger.error(f"Error creating trade DataFrame: {e}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error in trade data preparation: {e}")
+            return None
 
     def calculate_unrealized_pnl(self, open_orders, unfilled_orders):
         unrealized_pnl_abs_dict = {}
@@ -85,22 +159,33 @@ class PerformanceReporter:
                 self.logger.error(f"Invalid benchmark data structure: {e}")
                 return 0.0
 
-            # Ensure datetime index
-            df1.index = pd.to_datetime(df1.index)
-            df2.index = pd.to_datetime(df2.index)
-            df1.index = df1.index + timedelta(seconds=1)  # Prevent exact match issues
+            # Normalize both datetime indices to dates only
+            df1.index = pd.to_datetime(df1.index).normalize()
+            df2.index = pd.to_datetime(df2.index).normalize()
             
-            # Merge and process data
-            df1_df = df1.to_frame()
-            df2_df = df2.to_frame()
-            merged_df = df1_df.merge(df2_df, left_index=True, right_index=True, how='inner')
+            # Prepare DataFrames for merging
+            df1_df = df1.to_frame('account_value')
+            df2_df = df2.to_frame('index')
             
+            self.logger.info(f"Strategy dates after normalization: {df1_df.index.min()} to {df1_df.index.max()}")
+            self.logger.info(f"Benchmark dates after normalization: {df2_df.index.min()} to {df2_df.index.max()}")
+            
+            # Log data ranges
+            self.logger.info(f"Strategy data range: {df1_df.index.min()} to {df1_df.index.max()}")
+            self.logger.info(f"Benchmark data range: {df2_df.index.min()} to {df2_df.index.max()}")
+            
+            # Merge on index
+            merged_df = pd.merge(df1_df, df2_df, left_index=True, right_index=True, how='inner')
+            
+            self.logger.info(f"Merged data points: {len(merged_df)}")
             if merged_df.empty:
                 self.logger.warning("No overlapping data points between strategy and benchmark")
                 return 0.0
-                
+            
+            # Log merged data range
+            self.logger.info(f"Merged data range: {merged_df.index.min()} to {merged_df.index.max()}")
+            
             merged_df = merged_df.dropna()
-            merged_df.columns = ['account_value', 'index']
             
             # Ensure numeric values
             try:
@@ -109,35 +194,85 @@ class PerformanceReporter:
                 self.logger.error(f"Data type conversion error: {e}")
                 return 0.0
             
-            # Calculate returns
+            # Sort and resample data
+            merged_df = merged_df.sort_index()
+            merged_df = merged_df.asfreq('D', method='ffill')
+            
+            self.logger.info(f"Merged data after resampling: {len(merged_df)} points")
+            self.logger.info(f"Date range after resampling: {merged_df.index[0]} to {merged_df.index[-1]}")
+            
+            # Calculate returns on properly aligned data
             strategy_returns = merged_df['account_value'].pct_change()
             index_returns = merged_df['index'].pct_change()
             
-            # Remove any invalid values
+            # Remove any NaN values that might occur at the start of the series
+            valid_mask = ~(strategy_returns.isna() | index_returns.isna())
+            strategy_returns = strategy_returns[valid_mask]
+            index_returns = index_returns[valid_mask]
+            
+            self.logger.info(f"Valid returns data points: {len(strategy_returns)}")
+            
+            # Remove outliers and invalid values
             mask = ~(np.isnan(strategy_returns) | np.isinf(strategy_returns) |
                     np.isnan(index_returns) | np.isinf(index_returns))
             strategy_returns = strategy_returns[mask]
             index_returns = index_returns[mask]
             
+            self.logger.info(f"""Returns Calculation:
+                Date Range: {strategy_returns.index.min()} to {strategy_returns.index.max()}
+                Strategy returns - Mean: {strategy_returns.mean():.4%}, Std: {strategy_returns.std():.4%}
+                Index returns - Mean: {index_returns.mean():.4%}, Std: {index_returns.std():.4%}
+                Valid data points: {len(strategy_returns)}
+            """)
+            
             if len(strategy_returns) < 2:
                 self.logger.warning("Insufficient data points for Sharpe ratio calculation")
                 return 0.0
             
-            # Calculate Sharpe components
-            excess_returns = strategy_returns - index_returns
-            periods_per_year = 252  # Trading days in a year
-            mean_excess_return = excess_returns.mean() * periods_per_year
-            annualized_volatility = excess_returns.std() * np.sqrt(periods_per_year)
+            # Require minimum data points for statistical significance
+            min_days = 30
+            if len(strategy_returns) < min_days:
+                self.logger.warning(f"Insufficient data points ({len(strategy_returns)}) for reliable metrics")
+                return 0.0
+
+            # Calculate annualized metrics with proper scaling
+            actual_days = len(strategy_returns)
+            ann_factor = np.sqrt(252 / actual_days)  # Adjust for partial year
             
-            if annualized_volatility == 0:
-                self.logger.warning("Zero volatility detected in Sharpe ratio calculation")
+            # Verify we have enough data points for statistical significance
+            if len(strategy_returns) < 30:  # Minimum 30 days of data
+                self.logger.warning(f"Insufficient data points for Sharpe ratio: {len(strategy_returns)}")
+                return 0.0
+
+            # Calculate excess returns over benchmark
+            excess_returns = strategy_returns - index_returns
+            
+            # Compute annualized statistics
+            mean_excess_return = excess_returns.mean() * 252
+            daily_vol = excess_returns.std()
+            
+            # Validate volatility
+            if daily_vol <= 0 or np.isnan(daily_vol):
+                self.logger.warning(f"Invalid daily volatility: {daily_vol}")
                 return 0.0
                 
+            annualized_volatility = daily_vol * np.sqrt(252) * ann_factor
+            
+            # Calculate and validate Sharpe ratio
             sharpe_ratio = mean_excess_return / annualized_volatility
             
-            # Validate final result
-            if np.isnan(sharpe_ratio) or np.isinf(sharpe_ratio):
-                self.logger.warning(f"Invalid Sharpe ratio calculated: {sharpe_ratio}")
+            self.logger.info(f"""Sharpe Ratio Components:
+                Date Range: {excess_returns.index[0]} to {excess_returns.index[-1]}
+                Trading days: {actual_days}
+                Annualization factor: {ann_factor:.2f}
+                Daily Returns - Mean: {excess_returns.mean():.4%}, Std: {daily_vol:.4%}
+                Annualized - Mean: {mean_excess_return:.4%}, Std: {annualized_volatility:.4%}
+                Sharpe ratio: {sharpe_ratio:.4f}
+            """)
+            
+            # Final validation
+            if not -10 < sharpe_ratio < 10 or np.isnan(sharpe_ratio) or np.isinf(sharpe_ratio):
+                self.logger.warning(f"Sharpe ratio {sharpe_ratio:.4f} outside reasonable range (-10 to 10)")
                 return 0.0
                 
             return sharpe_ratio
@@ -207,12 +342,11 @@ class PerformanceReporter:
     
     def calculate_cagr(self, trade_df_by_date):
         """
-        Calculate the Compound Annual Growth Rate (CAGR) with enhanced error handling,
-        validation, and detailed logging
+        Calculate CAGR with strict validation and proper time-based scaling
         """
         try:
-            # Input validation with detailed logging
-            if trade_df_by_date.empty:
+            # Validate input data
+            if trade_df_by_date is None or trade_df_by_date.empty:
                 self.logger.warning("Empty DataFrame provided for CAGR calculation")
                 return 0.0
             
@@ -220,46 +354,62 @@ class PerformanceReporter:
                 self.logger.error("Missing required 'account_value' column")
                 return 0.0
             
-            # Extract and validate dates
+            # Ensure proper datetime index and sort
+            trade_df_by_date.index = pd.to_datetime(trade_df_by_date.index)
+            trade_df_by_date = trade_df_by_date.sort_index()
+            
+            # Get clean start and end values
             start_date = trade_df_by_date.index[0]
             end_date = trade_df_by_date.index[-1]
-            
-            if not (isinstance(start_date, (pd.Timestamp, datetime)) and
-                   isinstance(end_date, (pd.Timestamp, datetime))):
-                self.logger.error(f"Invalid date types: start_date={type(start_date)}, end_date={type(end_date)}")
-                return 0.0
-            
-            days = (end_date - start_date).days
-            
-            # Validate time period
-            if days < 1:
-                self.logger.warning(f"Insufficient time period for CAGR: {days} days")
-                return 0.0
-            
-            # Extract and validate values
             start_value = float(trade_df_by_date['account_value'].iloc[0])
             end_value = float(trade_df_by_date['account_value'].iloc[-1])
             
-            self.logger.info(f"""CAGR Calculation Inputs:
-                Start Date: {start_date}
-                End Date: {end_date}
-                Days: {days}
-                Start Value: ${start_value:,.2f}
-                End Value: ${end_value:,.2f}
+            # Validate time period
+            days = (end_date - start_date).days
+            
+            # Validate minimum trading period and values
+            min_required_days = 5  # Require at least 5 days of data
+            if days < min_required_days:
+                self.logger.warning(f"Insufficient time period for CAGR: {days} days (minimum {min_required_days} required)")
+                return 0.0
+                
+            # Validate values are reasonable
+            if start_value <= 0 or end_value <= 0:
+                self.logger.error(f"Invalid values: start=${start_value:,.2f}, end=${end_value:,.2f}")
+                return 0.0
+                
+            # Check for unrealistic returns
+            total_return = (end_value / start_value) - 1
+            if abs(total_return) > 10:  # More than 1000% return or -90% loss
+                self.logger.warning(f"Potentially unrealistic total return: {total_return:.2%}")
+                
+            # Only calculate CAGR for periods longer than a month
+            min_days = 30
+            if days < min_days:
+                self.logger.warning(f"Trading period too short for meaningful CAGR: {days} days < {min_days}")
+                return 0.0
+
+            # Calculate CAGR with scaling and validation
+            years = days / 365.0
+            total_return = (end_value / start_value) - 1
+            
+            # Validate return is reasonable
+            if abs(total_return) > 10:  # More than 1000% return or 90% loss
+                self.logger.warning(f"Extreme return detected: {total_return:.2%}")
+            
+            # Calculate CAGR
+            cagr = (end_value / start_value) ** (1.0 / years) - 1
+            
+            self.logger.info(f"""CAGR Calculation Details:
+                Trading Period: {days} days ({years:.2f} years)
+                Start: ${start_value:,.2f} ({start_date})
+                End: ${end_value:,.2f} ({end_date})
+                Total Return: {total_return:.2%}
+                Annualized (CAGR): {cagr:.2%}
             """)
             
-            # Validate values
-            if start_value <= 0:
-                self.logger.error(f"Invalid start value: ${start_value:,.2f}")
-                return 0.0
-            
-            if end_value <= 0:
-                self.logger.error(f"Invalid end value: ${end_value:,.2f}")
-                return 0.0
-            
-            # Calculate CAGR with proper annualization
-            years = days / 365.0
-            cagr = (end_value / start_value) ** (1.0 / years) - 1
+            if abs(cagr) > 5.0:  # More than 500% annual return
+                self.logger.warning(f"Unusually high CAGR detected: {cagr:.2%}")
             
             # Validate result
             if np.isnan(cagr) or np.isinf(cagr):
@@ -286,8 +436,10 @@ class PerformanceReporter:
         short_count = 0
         
         trade_df_by_date = None
-        sharpe_ratio = 'NOT COMPUTED'
+        sharpe_ratio = 0.0  # Initialize as float instead of string
         cagr = 0.0
+        
+        self.logger.info("Starting backtest performance calculation...")
         
         # Process trades and calculate metrics
         for count, multi_leg_order in enumerate(closed_orders):
@@ -310,45 +462,171 @@ class PerformanceReporter:
                     short_list.append(signal_profit)
                     
         # Calculate CAGR and Sharpe Ratio if there's enough data
-        if len(closed_orders) > 0:
+        self.logger.info(f"Calculating CAGR and Sharpe ratio for {len(closed_orders)} orders")
+        if len(closed_orders) >= 5:  # Require minimum number of trades
             starting_capital = 100000  # Example starting capital
-            trade_data = [(order[0], order[1]) for order in closed_orders]
+            trade_data = [(order[0], order[1]) for order in closed_orders
+                         if order[0]['status'] == 'closed' and order[1]['status'] == 'closed'
+                         and 'fill_price' in order[0] and 'fill_price' in order[1]]
+            
+            if not trade_data:
+                self.logger.warning("No valid closed trades found for metrics calculation")
+                return self.backtest_performance_metrics
             
             # Get index data safely handling different DataFrame structures
             try:
-                # Create benchmark index using first available symbol
-                if isinstance(market_data_df_root.columns, pd.MultiIndex):
-                    symbols = market_data_df_root.columns.get_level_values(0).unique()
-                    first_symbol = symbols[0]
-                    benchmark_data = market_data_df_root.loc[:, (first_symbol, 'close')]
-                else:
-                    first_symbol = market_data_df_root.columns[0]
-                    benchmark_data = market_data_df_root[first_symbol]
+                # Create benchmark index from market data with validation
+                self.logger.info("Preparing benchmark data...")
+                try:
+                    if isinstance(market_data_df_root.columns, pd.MultiIndex):
+                        self.logger.info(f"Initial DataFrame structure:\n{market_data_df_root.head()}")
+                        
+                        # Handle multi-index rows if present
+                        if isinstance(market_data_df_root.index, pd.MultiIndex):
+                            self.logger.info(f"Row index levels: {market_data_df_root.index.names}")
+                            # Convert to single-level datetime index
+                            market_data_df_root = market_data_df_root.reset_index()
+                            market_data_df_root = market_data_df_root.set_index('datetime')
+                            self.logger.info(f"After index reset:\n{market_data_df_root.head()}")
+                        
+                        # Get symbols from the second level where first level is 'close'
+                        close_symbols = [sym for col, sym in market_data_df_root.columns if col == 'close' and sym != '']
+                        self.logger.info(f"Found close symbols: {close_symbols}")
+                        
+                        if not close_symbols:
+                            self.logger.error("No close price columns found")
+                            return self.backtest_performance_metrics
+                        
+                        # Use first available symbol's close price as benchmark
+                        first_symbol = close_symbols[0]
+                        self.logger.info(f"Using close price for symbol: {first_symbol}")
+                        # Extract benchmark data
+                        benchmark_data = market_data_df_root.loc[:, ('close', first_symbol)].copy()
+                        
+                        # Convert string values to float if needed
+                        benchmark_data = pd.to_numeric(benchmark_data, errors='coerce')
+                        
+                        # Create data input first to get the trade date range
+                        trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(trade_data, {'temp': pd.DataFrame()}, starting_capital)
+                        if trade_df_by_date is None:
+                            self.logger.error("Failed to create trade data")
+                            return self.backtest_performance_metrics
+                            
+                        # Filter benchmark data to match strategy date range
+                        trade_start_date = pd.to_datetime(trade_df_by_date.index.min())
+                        trade_end_date = pd.to_datetime(trade_df_by_date.index.max())
+                        
+                        self.logger.info(f"Strategy date range: {trade_start_date} to {trade_end_date}")
+                        self.logger.info(f"Initial benchmark date range: {benchmark_data.index.min()} to {benchmark_data.index.max()}")
+                        
+                        # Filter benchmark data to strategy date range
+                        benchmark_data = benchmark_data[
+                            (benchmark_data.index >= trade_start_date) &
+                            (benchmark_data.index <= trade_end_date)
+                        ]
+                        
+                        self.logger.info(f"Filtered benchmark date range: {benchmark_data.index.min()} to {benchmark_data.index.max()}")
+                        self.logger.info(f"Benchmark data type: {benchmark_data.dtype}")
+                    else:
+                        first_symbol = market_data_df_root.columns[0]
+                        self.logger.info(f"Using single-level column: {first_symbol}")
+                        benchmark_data = market_data_df_root[first_symbol].copy()
 
-                # Create index dictionary with benchmark data
-                index_data = {first_symbol: pd.DataFrame({'close': benchmark_data})}
+                    # Ensure data is properly formatted
+                    benchmark_data = pd.to_numeric(benchmark_data, errors='coerce')
+                    benchmark_data = benchmark_data.dropna()
+                    
+                    # Validate benchmark data
+                    if len(benchmark_data) < 2:
+                        self.logger.error("Insufficient benchmark data points")
+                        return self.backtest_performance_metrics
+                        
+                    # Check for valid range
+                    if (benchmark_data == 0).any() or np.isinf(benchmark_data).any():
+                        self.logger.error("Invalid values in benchmark data")
+                        return self.backtest_performance_metrics
+                except Exception as e:
+                    self.logger.error(f"Error processing benchmark data: {e}")
+                    return self.backtest_performance_metrics
+
+                if benchmark_data.empty:
+                    self.logger.error("No valid benchmark data available after cleaning")
+                    return self.backtest_performance_metrics
+
+                # Create index dictionary with cleaned benchmark data and proper time index
+                # First create trade DataFrame with temporary index data to get date range
+                trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(trade_data, {"temp": pd.DataFrame()}, starting_capital)
+                if trade_df_by_date is None or trade_df_by_date.empty:
+                    self.logger.error("Failed to create valid trade data")
+                    return self.backtest_performance_metrics
+
+                # Create benchmark DataFrame with proper alignment to trade data
+                benchmark_df = pd.DataFrame({'close': benchmark_data})
+                # Normalize index to remove time component
+                benchmark_df.index = pd.to_datetime(benchmark_df.index).normalize()
                 
-                self.logger.info(f"""Market Data Structure:
-                    Benchmark Symbol: {first_symbol}
-                    Data Points: {len(benchmark_data)}
-                    Date Range: {benchmark_data.index[0]} to {benchmark_data.index[-1]}
+                # Filter benchmark data to match trade data range
+                trade_start = pd.to_datetime(trade_df_by_date.index.min()).normalize()
+                trade_end = pd.to_datetime(trade_df_by_date.index.max()).normalize()
+                benchmark_df = benchmark_df[
+                    (benchmark_df.index >= trade_start) &
+                    (benchmark_df.index <= trade_end)
+                ]
+                
+                # Ensure at least daily frequency
+                benchmark_df = benchmark_df.asfreq('D', method='ffill')
+                
+                self.logger.info(f"""Benchmark Data Prepared:
+                    Symbol: {first_symbol}
+                    Start: {benchmark_df.index[0]}
+                    End: {benchmark_df.index[-1]}
+                    Points: {len(benchmark_df)}
+                    First: {benchmark_df['close'].iloc[0]:.2f}
+                    Last: {benchmark_df['close'].iloc[-1]:.2f}
+                    Trade Date Range: {trade_start} to {trade_end}
                 """)
                 
+                # Create final index data dictionary with aligned benchmark
+                index_data = {first_symbol: benchmark_df}
+                
+                # Recreate trade data with aligned benchmark
                 trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(trade_data, index_data, starting_capital)
                 
                 if trade_df_by_date is not None and not trade_df_by_date.empty:
+                    # Verify minimum data requirements
+                    if len(trade_df_by_date) < 30:
+                        self.logger.warning(f"Insufficient data points for metrics: {len(trade_df_by_date)}")
+                        return self.backtest_performance_metrics
+
                     try:
+                        # Calculate and validate CAGR
+                        self.logger.info("Starting CAGR calculation...")
                         cagr = self.calculate_cagr(trade_df_by_date)
-                        if isinstance(cagr, float):
-                            cagr = round(cagr * 100, 2)  # Convert to percentage and round
-                        else:
+                        self.logger.info(f"Initial CAGR calculation result: {cagr}")
+                        
+                        # Verify CAGR is reasonable
+                        if not isinstance(cagr, float) or np.isnan(cagr) or np.isinf(cagr):
+                            self.logger.warning(f"Invalid CAGR value: {cagr}, resetting to 0.0")
                             cagr = 0.0
-                            
+                        
+                        # Calculate and validate Sharpe ratio
+                        self.logger.info("Starting Sharpe ratio calculation...")
+                        self.logger.info(f"Trade data points: {len(trade_df_by_date)}")
+                        self.logger.info(f"Trade date range: {trade_df_by_date.index[0]} to {trade_df_by_date.index[-1]}")
+                        self.logger.info(f"Benchmark data points: {len(index_data[next(iter(index_data))])}")
+                        
                         sharpe_ratio = self.calculate_sharpe_ratio(trade_df_by_date, index_data)
-                        if isinstance(sharpe_ratio, float):
-                            sharpe_ratio = round(sharpe_ratio, 2)
-                        else:
+                        self.logger.info(f"Initial Sharpe ratio calculation result: {sharpe_ratio}")
+                        
+                        if not isinstance(sharpe_ratio, float) or np.isnan(sharpe_ratio) or np.isinf(sharpe_ratio):
+                            self.logger.warning(f"Invalid Sharpe ratio value: {sharpe_ratio}, resetting to 0.0")
                             sharpe_ratio = 0.0
+                            
+                        # Store raw CAGR value (will be formatted as percentage in generate_report)
+                        cagr = float(cagr)
+                        sharpe_ratio = float(sharpe_ratio)
+                        
+                        self.logger.info(f"Calculated metrics - CAGR: {cagr:.4f}, Sharpe Ratio: {sharpe_ratio:.4f}")
                             
                     except Exception as e:
                         self.logger.error(f"Error calculating CAGR or Sharpe Ratio: {e}")
@@ -363,39 +641,67 @@ class PerformanceReporter:
                 cagr = 0.0
                 sharpe_ratio = 0.0
         
-        # Store metrics
-        self.backtest_performance_metrics.update({
-            'profit': profit,
-            'win_pct': round((win_count / (win_count + loss_count)) * 100, 2) if (win_count + loss_count) > 0 else 0,
+        # Calculate and store metrics with proper handling of edge cases
+        total_trades = win_count + loss_count
+        win_percentage = (win_count / total_trades * 100) if total_trades > 0 else 0.0
+        
+        metrics_update = {
+            'profit': round(profit, 2),
+            'win_pct': round(win_percentage, 2),
             'long_count': long_count,
             'short_count': short_count,
-            'Average_Profit': round(sum(profits_list) / len(profits_list), 2) if len(profits_list) > 0 else 0,
-            'Average_Loss': round(sum(losses_list) / len(losses_list), 2) if len(losses_list) > 0 else 0,
-            'long_Average': round(sum(long_list) / len(long_list), 2) if len(long_list) > 0 else 0,
-            'short_Average': round(sum(short_list) / len(short_list), 2) if len(short_list) > 0 else 0,
-            'sharpe_ratio': sharpe_ratio,
-            'cagr': round(cagr * 100, 2)  # Convert to percentage
-        })
+            'Average_Profit': round(sum(profits_list) / len(profits_list), 2) if profits_list else 0.0,
+            'Average_Loss': round(sum(losses_list) / len(losses_list), 2) if losses_list else 0.0,
+            'long_Average': round(sum(long_list) / len(long_list), 2) if long_list else 0.0,
+            'short_Average': round(sum(short_list) / len(short_list), 2) if short_list else 0.0,
+            'sharpe_ratio': round(float(sharpe_ratio), 4),  # Store raw value, format in report
+            'cagr': round(float(cagr), 4)  # Store raw value, format in report
+        }
+        
+        # Log the calculated metrics for debugging
+        self.logger.debug(f"Calculated metrics: {metrics_update}")
+        
+        # Update the performance metrics
+        self.backtest_performance_metrics.update(metrics_update)
         
         return self.backtest_performance_metrics
 
     def generate_report(self):
         if not self.backtest_performance_metrics:
+            self.logger.warning("No performance metrics available to generate report")
             return
-            
+        
+        metrics = self.backtest_performance_metrics
+        
+        # Format numeric values with proper precision and currency symbols
+        formatted_metrics = {
+            'profit': f"${metrics['profit']:,.2f}",
+            'win_pct': f"{metrics['win_pct']:.2f}%",
+            'long_count': str(metrics['long_count']),
+            'short_count': str(metrics['short_count']),
+            'Average_Profit': f"${metrics['Average_Profit']:,.2f}",
+            'Average_Loss': f"${metrics['Average_Loss']:,.2f}",
+            'long_Average': f"${metrics['long_Average']:,.2f}",
+            'short_Average': f"${metrics['short_Average']:,.2f}",
+            'sharpe_ratio': f"{float(metrics['sharpe_ratio']):.2f}" if isinstance(metrics['sharpe_ratio'], (int, float)) else "N/A",
+            'cagr': f"{float(metrics['cagr']):.2f}%" if isinstance(metrics['cagr'], (int, float)) else "N/A"
+        }
+        
         self.backtest_report = '\n'.join([
-            f"profit: {self.backtest_performance_metrics['profit']}",
-            f"win_pct: {self.backtest_performance_metrics['win_pct']}",
-            f"long_count: {self.backtest_performance_metrics['long_count']}",
-            f"short_count: {self.backtest_performance_metrics['short_count']}",
-            f"Average_Profit: {self.backtest_performance_metrics['Average_Profit']}",
-            f"Average_Loss: {self.backtest_performance_metrics['Average_Loss']}",
-            f"long_Average: {self.backtest_performance_metrics['long_Average']}",
-            f"short_Average: {self.backtest_performance_metrics['short_Average']}",
-            f"sharpe_ratio: {self.backtest_performance_metrics['sharpe_ratio']}",
-            f"cagr: {self.backtest_performance_metrics['cagr']}%"
+            "=== Backtest Performance Report ===",
+            f"Total Profit/Loss: {formatted_metrics['profit']}",
+            f"Win Rate: {formatted_metrics['win_pct']}",
+            f"Number of Long Trades: {formatted_metrics['long_count']}",
+            f"Number of Short Trades: {formatted_metrics['short_count']}",
+            f"Average Winning Trade: {formatted_metrics['Average_Profit']}",
+            f"Average Losing Trade: {formatted_metrics['Average_Loss']}",
+            f"Average Long Trade: {formatted_metrics['long_Average']}",
+            f"Average Short Trade: {formatted_metrics['short_Average']}",
+            f"Sharpe Ratio: {formatted_metrics['sharpe_ratio']}",
+            f"CAGR: {formatted_metrics['cagr']}"
         ])
-        self.logger.info(f'Backtest Report: \n{self.backtest_report}')
+        
+        self.logger.info(f"Backtest Report: \n{self.backtest_report}")
     
     def save_backtest(self, config_dict, open_orders, closed_orders):
         testname = config_dict['backtest_inputs']['backtest_name'] if 'backtest_name' in config_dict['backtest_inputs'] else None
@@ -524,174 +830,335 @@ class PerformanceReporter:
         
         return msg
 
-class StrategyReporter:
+def remove_all_content_after_class_performancereporter():
+    """Remove all content after the PerformanceReporter class to clean up the file."""
+    pass
+
+class StrategyReporter(PerformanceReporter):
+    """Analyze pairs trading strategy performance."""
+    
+    def __init__(self):
+        super().__init__(type('MockExtractor', (), {}))
+    
+    def analyze_pairs_trading(self, trades):
+        """Calculate performance metrics for pairs trading strategy."""
+        df = self._process_trades(trades)
+        if df.empty:
+            return None
+            
+        metrics = self._calculate_metrics(df)
+        self.logger.info(f"Pairs Trading Metrics: {metrics}")
+        return metrics
+        
+    def _process_trades(self, trades):
+        """Convert trades to DataFrame for analysis."""
+        records = []
+        for entry, exit in trades:
+            if not (entry.get('fill_price') and exit.get('fill_price')):
+                continue
+            pnl = (exit['fill_price'] - entry['fill_price']) * entry['orderQuantity']
+            if entry['orderDirection'] == 'SELL':
+                pnl *= -1
+            records.append({
+                'timestamp': pd.to_datetime(exit['filled_timestamp']),
+                'pnl': pnl,
+                'direction': entry['orderDirection']
+            })
+            
+        if not records:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(records)
+        df = df.set_index('timestamp').sort_index()
+        df['cumulative_pnl'] = df['pnl'].cumsum()
+        return df
+        
+    def _calculate_metrics(self, df):
+        """Calculate key performance metrics."""
+        return {
+            'total_trades': len(df),
+            'win_rate': (df['pnl'] > 0).mean() * 100,
+            'total_pnl': df['pnl'].sum(),
+            'avg_win': df[df['pnl'] > 0]['pnl'].mean() if len(df[df['pnl'] > 0]) else 0,
+            'avg_loss': df[df['pnl'] < 0]['pnl'].mean() if len(df[df['pnl'] < 0]) else 0
+        }
+
+    def prepare_trade_data(self, orders):
+        """Convert orders into analysis-ready DataFrame."""
+        trades = []
+        for entry, exit in orders:
+            try:
+                # Extract trade details
+                timestamp = exit['filled_timestamp']
+                direction = 'long' if entry['orderDirection'] == 'BUY' else 'short'
+                quantity = entry['orderQuantity']
+                entry_price = entry['fill_price']
+                exit_price = exit['fill_price']
+                
+                # Calculate PnL
+                pnl = self._calculate_trade_pnl(quantity, entry_price, exit_price, direction)
+                
+                trades.append({
+                    'timestamp': timestamp,
+                    'direction': direction,
+                    'quantity': quantity,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'pnl': pnl
+                })
+            except (KeyError, TypeError) as e:
+                self.logger.warning(f"Skipping invalid trade: {str(e)}")
+                continue
+                
+        # Convert to DataFrame
+        if not trades:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(trades)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.set_index('timestamp').sort_index()
+        
+        # Add derived metrics
+        df['is_win'] = df['pnl'] > 0
+        df['cumulative_pnl'] = df['pnl'].cumsum()
+        
+        return df
+
+    def _calculate_trade_pnl(self, quantity, entry_price, exit_price, direction):
+        """Calculate trade PnL based on direction."""
+        if direction == 'long':
+            return (exit_price - entry_price) * quantity
+        return (entry_price - exit_price) * quantity
+
+    def plot_performance_metrics(self, df, window=20):
+        """Plot key performance metrics."""
+        # Create subplots
+        fig = make_subplots(
+            rows=3, cols=1,
+            subplot_titles=['Cumulative PnL', 'Rolling Win Rate', 'Trade PnL Distribution'],
+            vertical_spacing=0.1,
+            row_heights=[0.4, 0.3, 0.3]
+        )
+        
+        # Cumulative PnL
+        fig.add_trace(
+            go.Scatter(x=df.index, y=df['cumulative_pnl'],
+                      name='Cumulative PnL',
+                      line=dict(color='cyan')),
+            row=1, col=1
+        )
+        
+        # Rolling win rate
+        rolling_win_pct = df['is_win'].rolling(window).mean() * 100
+        fig.add_trace(
+            go.Scatter(x=df.index, y=rolling_win_pct,
+                      name=f'{window}-Trade Win Rate',
+                      line=dict(color='green')),
+            row=2, col=1
+        )
+        
+        # PnL distribution
+        fig.add_trace(
+            go.Histogram(x=df['pnl'], name='PnL Distribution',
+                        nbinsx=50, marker_color='blue'),
+            row=3, col=1
+        )
+        
+        # Update layout
+        fig.update_layout(
+            height=900,
+            title_text='Strategy Performance Analysis',
+            showlegend=True,
+            template='plotly_dark'
+        )
+        
+        # Update axes
+        fig.update_yaxes(title_text='PnL ($)', row=1, col=1)
+        fig.update_yaxes(title_text='Win Rate %', row=2, col=1)
+        fig.update_yaxes(title_text='Count', row=3, col=1)
+        fig.update_xaxes(title_text='Trade PnL ($)', row=3, col=1)
+        
+        fig.show()
+    def __init__(self):
+        # Create a minimal market_data_extractor mock since we don't need it
+        mock_extractor = type('MockExtractor', (), {})()
+        super().__init__(mock_extractor)
+
     def load_backtest_output(self, test_folder_path):
+        """Load backtest output from pickle file"""
         backtest_orders_path = os.path.join(test_folder_path, 'backtest_output.pkl')
         with open(backtest_orders_path, 'rb') as f:
             backtest_orders = pickle.load(f)
         return backtest_orders
     
-    def calculate_multi_leg_order_profit(self, count, multi_leg_order):
-        sell_orders = []
-        buy_orders = []
-        signal_id = multi_leg_order[0]['signal_id']
-
-        buy_quantity = 0
-        sell_quantity = 0
-        # Separate out all sell and buy orders
-        for order in multi_leg_order:
-            symbol = order['symbol']
-            if order['orderDirection'] == 'SELL' and order['status'] == 'closed':
-                sell_orders.append(order)
-                sell_quantity += order['orderQuantity']
-            elif order['orderDirection'] == 'BUY' and order['status'] == 'closed':
-                buy_orders.append(order)
-                buy_quantity += order['orderQuantity']
-
-        if buy_quantity == sell_quantity:
-            total_profit = 0
-            # Assuming orders are processed in pairs (e.g., first sell with first buy, second sell with second buy)
-            for sell_order, buy_order in zip(sell_orders, buy_orders):
-                sell_price = sell_order.get('fill_price')
-                buy_price = buy_order.get('fill_price')
-                quantity = buy_quantity #min(sell_order.get('orderQuantity'), buy_order.get('orderQuantity'))
-
-                # Calculate profit for the matching sell and buy orders
-                profit = (sell_price - buy_price) * quantity
-                total_profit += profit
-            # self.logger.info({'order':multi_leg_order})
-            # self.logger.info(f"Total profit for multi-leg order: {total_profit}")
-            # raise AssertionError('PnL calculation not implemented yet.') 
-            return total_profit
-        else:
-            return 0
-
     def clean_up_order_list(self, nested_list, drop_history=False):
-        #  We have removed the history key from both dict as they are not required for most calculation
-        #  drop_history=False to keep the history
+        """Clean up order list by handling cancelled orders and updating statuses"""
         for sublist in nested_list:
-            # Process each dictionary in the sublist
-            for i in range(len(sublist) - 1, -1, -1):  # Iterate in reverse to allow in-place removal
+            for i in range(len(sublist) - 1, -1, -1):
                 d = sublist[i]
-                
-                # Remove dict with status 'cancelled'
                 if d.get('status') == 'cancelled':
                     sublist.pop(i)
                     continue
-                    
                 if drop_history:
-                    # Remove 'history' key if present
                     d.pop('history', None)
-                
-                # Update dict2 status from 'open' to 'closed'
                 if d.get('status') == 'open':
                     d['status'] = 'closed'
-                    
-                    # Ensure 'symbol_ltp' is a dictionary or check if it has values()
                     if isinstance(d.get('symbol_ltp'), dict):
-                        d['fill_price'] = list(d['symbol_ltp'].values())[-1]  # Safely access values
-                        # Set 'filled_timestamp'
+                        d['fill_price'] = list(d['symbol_ltp'].values())[-1]
                         d['filled_timestamp'] = pd.Timestamp(datetime.strptime(list(d['symbol_ltp'].keys())[-1], '%Y-%m-%d %H:%M:%S%z'))
                     else:
-                        # Handle missing or incorrect structure of symbol_ltp
-                        d['fill_price'] = None  # or any default value
+                        d['fill_price'] = None
                         d['filled_timestamp'] = None
-        
-        # Filter out empty sublists
         return [sublist for sublist in nested_list if sublist]
-    
+
+    def process_and_plot_orders(self, data, symbol, save_folder):
+        """Process and plot order data for a given symbol"""
+        filtered_orders = [entry for entry in data if entry[0]['symbol'] == symbol]
+        if not filtered_orders:
+            raise ValueError(f"No orders found for symbol: {symbol}")
+        sorted_orders = sorted(filtered_orders, key=lambda x: x[1]['filled_timestamp'])
+        first_timestamp = sorted_orders[0][1]['filled_timestamp'] - timedelta(days=365)
+        last_timestamp = sorted_orders[-1][1]['filled_timestamp'] + timedelta(days=365)
+        data_dict = self.load_and_save_index_data([symbol], first_timestamp, last_timestamp, save_folder)
+        index_df = data_dict[symbol].copy()
+        index_df['close'] = index_df['close'][1:].astype(float)
+        
+        fig = self._create_order_plot(index_df, sorted_orders, symbol)
+        fig.show()
+
+    def _create_order_plot(self, index_df, sorted_orders, symbol):
+        """Create plotly figure for order visualization"""
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=index_df.index, y=index_df['close'], mode='lines', name='Index'))
+        
+        for order in sorted_orders:
+            entry_order, exit_order = order[0], order[1]
+            entry_marker = self._get_entry_marker(entry_order)
+            trade_result = self._calculate_trade_result(entry_order, exit_order)
+            exit_marker = dict(color='green' if trade_result > 0 else 'red', size=10, symbol='square')
+            
+            fig.add_trace(go.Scatter(
+                x=[entry_order['filled_timestamp']], y=[entry_order['fill_price']],
+                mode='markers', text=f"Entry: {entry_order['order_num']}", marker=entry_marker, name='Entry Order'
+            ))
+            fig.add_trace(go.Scatter(
+                x=[exit_order['filled_timestamp']], y=[exit_order['fill_price']],
+                mode='markers', text=f"Exit: {entry_order['order_num']}", marker=exit_marker, name='Exit Order'
+            ))
+        
+        fig.update_layout(
+            title=f'Order Analysis for Symbol: {symbol}',
+            xaxis_title='Timestamp', yaxis_title='Price',
+            template='plotly_dark', showlegend=False
+        )
+        return fig
+
+    def _get_entry_marker(self, entry_order):
+        """Get marker style for entry order"""
+        return dict(
+            color='green' if entry_order['orderDirection'].upper() == 'BUY' else 'red',
+            size=10,
+            symbol='triangle-up' if entry_order['orderDirection'].upper() == 'BUY' else 'triangle-down'
+        )
+
+    def _calculate_trade_result(self, entry_order, exit_order):
+        """Calculate trade result"""
+        if entry_order['orderDirection'].upper() == 'BUY':
+            return exit_order['fill_price'] - entry_order['fill_price']
+        return entry_order['fill_price'] - exit_order['fill_price']
+
+    def calculate_rolling_sharpe_ratio(self, trade_df_cumulative, index_data_dict, index_name, window):
+        """Calculate rolling Sharpe ratio"""
+        rolling_sharpe_data = []
+        for i in range(window, len(trade_df_cumulative)):
+            prev_i = i - window
+            trimmed_trade_df = trade_df_cumulative.iloc[prev_i:i]
+            trimmed_index_df = index_data_dict[index_name][str(trimmed_trade_df.index[0]):str(trimmed_trade_df.index[-1])]
+            sharpe_ratio = self.calculate_sharpe_ratio(trimmed_trade_df, trimmed_index_df)
+            rolling_sharpe_data.append({
+                'datetime': trade_df_cumulative.index[i],
+                'rolling_sharpe_ratio': sharpe_ratio
+            })
+        return pd.DataFrame(rolling_sharpe_data).set_index('datetime')
+
+    def plot_rolling_win_percentage(self, trade_df, index_data_dict, window=10):
+        """Plot rolling win percentage"""
+        trade_df['is_win'] = trade_df['profit_loss'] > 0
+        trade_df['rolling_win_pct'] = trade_df['is_win'].rolling(window=window).mean() * 100
+        fig = px.line(
+            trade_df,
+            x='filled_timestamp', y='rolling_win_pct',
+            title=f'Rolling Win Percentage (Window Size: {window})',
+            labels={'rolling_win_pct': 'Rolling Win Percentage (%)', 'filled_timestamp': 'Filled Timestamp'},
+            template='plotly_dark'
+        )
+        fig.update_layout(
+            yaxis=dict(ticksuffix='%'),
+            xaxis=dict(range=[min(index_data_dict['^DJI'].index), max(index_data_dict['^DJI'].index)]),
+            legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1)
+        )
+        fig.show()
+
+    def prepare_trade_data_df_by_order(self, final_list):
+        """Convert order list into DataFrame with profit/loss calculations"""
+        trade_data = []
+        for trade_pair in final_list:
+            try:
+                entry_trade, exit_trade = trade_pair[0], trade_pair[1]
+                entry_price = entry_trade['fill_price']
+                exit_price = exit_trade.get('fill_price', entry_price)
+                exit_timestamp = exit_trade['filled_timestamp']
+                trade_type = 'long' if entry_trade['orderDirection'] == 'BUY' else 'short'
+                profit_loss = self._calculate_profit_loss(entry_trade, exit_trade)
+                trade_data.append([exit_timestamp, profit_loss, trade_type])
+            except KeyError:
+                continue
+        
+        trade_df = pd.DataFrame(trade_data, columns=['filled_timestamp', 'profit_loss', 'trade_type'])
+        trade_df['filled_timestamp'] = pd.to_datetime(trade_df['filled_timestamp']).dt.floor('D')
+        return trade_df.sort_values('filled_timestamp', ascending=True).astype({'profit_loss': 'float32'})
+
     def load_and_save_index_data(self, indices, start_date, end_date, folder):
-
-        # Ensure the folder exists
+        """Load and save index data from Yahoo Finance"""
         os.makedirs(folder, exist_ok=True)
-        index_files = {}  # Dictionary to store DataFrames for all indices
-
+        index_files = {}
+        
         for index_name in indices:
             filename = os.path.join(folder, f"{index_name}.csv")
-
-            # Check if the file exists
-            if os.path.exists(filename):
-                # Read the CSV and parse dates
-                data = pd.read_csv(filename, parse_dates=['datetime'], index_col='datetime')
-            else:
-                # Download max data from Yahoo Finance
-                data = yf.download(index_name, period='max', interval="1d")
-
-                if data.empty:
-                    continue
-                
-                # Process downloaded data
-                if isinstance(data.columns, pd.MultiIndex):  # Handle multi-index columns
-                    data.columns = data.columns.droplevel(1)
-
-                # Reset index and rename columns
-                data.reset_index(inplace=True)
-                data.rename(columns={'Date': 'datetime'}, inplace=True)
-                data.set_index('datetime', inplace=True)
-                data.columns = [col.lower() for col in data.columns]  # Lowercase column names
-                
-                # Save the processed data to CSV
-                data.to_csv(filename)
-
-            # Ensure the index is datetime and filter by date range
-            data.index = pd.to_datetime(data.index)  # Ensure datetime index
-            data = data[(data.index >= start_date) & (data.index <= end_date)]
             
-            if data.empty:
+            try:
+                if os.path.exists(filename):
+                    data = pd.read_csv(filename, parse_dates=['datetime'], index_col='datetime')
+                else:
+                    data = yf.download(index_name, period='max', interval="1d")
+                    if data.empty:
+                        continue
+                    
+                    # Process downloaded data
+                    if isinstance(data.columns, pd.MultiIndex):
+                        data.columns = data.columns.droplevel(1)
+                    
+                    data.reset_index(inplace=True)
+                    data.rename(columns={'Date': 'datetime'}, inplace=True)
+                    data.set_index('datetime', inplace=True)
+                    data.columns = [col.lower() for col in data.columns]
+                    data.to_csv(filename)
+                
+                # Filter data to requested date range
+                data.index = pd.to_datetime(data.index)
+                data = data[(data.index >= start_date) & (data.index <= end_date)]
+                
+                if not data.empty:
+                    index_files[index_name] = data
+                
+            except Exception as e:
+                self.logger.error(f"Error processing index {index_name}: {str(e)}")
                 continue
-
-            # Store the processed DataFrame in the dictionary
-            index_files[index_name] = data
-
+                
         return index_files
 
-    def create_data_input_for_cumulative_returns_and_indices(self, trade_data, index_data_dict, starting_capital):
-        # Extract profit/loss data
-        trade_timestamps = []
-        profit_loss = []
-        
-        for trade in trade_data:
-            entry_order, exit_order = trade
-                
-            # Check order direction to determine long or short
-            if entry_order['orderDirection'] == 'BUY':  # Long trade
-                profit = (exit_order['fill_price'] - entry_order['fill_price']) * entry_order['orderQuantity']
-            elif entry_order['orderDirection'] == 'SELL':  # Short trade
-                profit = (entry_order['fill_price'] - exit_order['fill_price']) * entry_order['orderQuantity']
-            else:
-                profit = 0  # Handle any undefined order direction
+    # Removed duplicate data input creation method - using parent class implementation
 
-            trade_timestamps.append(exit_order['filled_timestamp'])
-            profit_loss.append(profit)
-        
-        # Create a DataFrame for sorting
-        trade_df = pd.DataFrame({
-            "filled_timestamp": trade_timestamps,
-            "profit_loss": profit_loss
-        })
-        
-        # Sort the data by exit timestamp
-        trade_df = trade_df.sort_values(by="filled_timestamp").reset_index(drop=True)
-        daily_profit_loss = trade_df.groupby("filled_timestamp")["profit_loss"].sum().reset_index()
-        # # Calculate `cumulative_return` by cumulatively summing `profit_loss`
-        daily_profit_loss["cumulative_pnl"] = daily_profit_loss["profit_loss"].cumsum()
-        
-        daily_profit_loss["account_value"] = daily_profit_loss["cumulative_pnl"] + starting_capital
-        # pct growth for cumulative pnl
-        daily_profit_loss["cumulative_return"] = ((daily_profit_loss["account_value"] / daily_profit_loss["account_value"].iloc[0]) - 1) * 100
-        
-        # # Forward-fill missing dates if needed
-        daily_profit_loss = daily_profit_loss.set_index("filled_timestamp")
-        daily_profit_loss = daily_profit_loss.asfreq("D", method="ffill").reset_index()
-        # # Calculate cumulative profit/loss and returns
-        # trade_df['cumulative_profit_loss'] = trade_df['profit_loss'].cumsum()
-        # trade_df['cumulative_return'] = trade_df['cumulative_profit_loss'] 
-        trade_df_by_date = daily_profit_loss
-        # rename 'filled_timestamp' to 'datetime'
-        trade_df_by_date.rename(columns={'filled_timestamp':'datetime'}, inplace=True)
-        trade_df_by_date.set_index('datetime', inplace=True)
-        
-        return trade_df_by_date
 
     def plot_cumulative_returns_and_indices(self, trade_df, index_data_dict):
         min_max = [0 , 0]
@@ -760,131 +1227,7 @@ class StrategyReporter:
         fig.update_layout(legend=dict(orientation="h", yanchor="top", y=1.1, xanchor="right", x=1))
         fig.show()
         
-    ## Sharpe Ratio Calculation
-    def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
-        """
-        Calculate Sharpe Ratio with proper risk-free rate and improved handling of market conditions
-        Returns both Sharpe Ratio and key components for analysis
-        """
-        try:
-            if trade_df_cumulative.empty:
-                return 0.0
-
-            # Get and validate strategy values
-            strategy_values = trade_df_cumulative['account_value']
-            self.logger.info(f"""Strategy Values:
-                Points: {len(strategy_values)}
-                Date Range: {strategy_values.index[0]} to {strategy_values.index[-1]}
-                Start Value: {strategy_values.iloc[0]:.2f}
-                End Value: {strategy_values.iloc[-1]:.2f}
-            """)
-            
-            # Get and validate benchmark values
-            try:
-                benchmark_values = next(iter(index_data_dict.values()))['close']
-                self.logger.info(f"""Benchmark Values:
-                    Points: {len(benchmark_values)}
-                    Date Range: {benchmark_values.index[0]} to {benchmark_values.index[-1]}
-                    Start Value: {benchmark_values.iloc[0]:.2f}
-                    End Value: {benchmark_values.iloc[-1]:.2f}
-                """)
-            except (StopIteration, KeyError) as e:
-                self.logger.error(f"Invalid benchmark data structure: {str(e)}")
-                return 0.0
-                
-            # Ensure datetime index and handle timezone issues
-            strategy_values.index = pd.to_datetime(strategy_values.index)
-            benchmark_values.index = pd.to_datetime(benchmark_values.index)
-            
-            # Align data on same dates with detailed logging
-            aligned_data = pd.DataFrame({
-                'strategy': strategy_values,
-                'benchmark': benchmark_values
-            })
-            
-            initial_points = len(aligned_data)
-            aligned_data = aligned_data.dropna()
-            final_points = len(aligned_data)
-            
-            self.logger.info(f"""Data Alignment:
-                Initial Points: {initial_points}
-                Points After Alignment: {final_points}
-                Points Lost: {initial_points - final_points}
-                Date Range: {aligned_data.index[0]} to {aligned_data.index[-1]}
-            """)
-            
-            if len(aligned_data) < 2:
-                self.logger.warning("Insufficient aligned data points for returns calculation")
-                return 0.0
-                
-            # Calculate returns with improved validation
-            strategy_returns = aligned_data['strategy'].pct_change()
-            benchmark_returns = aligned_data['benchmark'].pct_change()
-            
-            # Detailed validation of return calculations
-            valid_mask = ~(np.isnan(strategy_returns) | np.isinf(strategy_returns) |
-                         np.isnan(benchmark_returns) | np.isinf(benchmark_returns))
-            
-            if not valid_mask.any():
-                self.logger.warning("No valid returns found after data cleaning")
-                return 0.0
-            
-            strategy_returns = strategy_returns[valid_mask]
-            benchmark_returns = benchmark_returns[valid_mask]
-            
-            # Log detailed return statistics
-            self.logger.info(f"""Performance Statistics:
-                Data Points: {len(strategy_returns)}
-                Strategy Returns:
-                    Mean (Daily): {strategy_returns.mean():.4%}
-                    Std Dev (Daily): {strategy_returns.std():.4%}
-                    Min: {strategy_returns.min():.4%}
-                    Max: {strategy_returns.max():.4%}
-                    Skew: {stats.skew(strategy_returns):.4f}
-                Benchmark Returns:
-                    Mean (Daily): {benchmark_returns.mean():.4%}
-                    Std Dev (Daily): {benchmark_returns.std():.4%}
-                    Min: {benchmark_returns.min():.4%}
-                    Max: {benchmark_returns.max():.4%}
-                    Skew: {stats.skew(benchmark_returns):.4f}
-            """)
-            
-            # Risk-free rate handling
-            annual_rf_rate = 0.05  # 5% annual risk-free rate
-            daily_rf_rate = annual_rf_rate / 252
-            
-            # Calculate excess returns with full statistics
-            excess_returns = strategy_returns - benchmark_returns - daily_rf_rate
-            
-            # Annualize metrics
-            periods_per_year = 252
-            mean_excess_return = excess_returns.mean() * periods_per_year
-            volatility = excess_returns.std() * np.sqrt(periods_per_year)
-            
-            self.logger.info(f"""Sharpe Ratio Components:
-                Annualized Excess Return: {mean_excess_return:.4%}
-                Annualized Volatility: {volatility:.4%}
-                Risk-free Rate (Annual): {annual_rf_rate:.2%}
-            """)
-            
-            if volatility <= 0 or np.isnan(volatility):
-                self.logger.warning(f"Invalid volatility: {volatility}")
-                return 0.0
-            
-            sharpe = mean_excess_return / volatility
-            
-            if np.isnan(sharpe) or np.isinf(sharpe):
-                self.logger.warning(f"Invalid Sharpe ratio: {sharpe}")
-                return 0.0
-                
-            self.logger.info(f"Final Sharpe Ratio: {sharpe:.4f}")
-            return round(sharpe, 4)
-                
-            return sharpe
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating Sharpe ratio: {e}")
-            return 0.0
+    # Removed duplicate Sharpe ratio calculation - using parent class implementation
 
     def calculate_rolling_sharpe_ratio(self, trade_df_cumulative, index_data_dict, index_name, window):
         rolling_sharpe_data = []  # Initialize an empty list to store rows
@@ -982,48 +1325,7 @@ class StrategyReporter:
         fig.show()
         
     # calculate CAGR for the backtest
-    def calculate_cagr(self, trade_df_by_date):
-        """
-        Calculate the Compound Annual Growth Rate (CAGR) with comprehensive error handling
-        and detailed performance analysis
-        """
-        try:
-            if trade_df_by_date.empty:
-                self.logger.warning("Empty DataFrame provided for CAGR calculation")
-                return 0.0
-
-            start_date = trade_df_by_date.index[0]
-            end_date = trade_df_by_date.index[-1]
-            start_value = trade_df_by_date['account_value'].iloc[0]
-            end_value = trade_df_by_date['account_value'].iloc[-1]
-            
-            # Handle edge cases
-            if start_value <= 0:
-                self.logger.error("Invalid start value (<=0) for CAGR calculation")
-                return 0.0
-                
-            days = (end_date - start_date).days
-            if days < 1:
-                self.logger.warning("Insufficient time period for CAGR calculation")
-                return 0.0
-            
-            # Calculate CAGR and log key metrics
-            cagr = (end_value / start_value) ** (365.0 / days) - 1
-            
-            self.logger.info(f"""CAGR Calculation Details:
-                Start Date: {start_date}
-                End Date: {end_date}
-                Days: {days}
-                Start Value: ${start_value:,.2f}
-                End Value: ${end_value:,.2f}
-                CAGR: {cagr * 100:.2f}%
-            """)
-            
-            return cagr
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating CAGR: {e}")
-            return 0.0
+    # Removed duplicate CAGR calculation - using parent class implementation
     
     def calculate_drawdowns(self, trade_df_by_date):
         """Calculate drawdowns with additional metrics and error handling"""
