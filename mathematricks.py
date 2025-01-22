@@ -7,7 +7,7 @@ from systems.vault import Vault
 from systems.rms import RMS
 from systems.oms import OMS
 from systems.performance_reporter import PerformanceReporter
-from systems.utils import create_logger, sleeper, MarketDataExtractor
+from systems.utils import create_logger, sleeper, MarketDataExtractor, project_path
 import datetime, pytz
 from copy import deepcopy
 from systems.telegram import TelegramBot
@@ -328,7 +328,7 @@ class Mathematricks:
             raise AssertionError('Invalid run_mode value: {}'.format(run_mode))
 
 if __name__ == '__main__':
-    logs_folder = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/logs'
+    logs_folder = project_path + '/logs'
     # Remove all .log files from logs folder
     for file in os.listdir(logs_folder):
         if file.endswith('.log'):
