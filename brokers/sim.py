@@ -91,7 +91,7 @@ class SIM_Execute():
         
         if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
             if order['orderDirection'].lower() == 'buy' and current_high_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_low_price <= order['exitPrice']:
-                fill_price = current_high_price if order['orderDirection'].lower() == 'buy' else current_low_price
+                fill_price = order['exitPrice']
                 response_order = deepcopy(order)
                 response_order['status'] = 'closed'
                 self.available_granularities = market_data_df.index.get_level_values(0).unique()
