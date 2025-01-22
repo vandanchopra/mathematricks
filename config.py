@@ -21,7 +21,7 @@ config_dict = {
     'backtest_inputs': {
         'start_time': start_date, 
         'end_time': end_date,
-        'save_backtest_results':False,
+        'save_backtest_results':True,
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
     # 'live_start_date': datetime(year=2024, month=11, day=28, hour=9, minute=31, second=0).astimezone(pytz.timezone('US/Eastern')),

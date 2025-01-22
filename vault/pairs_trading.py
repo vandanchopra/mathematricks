@@ -37,7 +37,7 @@ class Strategy(BaseStrategy):
         self.orderType = "MARKET"
         self.exit_order_type = "stoploss_pct"
         self.timeInForce = "DAY"
-        self.orderQuantity = 20  # Higher base quantity for 2011 volatility
+        self.orderQuantity = 200  # Higher base quantity for 2011 volatility
         
         # Market Regime Parameters - More adaptive
         self.volatility_window = 20  # Shorter window for faster reaction
@@ -319,7 +319,7 @@ class Strategy(BaseStrategy):
         """Get current account size from available buying power metrics"""
         try:
             # Default to conservative estimate if metrics unavailable
-            return 100000
+            return 1000000
         except:
             self.logger.warning("Could not get account metrics, using default size")
             return 100000
