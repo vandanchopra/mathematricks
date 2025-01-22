@@ -328,7 +328,7 @@ class Mathematricks:
             raise AssertionError('Invalid run_mode value: {}'.format(run_mode))
 
 if __name__ == '__main__':
-    logs_folder = '/mnt/VANDAN_DISK/gagan_stuff/mathematricks/logs'
+    logs_folder = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/logs'
     # Remove all .log files from logs folder
     for file in os.listdir(logs_folder):
         if file.endswith('.log'):

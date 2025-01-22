@@ -329,6 +329,8 @@ class RMS:
                             "signal_id": signal["signal_id"],
                             "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
                             }
+                        if 'strategy_inputs' in signal:
+                            order_leg['strategy_inputs'] = signal['strategy_inputs']
                         signal_orders.append(order_leg)
                     except Exception as e:
                         self.logger.debug({'signal':signal})
@@ -352,6 +354,8 @@ class RMS:
                             "signal_id": signal["signal_id"],
                             "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
                             }
+                        if 'strategy_inputs' in signal:
+                            order_leg['strategy_inputs'] = signal['strategy_inputs']
                         signal_orders.append(order_leg)
                         
                     elif signal['exit_order_type'] == 'take_profit_stoploss_pct':
@@ -373,6 +377,8 @@ class RMS:
                             "signal_id": signal["signal_id"],
                             "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
                             }
+                        if 'strategy_inputs' in signal:
+                            order_leg['strategy_inputs'] = signal['strategy_inputs']
                         signal_orders.append(order_leg)
                         
                         # Stoploss Order
@@ -392,6 +398,8 @@ class RMS:
                             "signal_id": signal["signal_id"],
                             "symbol_ltp": {str(signal["timestamp"]):list(signal["symbol_ltp"].values())[-1]}
                             }
+                        if 'strategy_inputs' in signal:
+                            order_leg['strategy_inputs'] = signal['strategy_inputs']
                         signal_orders.append(order_leg)
                         
             if signal_type == 'ORDER_CANCELLATION':
@@ -429,6 +437,8 @@ class RMS:
                                 "status": 'pending',
                                 "signal_id": signal["signal_id"]
                                 }
+                            if 'strategy_inputs' in signal:
+                                order_leg['strategy_inputs'] = signal['strategy_inputs']
                             
                             signal_orders.append(order_leg)
                 # self.logger.debug({'cancel_orders':signal_orders})

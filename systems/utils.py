@@ -3,7 +3,7 @@
 import os, time, sys, logging, json, hashlib, datetime, pytz
 import pandas as pd
 
-project_path = '/mnt/VANDAN_DISK/gagan_stuff/mathematricks'
+project_path = '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/'
 
 def create_logger(log_level, logger_name='mathematricks', print_to_console=True):
     logger = logging.getLogger(logger_name)

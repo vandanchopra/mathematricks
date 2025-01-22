@@ -479,19 +479,19 @@ class PerformanceReporter:
                 self.logger.info("Preparing benchmark data...")
                 try:
                     if isinstance(market_data_df_root.columns, pd.MultiIndex):
-                        self.logger.info(f"Initial DataFrame structure:\n{market_data_df_root.head()}")
+                        # self.logger.info(f"Initial DataFrame structure:\n{market_data_df_root.head()}")
                         
                         # Handle multi-index rows if present
                         if isinstance(market_data_df_root.index, pd.MultiIndex):
-                            self.logger.info(f"Row index levels: {market_data_df_root.index.names}")
+                            # self.logger.info(f"Row index levels: {market_data_df_root.index.names}")
                             # Convert to single-level datetime index
                             market_data_df_root = market_data_df_root.reset_index()
                             market_data_df_root = market_data_df_root.set_index('datetime')
-                            self.logger.info(f"After index reset:\n{market_data_df_root.head()}")
+                            # self.logger.info(f"After index reset:\n{market_data_df_root.head()}")
                         
                         # Get symbols from the second level where first level is 'close'
                         close_symbols = [sym for col, sym in market_data_df_root.columns if col == 'close' and sym != '']
-                        self.logger.info(f"Found close symbols: {close_symbols}")
+                        # self.logger.info(f"Found close symbols: {close_symbols}")
                         
                         if not close_symbols:
                             self.logger.error("No close price columns found")

@@ -12,6 +12,7 @@ from scipy import stats
 import statsmodels.api as sm
 import sys, time
 from typing import Tuple, Optional, List, Dict, Any
+import uuid
 
 class Strategy(BaseStrategy):
     def __init__(self, config_dict):
@@ -37,7 +38,7 @@ class Strategy(BaseStrategy):
         self.orderType = "MARKET"
         self.exit_order_type = "stoploss_pct"
         self.timeInForce = "DAY"
-        self.orderQuantity = 200  # Higher base quantity for 2011 volatility
+        self.orderQuantity = 1500  # Higher base quantity for 2011 volatility
         
         # Market Regime Parameters - More adaptive
         self.volatility_window = 20  # Shorter window for faster reaction
@@ -73,7 +74,7 @@ class Strategy(BaseStrategy):
         
         data_inputs = {
             '1d': {
-                'columns': ['open', 'high', 'close', 'volume'],
+                'columns': ['open', 'high', 'close', 'low', 'volume'],
                 'lookback': max(252, self.lookback_window)
             }
         }
@@ -160,12 +161,12 @@ class Strategy(BaseStrategy):
             cointegration_threshold = min(0.3, base_coint_threshold * (1 + 0.5 * vol_ratio))
             correlation_threshold = 0.5 if vol_ratio < 1.2 else 0.6  # More lenient correlation requirements
             
-            self.logger.info(f"""Market condition adjustments:
-                - Base cointegration threshold: {base_coint_threshold:.4f}
-                - Adjusted cointegration threshold: {cointegration_threshold:.4f}
-                - Correlation threshold: {correlation_threshold:.2f}
-                - Volatility ratio: {vol_ratio:.2f}
-            """)
+            # self.logger.info(f"""Market condition adjustments:
+            #     - Base cointegration threshold: {base_coint_threshold:.4f}
+            #     - Adjusted cointegration threshold: {cointegration_threshold:.4f}
+            #     - Correlation threshold: {correlation_threshold:.2f}
+            #     - Volatility ratio: {vol_ratio:.2f}
+            # """)
 
             # Evaluate pair based on combined metrics with adaptive thresholds
             strong_correlation = correlation > correlation_threshold
@@ -192,31 +193,31 @@ class Strategy(BaseStrategy):
             elif 0.3 <= vol_ratio <= 2.5:  # Partial credit for less ideal but still usable volatility
                 score += 0.5
             
-            self.logger.info(f"""Pair validation scoring:
-                - Correlation score: {2 if correlation > 0.55 else 1 if correlation > 0.4 else 0}
-                - Cointegration score: {2 if best_pvalue < 0.25 else 1 if best_pvalue < 0.4 else 0}
-                - Volatility score: {1 if 0.5 <= vol_ratio <= 2.0 else 0.5 if 0.3 <= vol_ratio <= 2.5 else 0}
-                - Total score: {score}/5
-            """)
+            # self.logger.info(f"""Pair validation scoring:
+            #     - Correlation score: {2 if correlation > 0.55 else 1 if correlation > 0.4 else 0}
+            #     - Cointegration score: {2 if best_pvalue < 0.25 else 1 if best_pvalue < 0.4 else 0}
+            #     - Volatility score: {1 if 0.5 <= vol_ratio <= 2.0 else 0.5 if 0.3 <= vol_ratio <= 2.5 else 0}
+            #     - Total score: {score}/5
+            # """)
             
             # Extremely lenient validation for startup period
             min_score = 1.0 if window_size < 30 else 1.5  # Even lower requirement during startup
             
             if score < min_score:  # Dynamic scoring threshold
-                self.logger.debug(f"""Pair validation details:
-                    - Cointegration p-value: {best_pvalue:.4f} (threshold: {cointegration_threshold:.4f})
-                    - Correlation: {correlation:.2f} (threshold: {correlation_threshold:.2f})
-                    - Volatility ratio: {vol_ratio:.2f}
-                    - Recent volatility: {recent_vol:.4f}
-                    - Historical volatility: {full_vol:.4f}
-                    """)
+                # self.logger.debug(f"""Pair validation details:
+                #     - Cointegration p-value: {best_pvalue:.4f} (threshold: {cointegration_threshold:.4f})
+                #     - Correlation: {correlation:.2f} (threshold: {correlation_threshold:.2f})
+                #     - Volatility ratio: {vol_ratio:.2f}
+                #     - Recent volatility: {recent_vol:.4f}
+                #     - Historical volatility: {full_vol:.4f}
+                #     """)
                 return False, None
             
             # Calculate hedge ratio using robust regression
             recent_window = min(window_size, 63)  # Last quarter for hedge ratio
             x = sm.add_constant(price2[-recent_window:])
             model = sm.RLM(price1[-recent_window:], x).fit()
-            hedge_ratio = model.params[1]
+            hedge_ratio = model.params.iloc[1]  # Use iloc instead of [] for positional indexing
             
             # Calculate spread
             spread = price1 - hedge_ratio * price2
@@ -235,34 +236,33 @@ class Strategy(BaseStrategy):
             
             # Only enforce strict stationarity test for pairs with weaker correlation
             if correlation < 0.65 and adf_result[1] > adf_threshold:
-                self.logger.debug(f"Failed stationarity test for weakly correlated pair - ADF p-value: {adf_result[1]:.4f}")
+                # self.logger.debug(f"Failed stationarity test for weakly correlated pair - ADF p-value: {adf_result[1]:.4f}")
                 return False, None
                 
             # Add half-life score to total score
             score += half_life_score
             
-            self.logger.info(f"""Additional validation metrics:
-                - Half-life: {half_life:.1f} days (score: {half_life_score})
-                - ADF p-value: {adf_result[1]:.4f}
-                - Final total score: {score}/6
-            """)
+            # self.logger.info(f"""Additional validation metrics:
+            #     - Half-life: {half_life:.1f} days (score: {half_life_score})
+            #     - ADF p-value: {adf_result[1]:.4f}
+            #     - Final total score: {score}/6
+            # """)
             
             # Final validation check - require minimum total score
             if score < 2.5:  # Allowing for partial scores
                 return False, None
             
             # Success metrics
-            self.logger.info(f"Pair validation metrics - Correlation: {correlation:.2f}, "
-                        f"Cointegration p-value: {best_pvalue:.4f}, "
-                        f"Half-life: {half_life:.1f}, Hedge ratio: {hedge_ratio:.2f}, "
-                        f"ADF p-value: {adf_result[1]:.4f}")
+            # self.logger.info(f"Pair validation metrics - Correlation: {correlation:.2f}, "
+                        # f"Cointegration p-value: {best_pvalue:.4f}, "
+                        # f"Half-life: {half_life:.1f}, Hedge ratio: {hedge_ratio:.2f}, "
+                        # f"ADF p-value: {adf_result[1]:.4f}")
             return True, hedge_ratio
             
         except Exception as e:
             self.logger.error(f"Error in pair validation: {str(e)}")
             return False, None
             
-
     def calculate_position_sizes(self, price1, price2, hedge_ratio, vol_factor, market_data_df, system_timestamp, symbol1, symbol2):
         """Calculate position sizes based on volatility and price ratio"""
         self.market_data_df = market_data_df
@@ -351,10 +351,10 @@ class Strategy(BaseStrategy):
             # Minimum data requirement aligned with validation
             min_required = 20  # Match the minimum requirement in validate_pair
             if len(price1) < min_required:
-                self.logger.debug(f"Insufficient data points for {pair}: {len(price1)} < {min_required}")
+                # self.logger.debug(f"Insufficient data points for {pair}: {len(price1)} < {min_required}")
                 return None, None
                 
-            self.logger.info(f"Processing {pair} with {len(price1)} data points")
+            # self.logger.info(f"Processing {pair} with {len(price1)} data points")
             
             # Log data availability
             # self.logger.info(f"Processing {pair} with {len(price1)} valid data points")
@@ -362,7 +362,7 @@ class Strategy(BaseStrategy):
             # Allow more pairs through to validation by skipping initial correlation filter
             is_valid, hedge_ratio = self.validate_pair(price1, price2)
             if not is_valid:
-                self.logger.debug(f"Pair {pair} failed validation tests")
+                # self.logger.debug(f"Pair {pair} failed validation tests")
                 return None, None
             
             # self.logger.info(f"Pair {pair} passed all validation tests with hedge ratio {hedge_ratio:.2f}")
@@ -424,12 +424,12 @@ class Strategy(BaseStrategy):
             vol_factor = np.clip(vol_factor, 0.8, 1.5)
 
             # Log pair evaluation details
-            self.logger.info(f"Evaluating pair {pair} - Z-score: {current_z:.2f}, "
-                           f"Entry threshold: {entry_threshold:.2f}, "
-                           f"Vol factor: {vol_factor:.2f}")
+            # self.logger.info(f"Evaluating pair {pair} - Z-score: {current_z:.2f}, "
+            #                f"Entry threshold: {entry_threshold:.2f}, "
+            #                f"Vol factor: {vol_factor:.2f}")
 
             if abs(current_z) > entry_threshold:
-                self.logger.info(f"Generating signal for pair {pair} with z-score {current_z:.2f}")
+                # self.logger.info(f"Generating signal for pair {pair} with z-score {current_z:.2f}")
                 is_long = current_z < -entry_threshold
                 stock1, stock2 = pair
                 
@@ -448,7 +448,7 @@ class Strategy(BaseStrategy):
                     base_stop = self.stop_loss_pct * (1 + (vol_factor - 1) * 0.5)
                     z_factor = min(abs(current_z) / self.entry_z, 2.0)
                     stop_loss = base_stop * (2.0 - z_factor)  # Tighter stops for extreme z-scores
-                    
+                    strategy_order_id = f"{stock1}_{stock2}_{uuid.uuid4().hex}"
                     # Generate signals for pair
                     for stock, size, price, is_first_leg in [
                         (stock1, size1, price1, True),
@@ -468,12 +468,16 @@ class Strategy(BaseStrategy):
                             'orderDirection': "BUY" if (is_long == is_first_leg) else "SELL",
                             'granularity': self.granularity,
                             'signal_type': 'BUY_SELL',
+                            'strategy_inputs':{'strategy_order_id': strategy_order_id},
                             'market_neutral': True
                         }
                         signals.append(signal)
+                        
                         return_type = 'signals'
                 except (ValueError, TypeError) as e:
                     self.logger.error(f"Error processing prices for pair {pair}: {e}")
                     continue
-
+        # if len(signals) > 0:
+        #     self.logger.info(signals)
+        #     input("Press Enter to continue...")
         return return_type, signals, self.tickers

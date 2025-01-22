@@ -73,18 +73,31 @@ class SIM_Execute():
         # current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
         min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
         close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'close')
+        high_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'high')
+        low_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'low')
+        
         close_prices.dropna(inplace=True)
         close_prices = close_prices.tolist()
-        current_price = close_prices[-1]
+        current_close_price = close_prices[-1]
+        
+        high_prices.dropna(inplace=True)
+        high_prices = high_prices.tolist()
+        current_high_price = high_prices[-1]
+
+
+        low_prices.dropna(inplace=True)
+        low_prices = low_prices.tolist()
+        current_low_price = low_prices[-1]
         
         if order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
-            if order['orderDirection'].lower() == 'buy' and current_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_price <= order['exitPrice']:
+            if order['orderDirection'].lower() == 'buy' and current_high_price >= order['exitPrice'] or order['orderDirection'].lower() == 'sell' and current_low_price <= order['exitPrice']:
+                fill_price = current_high_price if order['orderDirection'].lower() == 'buy' else current_low_price
                 response_order = deepcopy(order)
                 response_order['status'] = 'closed'
                 self.available_granularities = market_data_df.index.get_level_values(0).unique()
                 self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
                 self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
-                fill_price = order['exitPrice'] if self.min_granularity == '1d' else current_price
+                fill_price = fill_price if self.min_granularity == '1d' else current_close_price
                 response_order['fill_price'] = fill_price
                 response_order['filled_timestamp'] = system_timestamp
                 response_order['fresh_update'] = True
