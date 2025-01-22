@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import timedelta, datetime
 import numpy as np
+from scipy import stats
 from colorama import Fore, Style
 
 class PerformanceReporter:
@@ -69,34 +70,81 @@ class PerformanceReporter:
         return unrealized_pnl_abs_dict, unrealized_pnl_pct_dict
     
     def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
-        """Calculate Sharpe Ratio for a strategy vs benchmark"""
-        df1 = trade_df_cumulative['account_value']
-        df2 = next(iter(index_data_dict.values()))['close']  # Get first index's close prices
-        
-        df1.index = pd.to_datetime(df1.index)
-        df2.index = pd.to_datetime(df2.index)
-        df1.index = df1.index + timedelta(seconds=1)  # Add 1 second to prevent exact match issues
-        
-        # Merge data and process
-        df1_df = df1.to_frame()
-        df2_df = df2.to_frame()
-        merged_df = df1_df.merge(df2_df, left_index=True, right_index=True, how='inner')
-        merged_df = merged_df.dropna()
-        merged_df.columns = ['account_value', 'index']
-        merged_df = merged_df.astype(float)
-        
-        # Calculate returns
-        strategy_returns = merged_df['account_value'].pct_change().dropna()
-        index_returns = merged_df['index'].pct_change().dropna()
-        
-        # Calculate Sharpe components
-        excess_returns = strategy_returns - index_returns
-        periods_per_year = 252  # Trading days in a year
-        mean_excess_return = excess_returns.mean() * periods_per_year
-        annualized_volatility = excess_returns.std() * np.sqrt(periods_per_year)
-        
-        # Return Sharpe ratio, handling division by zero
-        return 0 if annualized_volatility == 0 else mean_excess_return / annualized_volatility
+        """Calculate Sharpe Ratio for a strategy vs benchmark with improved error handling"""
+        try:
+            # Input validation
+            if trade_df_cumulative.empty or not index_data_dict:
+                self.logger.warning("Empty data provided for Sharpe ratio calculation")
+                return 0.0
+
+            # Get strategy and benchmark data
+            df1 = trade_df_cumulative['account_value']
+            try:
+                df2 = next(iter(index_data_dict.values()))['close']
+            except (StopIteration, KeyError) as e:
+                self.logger.error(f"Invalid benchmark data structure: {e}")
+                return 0.0
+
+            # Ensure datetime index
+            df1.index = pd.to_datetime(df1.index)
+            df2.index = pd.to_datetime(df2.index)
+            df1.index = df1.index + timedelta(seconds=1)  # Prevent exact match issues
+            
+            # Merge and process data
+            df1_df = df1.to_frame()
+            df2_df = df2.to_frame()
+            merged_df = df1_df.merge(df2_df, left_index=True, right_index=True, how='inner')
+            
+            if merged_df.empty:
+                self.logger.warning("No overlapping data points between strategy and benchmark")
+                return 0.0
+                
+            merged_df = merged_df.dropna()
+            merged_df.columns = ['account_value', 'index']
+            
+            # Ensure numeric values
+            try:
+                merged_df = merged_df.astype(float)
+            except ValueError as e:
+                self.logger.error(f"Data type conversion error: {e}")
+                return 0.0
+            
+            # Calculate returns
+            strategy_returns = merged_df['account_value'].pct_change()
+            index_returns = merged_df['index'].pct_change()
+            
+            # Remove any invalid values
+            mask = ~(np.isnan(strategy_returns) | np.isinf(strategy_returns) |
+                    np.isnan(index_returns) | np.isinf(index_returns))
+            strategy_returns = strategy_returns[mask]
+            index_returns = index_returns[mask]
+            
+            if len(strategy_returns) < 2:
+                self.logger.warning("Insufficient data points for Sharpe ratio calculation")
+                return 0.0
+            
+            # Calculate Sharpe components
+            excess_returns = strategy_returns - index_returns
+            periods_per_year = 252  # Trading days in a year
+            mean_excess_return = excess_returns.mean() * periods_per_year
+            annualized_volatility = excess_returns.std() * np.sqrt(periods_per_year)
+            
+            if annualized_volatility == 0:
+                self.logger.warning("Zero volatility detected in Sharpe ratio calculation")
+                return 0.0
+                
+            sharpe_ratio = mean_excess_return / annualized_volatility
+            
+            # Validate final result
+            if np.isnan(sharpe_ratio) or np.isinf(sharpe_ratio):
+                self.logger.warning(f"Invalid Sharpe ratio calculated: {sharpe_ratio}")
+                return 0.0
+                
+            return sharpe_ratio
+            
+        except Exception as e:
+            self.logger.error(f"Error in Sharpe ratio calculation: {e}")
+            return 0.0
 
     def calculate_drawdowns(self, trade_df_by_date):
         # calculate drawdowns in % based on 'Account Value' column
@@ -158,17 +206,71 @@ class PerformanceReporter:
         return round(total_profit, 10), total_profit / total_order_value if total_order_value > 0 else 0
     
     def calculate_cagr(self, trade_df_by_date):
-        """Calculate the Compound Annual Growth Rate"""
+        """
+        Calculate the Compound Annual Growth Rate (CAGR) with enhanced error handling,
+        validation, and detailed logging
+        """
         try:
+            # Input validation with detailed logging
+            if trade_df_by_date.empty:
+                self.logger.warning("Empty DataFrame provided for CAGR calculation")
+                return 0.0
+            
+            if 'account_value' not in trade_df_by_date.columns:
+                self.logger.error("Missing required 'account_value' column")
+                return 0.0
+            
+            # Extract and validate dates
             start_date = trade_df_by_date.index[0]
             end_date = trade_df_by_date.index[-1]
+            
+            if not (isinstance(start_date, (pd.Timestamp, datetime)) and
+                   isinstance(end_date, (pd.Timestamp, datetime))):
+                self.logger.error(f"Invalid date types: start_date={type(start_date)}, end_date={type(end_date)}")
+                return 0.0
+            
             days = (end_date - start_date).days
-            if days > 0:
-                cagr = (trade_df_by_date['account_value'].iloc[-1] / trade_df_by_date['account_value'].iloc[0]) ** (365.0 / days) - 1
-                return cagr
-            return 0.0
+            
+            # Validate time period
+            if days < 1:
+                self.logger.warning(f"Insufficient time period for CAGR: {days} days")
+                return 0.0
+            
+            # Extract and validate values
+            start_value = float(trade_df_by_date['account_value'].iloc[0])
+            end_value = float(trade_df_by_date['account_value'].iloc[-1])
+            
+            self.logger.info(f"""CAGR Calculation Inputs:
+                Start Date: {start_date}
+                End Date: {end_date}
+                Days: {days}
+                Start Value: ${start_value:,.2f}
+                End Value: ${end_value:,.2f}
+            """)
+            
+            # Validate values
+            if start_value <= 0:
+                self.logger.error(f"Invalid start value: ${start_value:,.2f}")
+                return 0.0
+            
+            if end_value <= 0:
+                self.logger.error(f"Invalid end value: ${end_value:,.2f}")
+                return 0.0
+            
+            # Calculate CAGR with proper annualization
+            years = days / 365.0
+            cagr = (end_value / start_value) ** (1.0 / years) - 1
+            
+            # Validate result
+            if np.isnan(cagr) or np.isinf(cagr):
+                self.logger.error(f"Invalid CAGR calculated: {cagr}")
+                return 0.0
+            
+            self.logger.info(f"Final CAGR: {cagr * 100:.2f}%")
+            return cagr
+            
         except Exception as e:
-            self.logger.error(f"Error calculating CAGR: {e}")
+            self.logger.error(f"Error calculating CAGR: {str(e)}")
             return 0.0
 
     def calculate_backtest_performance_metrics(self, config_dict, open_orders, closed_orders, market_data_df_root, unfilled_orders):
@@ -211,33 +313,55 @@ class PerformanceReporter:
         if len(closed_orders) > 0:
             starting_capital = 100000  # Example starting capital
             trade_data = [(order[0], order[1]) for order in closed_orders]
+            
             # Get index data safely handling different DataFrame structures
             try:
-                # Handle market data based on DataFrame structure
-                # Handle different market data structures
+                # Create benchmark index using first available symbol
                 if isinstance(market_data_df_root.columns, pd.MultiIndex):
-                    # For multi-index columns (symbol, field)
-                    first_symbol = market_data_df_root.columns.get_level_values(0)[0]
-                    index_data = {'close': market_data_df_root['close'][first_symbol]}
+                    symbols = market_data_df_root.columns.get_level_values(0).unique()
+                    first_symbol = symbols[0]
+                    benchmark_data = market_data_df_root.loc[:, (first_symbol, 'close')]
                 else:
-                    # For single-level columns
                     first_symbol = market_data_df_root.columns[0]
-                    index_data = {'close': market_data_df_root[first_symbol]}
+                    benchmark_data = market_data_df_root[first_symbol]
+
+                # Create index dictionary with benchmark data
+                index_data = {first_symbol: pd.DataFrame({'close': benchmark_data})}
+                
+                self.logger.info(f"""Market Data Structure:
+                    Benchmark Symbol: {first_symbol}
+                    Data Points: {len(benchmark_data)}
+                    Date Range: {benchmark_data.index[0]} to {benchmark_data.index[-1]}
+                """)
+                
+                trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(trade_data, index_data, starting_capital)
+                
+                if trade_df_by_date is not None and not trade_df_by_date.empty:
+                    try:
+                        cagr = self.calculate_cagr(trade_df_by_date)
+                        if isinstance(cagr, float):
+                            cagr = round(cagr * 100, 2)  # Convert to percentage and round
+                        else:
+                            cagr = 0.0
+                            
+                        sharpe_ratio = self.calculate_sharpe_ratio(trade_df_by_date, index_data)
+                        if isinstance(sharpe_ratio, float):
+                            sharpe_ratio = round(sharpe_ratio, 2)
+                        else:
+                            sharpe_ratio = 0.0
+                            
+                    except Exception as e:
+                        self.logger.error(f"Error calculating CAGR or Sharpe Ratio: {e}")
+                        cagr = 0.0
+                        sharpe_ratio = 0.0
+                else:
+                    cagr = 0.0
+                    sharpe_ratio = 0.0
             except Exception as e:
                 self.logger.error(f"Error processing market data: {e}")
                 self.logger.debug(f"Market data structure: {market_data_df_root.head()}")
-                index_data = {'close': pd.Series()}  # Empty series as fallback
-            
-            trade_df_by_date = self.create_data_input_for_cumulative_returns_and_indices(trade_data, index_data, starting_capital)
-            
-            if trade_df_by_date is not None and not trade_df_by_date.empty:
-                try:
-                    cagr = self.calculate_cagr(trade_df_by_date)
-                    sharpe_ratio = round(self.calculate_sharpe_ratio(trade_df_by_date, index_data), 2)
-                except Exception as e:
-                    self.logger.error(f"Error calculating CAGR or Sharpe Ratio: {e}")
-                    cagr = 0.0
-                    sharpe_ratio = 'NOT COMPUTED'
+                cagr = 0.0
+                sharpe_ratio = 0.0
         
         # Store metrics
         self.backtest_performance_metrics.update({
@@ -638,73 +762,129 @@ class StrategyReporter:
         
     ## Sharpe Ratio Calculation
     def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
-        # Extract strategy and benchmark data
-        strategy_values = trade_df_cumulative['account_value']
-        benchmark_values = index_data_dict['close']  # Access close prices directly
-        
-        # Convert index to datetime and align timestamps
-        strategy_values.index = pd.to_datetime(strategy_values.index)
-        benchmark_values.index = pd.to_datetime(benchmark_values.index)
-        strategy_values.index = strategy_values.index + timedelta(seconds=1)  # Prevent exact match issues
-        
-        # Create DataFrames and merge
-        merged_df = pd.merge(
-            strategy_values.to_frame('strategy'),
-            benchmark_values.to_frame('benchmark'),
-            left_index=True,
-            right_index=True,
-            how='inner'
-        ).astype(float)
-        
-        # Calculate returns
-        strategy_returns = merged_df['strategy'].pct_change().fillna(0)
-        benchmark_returns = merged_df['benchmark'].pct_change().fillna(0)
-        
-        # Calculate Sharpe ratio components
-        excess_returns = strategy_returns - benchmark_returns
-        annualization_factor = np.sqrt(252)  # Trading days in a year
-        
-        if len(excess_returns) == 0:
-            return 0
-            
-        mean_excess_return = excess_returns.mean() * 252
-        volatility = excess_returns.std() * annualization_factor
-        
-        # Return Sharpe ratio, handling division by zero
-        if volatility == 0:
-            return 0
-            
-        return mean_excess_return / volatility
+        """
+        Calculate Sharpe Ratio with proper risk-free rate and improved handling of market conditions
+        Returns both Sharpe Ratio and key components for analysis
+        """
+        try:
+            if trade_df_cumulative.empty:
+                return 0.0
 
-    def calculate_sharpe_ratio(self, trade_df_cumulative, index_data_dict):
-        """Calculate Sharpe Ratio for a strategy vs benchmark"""
-        df1 = trade_df_cumulative['account_value']
-        df2 = next(iter(index_data_dict.values()))['close']  # Get first index's close prices
-        
-        df1.index = pd.to_datetime(df1.index)
-        df2.index = pd.to_datetime(df2.index)
-        df1.index = df1.index + timedelta(seconds=1)  # Add 1 second to prevent exact match issues
-        
-        # Merge data and process
-        df1_df = df1.to_frame()
-        df2_df = df2.to_frame()
-        merged_df = df1_df.merge(df2_df, left_index=True, right_index=True, how='inner')
-        merged_df = merged_df.dropna()
-        merged_df.columns = ['account_value', 'index']
-        merged_df = merged_df.astype(float)
-        
-        # Calculate returns
-        strategy_returns = merged_df['account_value'].pct_change().dropna()
-        index_returns = merged_df['index'].pct_change().dropna()
-        
-        # Calculate Sharpe components
-        excess_returns = strategy_returns - index_returns
-        periods_per_year = 252  # Trading days in a year
-        mean_excess_return = excess_returns.mean() * periods_per_year
-        annualized_volatility = excess_returns.std() * np.sqrt(periods_per_year)
-        
-        # Return Sharpe ratio, handling division by zero
-        return 0 if annualized_volatility == 0 else mean_excess_return / annualized_volatility
+            # Get and validate strategy values
+            strategy_values = trade_df_cumulative['account_value']
+            self.logger.info(f"""Strategy Values:
+                Points: {len(strategy_values)}
+                Date Range: {strategy_values.index[0]} to {strategy_values.index[-1]}
+                Start Value: {strategy_values.iloc[0]:.2f}
+                End Value: {strategy_values.iloc[-1]:.2f}
+            """)
+            
+            # Get and validate benchmark values
+            try:
+                benchmark_values = next(iter(index_data_dict.values()))['close']
+                self.logger.info(f"""Benchmark Values:
+                    Points: {len(benchmark_values)}
+                    Date Range: {benchmark_values.index[0]} to {benchmark_values.index[-1]}
+                    Start Value: {benchmark_values.iloc[0]:.2f}
+                    End Value: {benchmark_values.iloc[-1]:.2f}
+                """)
+            except (StopIteration, KeyError) as e:
+                self.logger.error(f"Invalid benchmark data structure: {str(e)}")
+                return 0.0
+                
+            # Ensure datetime index and handle timezone issues
+            strategy_values.index = pd.to_datetime(strategy_values.index)
+            benchmark_values.index = pd.to_datetime(benchmark_values.index)
+            
+            # Align data on same dates with detailed logging
+            aligned_data = pd.DataFrame({
+                'strategy': strategy_values,
+                'benchmark': benchmark_values
+            })
+            
+            initial_points = len(aligned_data)
+            aligned_data = aligned_data.dropna()
+            final_points = len(aligned_data)
+            
+            self.logger.info(f"""Data Alignment:
+                Initial Points: {initial_points}
+                Points After Alignment: {final_points}
+                Points Lost: {initial_points - final_points}
+                Date Range: {aligned_data.index[0]} to {aligned_data.index[-1]}
+            """)
+            
+            if len(aligned_data) < 2:
+                self.logger.warning("Insufficient aligned data points for returns calculation")
+                return 0.0
+                
+            # Calculate returns with improved validation
+            strategy_returns = aligned_data['strategy'].pct_change()
+            benchmark_returns = aligned_data['benchmark'].pct_change()
+            
+            # Detailed validation of return calculations
+            valid_mask = ~(np.isnan(strategy_returns) | np.isinf(strategy_returns) |
+                         np.isnan(benchmark_returns) | np.isinf(benchmark_returns))
+            
+            if not valid_mask.any():
+                self.logger.warning("No valid returns found after data cleaning")
+                return 0.0
+            
+            strategy_returns = strategy_returns[valid_mask]
+            benchmark_returns = benchmark_returns[valid_mask]
+            
+            # Log detailed return statistics
+            self.logger.info(f"""Performance Statistics:
+                Data Points: {len(strategy_returns)}
+                Strategy Returns:
+                    Mean (Daily): {strategy_returns.mean():.4%}
+                    Std Dev (Daily): {strategy_returns.std():.4%}
+                    Min: {strategy_returns.min():.4%}
+                    Max: {strategy_returns.max():.4%}
+                    Skew: {stats.skew(strategy_returns):.4f}
+                Benchmark Returns:
+                    Mean (Daily): {benchmark_returns.mean():.4%}
+                    Std Dev (Daily): {benchmark_returns.std():.4%}
+                    Min: {benchmark_returns.min():.4%}
+                    Max: {benchmark_returns.max():.4%}
+                    Skew: {stats.skew(benchmark_returns):.4f}
+            """)
+            
+            # Risk-free rate handling
+            annual_rf_rate = 0.05  # 5% annual risk-free rate
+            daily_rf_rate = annual_rf_rate / 252
+            
+            # Calculate excess returns with full statistics
+            excess_returns = strategy_returns - benchmark_returns - daily_rf_rate
+            
+            # Annualize metrics
+            periods_per_year = 252
+            mean_excess_return = excess_returns.mean() * periods_per_year
+            volatility = excess_returns.std() * np.sqrt(periods_per_year)
+            
+            self.logger.info(f"""Sharpe Ratio Components:
+                Annualized Excess Return: {mean_excess_return:.4%}
+                Annualized Volatility: {volatility:.4%}
+                Risk-free Rate (Annual): {annual_rf_rate:.2%}
+            """)
+            
+            if volatility <= 0 or np.isnan(volatility):
+                self.logger.warning(f"Invalid volatility: {volatility}")
+                return 0.0
+            
+            sharpe = mean_excess_return / volatility
+            
+            if np.isnan(sharpe) or np.isinf(sharpe):
+                self.logger.warning(f"Invalid Sharpe ratio: {sharpe}")
+                return 0.0
+                
+            self.logger.info(f"Final Sharpe Ratio: {sharpe:.4f}")
+            return round(sharpe, 4)
+                
+            return sharpe
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating Sharpe ratio: {e}")
+            return 0.0
 
     def calculate_rolling_sharpe_ratio(self, trade_df_cumulative, index_data_dict, index_name, window):
         rolling_sharpe_data = []  # Initialize an empty list to store rows
@@ -803,18 +983,88 @@ class StrategyReporter:
         
     # calculate CAGR for the backtest
     def calculate_cagr(self, trade_df_by_date):
-        # Calculate the CAGR for the backtest
-        start_date = trade_df_by_date.index[0]
-        end_date = trade_df_by_date.index[-1]
-        days = (end_date - start_date).days
-        cagr = (trade_df_by_date['account_value'].iloc[-1] / trade_df_by_date['account_value'].iloc[0]) ** (365.0 / days) - 1
-        return cagr
+        """
+        Calculate the Compound Annual Growth Rate (CAGR) with comprehensive error handling
+        and detailed performance analysis
+        """
+        try:
+            if trade_df_by_date.empty:
+                self.logger.warning("Empty DataFrame provided for CAGR calculation")
+                return 0.0
+
+            start_date = trade_df_by_date.index[0]
+            end_date = trade_df_by_date.index[-1]
+            start_value = trade_df_by_date['account_value'].iloc[0]
+            end_value = trade_df_by_date['account_value'].iloc[-1]
+            
+            # Handle edge cases
+            if start_value <= 0:
+                self.logger.error("Invalid start value (<=0) for CAGR calculation")
+                return 0.0
+                
+            days = (end_date - start_date).days
+            if days < 1:
+                self.logger.warning("Insufficient time period for CAGR calculation")
+                return 0.0
+            
+            # Calculate CAGR and log key metrics
+            cagr = (end_value / start_value) ** (365.0 / days) - 1
+            
+            self.logger.info(f"""CAGR Calculation Details:
+                Start Date: {start_date}
+                End Date: {end_date}
+                Days: {days}
+                Start Value: ${start_value:,.2f}
+                End Value: ${end_value:,.2f}
+                CAGR: {cagr * 100:.2f}%
+            """)
+            
+            return cagr
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating CAGR: {e}")
+            return 0.0
     
     def calculate_drawdowns(self, trade_df_by_date):
-        # calculate drawdowns in % based on 'Account Value' column
-        trade_df_by_date['drawdown'] = trade_df_by_date['account_value'].cummax() - trade_df_by_date['account_value']
-        trade_df_by_date['drawdown_pct'] = trade_df_by_date['drawdown'] / trade_df_by_date['account_value'] * 100 * -1
-        return trade_df_by_date
+        """Calculate drawdowns with additional metrics and error handling"""
+        try:
+            if trade_df_by_date.empty or 'account_value' not in trade_df_by_date.columns:
+                return trade_df_by_date
+            
+            # Calculate running maximum
+            running_max = trade_df_by_date['account_value'].cummax()
+            
+            # Calculate drawdown in absolute terms
+            trade_df_by_date['drawdown'] = running_max - trade_df_by_date['account_value']
+            
+            # Calculate drawdown percentage
+            trade_df_by_date['drawdown_pct'] = (trade_df_by_date['drawdown'] / running_max) * 100 * -1
+            
+            # Calculate additional drawdown metrics
+            trade_df_by_date['days_in_drawdown'] = 0
+            trade_df_by_date['recovery_days'] = 0
+            
+            # Track drawdown periods
+            in_drawdown = False
+            drawdown_start = None
+            
+            for idx in range(len(trade_df_by_date)):
+                if trade_df_by_date['drawdown'].iloc[idx] > 0:
+                    if not in_drawdown:
+                        drawdown_start = idx
+                        in_drawdown = True
+                    trade_df_by_date.iloc[idx, trade_df_by_date.columns.get_loc('days_in_drawdown')] = idx - drawdown_start
+                else:
+                    if in_drawdown:
+                        recovery_days = idx - drawdown_start
+                        trade_df_by_date.iloc[drawdown_start:idx, trade_df_by_date.columns.get_loc('recovery_days')] = recovery_days
+                        in_drawdown = False
+                        
+            return trade_df_by_date
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating drawdowns: {e}")
+            return trade_df_by_date
 
     def plot_drawdown(self, trade_df_by_date, index_data_dict):
         # Underwater plot (area shaded for drawdown)

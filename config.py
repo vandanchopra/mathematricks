@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 import pytz
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
-start_date = datetime(2010, 3, 1).astimezone(pytz.timezone('US/Eastern'))
+start_date = datetime(2020, 3, 1).astimezone(pytz.timezone('US/Eastern'))
 end_date = start_date + pd.Timedelta(days=int(365*1))
 sim_account_margin_multiplier = 3
 sim_account_starting_value_base = 100000
