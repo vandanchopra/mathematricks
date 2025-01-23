@@ -156,6 +156,8 @@ class Mathematricks:
                 raise AssertionError(f"Negative Margin Available: {log_msg}")
         total_buying_power = self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']
         buying_power_used_pct = (self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']/self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']) * 100
+        if buying_power_used_pct > 100:
+            raise AssertionError(f"Buying Power Used % is greater than 100%: {buying_power_used_pct}")
         log_msg += f'Margin Used %: {round(buying_power_used_pct, 2)}%'
         self.logger.info(log_msg)
         if self.live_bool and telegram_send_bool:
