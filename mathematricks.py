@@ -100,37 +100,37 @@ class Mathematricks:
         # self.logger.debug({'live_bool':live_bool, 'run_mode':run_mode, 'system_timestamp':system_timestamp, 'start_date':start_date, 'prev_live_bool':prev_live_bool})
         msg = "------------------------ System is going live. Syncing OMS with Live Broker "
         print(msg + '*'*(os.get_terminal_size().columns - len(msg)))
-        
         total_orders_value = 0
-        for count, multi_leg_order in enumerate(self.oms.open_orders):
-            for order in multi_leg_order:
-                price = order['entryPrice'] if order['orderType'].lower() == 'market' else order['exitPrice']
-                order_value = price * order['orderQuantity'] if order['orderType'].lower() == 'market' else 0
-                total_orders_value += order_value
-                self.logger.info(f"SIM OPEN ORDER {count+1}: Symbol: {order['symbol']}, orderDirection: {order['orderDirection']}, order_value: {order_value}, total_orders_value: {total_orders_value}, orderType: {order['orderType']}, orderQuantity: {order['orderQuantity']}, Status: {order['status']}, Broker: {order['broker']}")
-        
-        # for count, order in enumerate(self.oms.open_orders):
-        #     self.logger.info(f"OPEN Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Status: {order[0]['status']}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")
+        for count, signal in enumerate(self.oms.get_open_signals()):
+            if signal.status != 'closed':
+                for order in signal.orders:
+                    if order.status not in ['closed', 'cancelled']:
+                        price = order.entryPrice if hasattr(order, 'entryPrice') else order.exitPrice if hasattr(order, 'exitPrice') else None
+                        if price is None:
+                            continue
+                        order_value = price * order.orderQuantity if hasattr(order, 'entryPrice') else 0
+                        total_orders_value += order_value
+                        self.logger.info(f"SIM OPEN ORDER {count+1}: Symbol: {order.symbol}, orderDirection: {order.orderDirection}, order_value: {order_value}, total_orders_value: {total_orders_value}, orderType: {order.orderType}, orderQuantity: {order.orderQuantity}, Status: {order.status}")
         
         # print a series of dashes '-' only as wide as the terminal
         print('*'*os.get_terminal_size().columns)
         print('*'*os.get_terminal_size().columns)
         print('*'*os.get_terminal_size().columns)
         print('*'*os.get_terminal_size().columns)
-        
-        # input('System wants to go live. Press Enter to continue...')
+
         new_orders_from_sync = self.oms.sync_open_orders('oms-to-broker', market_data_df, system_timestamp, brokers=['IBKR'])
-        
-        # self.logger.debug({'new_orders_from_sync':new_orders_from_sync})
         new_orders.extend(new_orders_from_sync)
         total_orders_value = 0
-        for count, order in enumerate(new_orders_from_sync):
-            price = order[0]['entryPrice'] if order[0]['orderType'].lower() in ['market', 'market_exit'] else order[0]['exitPrice']
-            order_value = price * order[0]['orderQuantity'] if order[0]['orderType'].lower() in ['market', 'market_exit'] else 0
-            if order[0]['orderType'].lower() == 'market_exit':
-                order_value = order_value * -1
-            total_orders_value += order_value
-            self.logger.info(f"SYNC New Order {count+1}: Symbol: {order[0]['symbol']}, orderDirection: {order[0]['orderDirection']}, orderType: {order[0]['orderType']}, orderQuantity: {order[0]['orderQuantity']}, Price: {price}, order_value:{order_value}, total_orders_value: {total_orders_value}, Strategy: {order[0]['strategy_name']}, Broker: {order[0]['broker']}")
+        for count, signal in enumerate(new_orders_from_sync):
+            for order in signal.orders:
+                price = order.entryPrice if hasattr(order, 'entryPrice') else order.exitPrice if hasattr(order, 'exitPrice') else None
+                if price is None:
+                    continue
+                order_value = price * order.orderQuantity if hasattr(order, 'entryPrice') else 0
+                if hasattr(order, 'orderType') and order.orderType.lower() == 'market_exit':
+                    order_value = order_value * -1
+                total_orders_value += order_value
+                self.logger.info(f"SYNC New Order {count+1}: Symbol: {order.symbol}, orderDirection: {order.orderDirection}, orderType: {order.orderType}, orderQuantity: {order.orderQuantity}, Price: {price}, order_value:{order_value}, total_orders_value: {total_orders_value}, Strategy: {signal.strategy_name}")
         
         msg = '------------------------ System is now live. Syncing OMS with Live Broker.'
         print(msg + '*'*(os.get_terminal_size().columns - len(msg)))
@@ -165,9 +165,9 @@ class Mathematricks:
     
         '''PRINT 3: Print Unrealized PnL: Don't run it if the system is not live and the next timestamp is not 1m'''
         if self.live_bool:
-            self.oms.unfilled_orders = self.oms.brokers.ib.execute.ib.reqAllOpenOrders()
+            unfilled_orders = self.oms.get_unfilled_orders()
         
-        unrealized_pnl_abs_dict, unrealized_pnl_pct_dict = self.reporter.calculate_unrealized_pnl(self.oms.open_orders, self.oms.unfilled_orders)
+        unrealized_pnl_abs_dict, unrealized_pnl_pct_dict = self.reporter.calculate_unrealized_pnl(self.oms.get_open_signals(), self.oms.get_unfilled_orders())
         # Sort dictionary by values
         unrealized_pnl_abs_dict = dict(sorted(unrealized_pnl_abs_dict.items(), key=lambda item: item[1], reverse=True))
         # Sum of all the values of unrealized_pnl_abs_dict
@@ -188,23 +188,23 @@ class Mathematricks:
             self.telegram_bot.send_message(log_msg)
         
         sequence_of_symbols = list(unrealized_pnl_pct_dict.keys())
-        msg = self.reporter.get_open_orders_print_msg(self.oms.open_orders, total_buying_power, sequence_of_symbols)
+        msg = self.reporter.get_open_signals_print_msg(self.oms.get_open_signals(), total_buying_power, sequence_of_symbols)
         self.logger.info(msg)
         if self.live_bool and telegram_send_bool:
             self.telegram_bot.send_message(msg)
         
-        msg = self.reporter.get_stoploss_orders_print_msg(self.oms.unfilled_orders, self.oms.open_orders, self.live_bool, sequence_of_symbols, self.current_market_data_df)
+        msg = self.reporter.get_stoploss_orders_print_msg(self.oms.get_open_signals(), self.live_bool, sequence_of_symbols, self.current_market_data_df)
         self.logger.info(msg)
         if self.live_bool and telegram_send_bool:
             self.telegram_bot.send_message(msg)
             
         msg = ''            
         for symbol in sequence_of_symbols:
-            for open_order in self.oms.open_orders:
-                if open_order[0]['symbol'] == symbol:
-                    filled_timestamp = open_order[0]['filled_timestamp']
-                    msg += f"Symbol: {symbol}, Filled Timestamp: {filled_timestamp} | "
-        self.logger.debug(msg)
+            for signal in self.oms.get_open_signals():
+                for order in signal.orders:
+                    if order.symbol == symbol and hasattr(order, 'filled_timestamp'):
+                        msg += f"Symbol: {symbol}, Filled Timestamp: {order.filled_timestamp} | "
+        # self.logger.debug(msg)
                         
     def run(self):
         run_mode = config_dict['run_mode']
@@ -261,7 +261,13 @@ class Mathematricks:
                                 # if interval == '1d':
                                     # self.logger.info(f"next_rows: {next_rows}")
                             
-                            # Generate Signals from the Strategies (signals)
+                            # Get margin information for signal generation
+                            broker = 'IBKR'.lower() if self.live_bool else 'SIM'.lower()
+                            base_account_number = list(self.oms.margin_available[broker].keys())[0]
+                            margin_info = self.oms.margin_available[broker][base_account_number]
+                            trading_currency = self.config_dict['trading_currency']
+                            
+                            # Generate Signals with margin information
                             new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
                             self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
                             
@@ -271,14 +277,14 @@ class Mathematricks:
                                 self.live_bool = self.are_we_live(run_mode, self.system_timestamp, start_date)
                             
                             # Convert signals to orders
-                            new_orders = self.rms.convert_signals_to_orders(new_signals, self.oms.margin_available, self.oms.open_orders, self.system_timestamp, self.live_bool)
+                            new_signals = self.rms.run_rms(new_signals, self.oms.margin_available, self.oms.open_signals, self.system_timestamp, self.live_bool)
                             
                             # If the system is going live, sync the orders with the broker # Get a list of orders that'll be sent to the LIVE broker, based on current open orders
                             if prev_live_bool == False and self.live_bool == True:
-                                new_orders = self.sync_orders_on_live(new_orders, self.current_market_data_df, self.system_timestamp)
+                                new_signals = self.sync_orders_on_live(new_signals, self.current_market_data_df, self.system_timestamp)
                                 
                             # Execute orders on the market with the OMS
-                            self.oms.execute_orders(new_orders, self.system_timestamp, self.current_market_data_df, live_bool=self.live_bool)
+                            self.oms.execute_signals(new_signals, self.system_timestamp, self.current_market_data_df, live_bool=self.live_bool)
                             
                             # Print update messages to console
                             self.print_update_to_console(next_rows)
@@ -297,10 +303,10 @@ class Mathematricks:
                         
                         self.reporter.calculate_backtest_performance_metrics(
                             self.config_dict,
-                            self.oms.open_orders,
-                            self.oms.closed_orders,
+                            self.oms.get_open_signals(),
+                            self.oms.closed_signals,
                             self.current_market_data_df,
-                            self.oms.unfilled_orders
+                            self.oms.get_unfilled_orders()
                         )
                         
                         self.reporter.generate_report()
@@ -308,8 +314,8 @@ class Mathematricks:
                         if self.config_dict['backtest_inputs']['save_backtest_results']:
                             self.test_folder_path, self.test_name = self.reporter.save_backtest(
                                 self.config_dict,
-                                self.oms.open_orders,
-                                self.oms.closed_orders
+                                self.oms.get_open_signals(),
+                                self.oms.closed_signals
                             )
                             self.logger.info(f'Backtest results saved at: {self.test_folder_path}')
                             self.logger.info(f'Backtest Name: {self.test_name}')

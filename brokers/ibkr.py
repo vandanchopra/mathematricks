@@ -2,7 +2,7 @@
 #from ib_insync import IB, Stock, util, MarketOrder, LimitOrder, StopOrder
 # from ib_insync import *
 from copy import deepcopy
-from ib_insync import IB, Stock, MarketOrder, LimitOrder, Order, util
+from ib_insync import IB, Stock, MarketOrder, LimitOrder, StopOrder, Order as IBOrder, util
 from matplotlib.pyplot import bar
 import nest_asyncio
 import os
@@ -10,6 +10,7 @@ import os
 import pandas as pd
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as tqdm_asyncio
+from vault.base_strategy import Order
 
 # from datetime import datetime, timedelta
 import asyncio
@@ -696,153 +697,130 @@ class IBKR_Execute:
     
     def place_order(self, order, multi_leg_order, market_data_df):
         # Create a contract for the stock
-        # ticker: str, exchange: str, currency: str, orderSide: str, orderQuantity: int, orderType: str, limit_price: float = 0, stop_price: float = 0
         system_timestamp = market_data_df.index.get_level_values(1)[-1]
-        symbol = order['symbol']
+        symbol = order.symbol
         currency = 'USD'
         exchange = 'SMART'
-        orderDirection = order['orderDirection']
-        orderQuantity = order['orderQuantity']
+        orderDirection = order.orderDirection
+        orderQuantity = order.orderQuantity
         
         self.check_ib_connection()
         response_order = None
         # Create an order for the stock
-        if order['orderType'].lower() in ['market', 'market_exit']:
+        if order.order_type == 'MARKET':
             contract = self.ib.qualifyContracts(Stock(symbol, exchange, currency))[0]
-            IB_order = MarketOrder(orderDirection, orderQuantity)
-            if 'order_id' not in order or order['order_id'] is None:
-                mathematricks_order_id = generate_hash_id(order, system_timestamp)
+            ib_order = MarketOrder(orderDirection, orderQuantity)
+            if not hasattr(order, 'order_id') or order.order_id is None:
+                mathematricks_order_id = generate_hash_id(order.dict(), system_timestamp)
             else:
-                mathematricks_order_id = order['order_id']
+                mathematricks_order_id = order.order_id
                 
-            # IB_order.OrderRef = mathematricks_order_id
+            # ib_order.OrderRef = mathematricks_order_id
             # Place the order
-            # self.logger.debug({'symbol':symbol, 'IB_order':IB_order})
-            IB_order_response = self.ib.placeOrder(contract, IB_order)
+            ib_order_response = self.ib.placeOrder(contract, ib_order)
             self.ib.sleep(1)
             # self.logger.debug({'IB_order_response':IB_order_response})
             response_order = deepcopy(order)
-            response_order['order_id'] = mathematricks_order_id
-            response_order['broker_order_id'] = IB_order_response.order.permId
+            response_order.order_id = mathematricks_order_id
+            response_order.broker_order_id = ib_order_response.order.permId
             
-            ibkr_order_status = IB_order_response.orderStatus.status if hasattr(IB_order_response.orderStatus, 'status') else None
+            ibkr_order_status = ib_order_response.orderStatus.status if hasattr(ib_order_response.orderStatus, 'status') else None
             
             if ibkr_order_status in ['PendingSubmit']:
-                status = 'submitted'
+                response_order.status = 'submitted'
             elif ibkr_order_status in ['Submitted', 'PreSubmitted']:
-                status = 'open'
+                response_order.status = 'open'
             elif ibkr_order_status == 'Filled':
-                status = 'closed'
+                response_order.status = 'closed'
             elif ibkr_order_status == 'Cancelled':
-                status = 'cancelled'
+                response_order.status = 'cancelled'
             else:
-                status = 'pending'
+                response_order.status = 'pending'
             
-            response_order['status'] = status
-            response_order['filled'] = IB_order_response.orderStatus.filled
-            response_order['remaining'] = IB_order_response.orderStatus.remaining
-            response_order['fill_price'] = IB_order_response.orderStatus.avgFillPrice
-            response_order['tradeLogEntryTime'] = IB_order_response.log[0].time if IB_order_response.log else None
-            response_order['errorCode'] = IB_order_response.log[0].errorCode if IB_order_response.log else None
-            response_order['fresh_update'] = True
-            response_order['message'] = 'Market order placed on IBKR'
-        elif order['orderType'].lower() in ['stoploss_abs', 'stoploss_pct']:
-            # Start with finding the entry order
-            entry_order = None
-            for entry_order_temp in multi_leg_order:
-                if entry_order_temp['orderType'].lower() == 'market' and entry_order_temp['orderQuantity'] == orderQuantity and entry_order_temp['orderDirection'] != orderDirection:
-                    # self.logger.debug({'entry_order_temp':entry_order_temp})
-                    entry_order = entry_order_temp
-                    break
-            self.unfilled_orders_ibkr = self.ib.reqAllOpenOrders()
-            # Fetch the open order by order ID
-            if not entry_order:
-                for unfilled_order in self.unfilled_orders_ibkr:
-                    if unfilled_order.contract.symbol == order['symbol'] and unfilled_order.order.action != order['orderDirection']:
-                        entry_order = unfilled_order
-                        break
-                
-            '''If the above didn't work, calculate the position size and create the entry order manually'''
-            if not entry_order:
-                positions = self.ib.positions()
-                position_size = 0
-                for position in positions:
-                    if position.contract.symbol == symbol:
-                        position_size = position.position
-                        break
-                self.unfilled_orders_ibkr = self.ib.reqAllOpenOrders()
-                for unfilled_order in self.unfilled_orders_ibkr:
-                    if unfilled_order.contract.symbol == order['symbol'] and unfilled_order.order.action != order['orderDirection']:
-                        orderDirection = unfilled_order.order.action
-                        orderDirection_multiplier = 1 if orderDirection.lower() == 'buy' else -1
-                        position_size += unfilled_order.order.totalQuantity * orderDirection_multiplier
-                        
-                for open_order in self.ibkr_open_orders['open_orders']:
-                    if open_order.contract.symbol == order['symbol'] and open_order.order.action != order['orderDirection']:
-                        orderDirection = open_order.order.action
-                        orderDirection_multiplier = 1 if orderDirection.lower() == 'buy' else -1
-                        position_size += open_order.order.totalQuantity * orderDirection_multiplier
-                        
-                if float(abs(position_size)) >= float(abs(orderQuantity)):
-                    entry_order = {'symbol': symbol, 'orderQuantity': orderQuantity, 'orderDirection': orderDirection, 'status':'closed'}
-                
+            setattr(response_order, 'filled', ib_order_response.orderStatus.filled)
+            setattr(response_order, 'remaining', ib_order_response.orderStatus.remaining)
+            response_order.filled_price = ib_order_response.orderStatus.avgFillPrice
+            setattr(response_order, 'tradeLogEntryTime', ib_order_response.log[0].time if ib_order_response.log else None)
+            setattr(response_order, 'errorCode', ib_order_response.log[0].errorCode if ib_order_response.log else None)
+            setattr(response_order, 'fresh_update', True)
+            setattr(response_order, 'message', 'Market order placed on IBKR')
             
-            # only place the stoploss order if the entry order is closed
-            # self.logger.debug({'multi_leg_order':multi_leg_order})
-            # self.logger.debug({'entry_order':entry_order})
-            if not entry_order:
-                self.logger.error(f"Entry Order not found for symbol: {symbol} | Stop Loss order will not be placed for Symbol: {symbol}, OrderDirection: {orderDirection}, OrderQuantity: {orderQuantity}")
-            
-            if entry_order and entry_order['status'] in ['closed', 'open']:
-                exitPrice = order['exitPrice']
-                # Place a stoploss order on IBKR
-                contract = Stock(symbol, exchange, currency)  # Example: Apple stock
-                minTick = self.ib.reqContractDetails(contract)[0].minTick
-                decimalPlaces = len(str(minTick).split('.')[1])
-                IB_order = Order(action=orderDirection, orderType='STP', totalQuantity=orderQuantity, auxPrice=round(exitPrice, decimalPlaces), tif='GTC')
-                # self.logger.debug({'symbol':symbol, 'IB_order':IB_order})
-                # Place the order
-                IB_order_response = self.ib.placeOrder(contract, IB_order)
-                self.logger.debug
-                self.ib.sleep(1)
-                # self.logger.debug({'IB_order_response':IB_order_response})
-                
-                # self.logger.debug({'IB_order_response':IB_order_response})
-                response_order = deepcopy(order)
-                if 'order_id' not in order or order['order_id'] is None:
-                    mathematricks_order_id = generate_hash_id(order, system_timestamp)
-                else:
-                    mathematricks_order_id = order['order_id']
-                response_order['order_id'] = mathematricks_order_id
-                response_order['broker_order_id'] = IB_order_response.order.permId if hasattr(IB_order_response.order, 'permId') else None
-                
-                ibkr_order_status = IB_order_response.orderStatus.status if hasattr(IB_order_response.orderStatus, 'status') else None
-                
-                if ibkr_order_status in ['PendingSubmit']:
-                    status = 'pending'
-                elif ibkr_order_status in ['Submitted', 'PreSubmitted']:
-                    status = 'open'
-                elif ibkr_order_status == 'Filled':
-                    status = 'closed'
-                elif ibkr_order_status == 'Cancelled':
-                    status = 'cancelled'
-                else:
-                    status = 'pending'
-                
-                response_order['status'] = IB_order_response.orderStatus.status if hasattr(IB_order_response.orderStatus, 'status') else None
-                response_order['filled'] = IB_order_response.orderStatus.filled if hasattr(IB_order_response.orderStatus, 'filled') else 0
-                response_order['remaining'] = IB_order_response.orderStatus.remaining if hasattr(IB_order_response.orderStatus, 'remaining') else orderQuantity
-                response_order['avgFillPrice'] = IB_order_response.orderStatus.avgFillPrice if hasattr(IB_order_response.orderStatus, 'avgFillPrice') else None
-                response_order['tradeLogEntryTime'] = IB_order_response.log[-1].time if hasattr(IB_order_response.log[-1], 'time') and IB_order_response.log else None
-                response_order['errorCode'] = IB_order_response.log[-1].errorCode if hasattr(IB_order_response.log[-1], 'errorCode') and IB_order_response.log else None
-                response_order['fresh_update'] = True
-                response_order['message'] = 'Stoploss order placed on IBKR'
-                
+        elif order.order_type == 'LIMIT':
+            contract = self.ib.qualifyContracts(Stock(symbol, exchange, currency))[0]
+            ib_order = LimitOrder(orderDirection, orderQuantity, order.price)
+            if not hasattr(order, 'order_id') or order.order_id is None:
+                mathematricks_order_id = generate_hash_id(order.dict(), system_timestamp)
             else:
-                response_order = order
+                mathematricks_order_id = order.order_id
+                
+            ib_order_response = self.ib.placeOrder(contract, ib_order)
+            self.ib.sleep(1)
+            response_order = deepcopy(order)
+            response_order.order_id = mathematricks_order_id
+            response_order.broker_order_id = ib_order_response.order.permId
+            
+            ibkr_order_status = ib_order_response.orderStatus.status if hasattr(ib_order_response.orderStatus, 'status') else None
+            
+            if ibkr_order_status in ['PendingSubmit']:
+                response_order.status = 'submitted'
+            elif ibkr_order_status in ['Submitted', 'PreSubmitted']:
+                response_order.status = 'open'
+            elif ibkr_order_status == 'Filled':
+                response_order.status = 'closed'
+            elif ibkr_order_status == 'Cancelled':
+                response_order.status = 'cancelled'
+            else:
+                response_order.status = 'pending'
+            
+            setattr(response_order, 'filled', ib_order_response.orderStatus.filled)
+            setattr(response_order, 'remaining', ib_order_response.orderStatus.remaining)
+            response_order.filled_price = ib_order_response.orderStatus.avgFillPrice
+            setattr(response_order, 'tradeLogEntryTime', ib_order_response.log[0].time if ib_order_response.log else None)
+            setattr(response_order, 'errorCode', ib_order_response.log[0].errorCode if ib_order_response.log else None)
+            setattr(response_order, 'fresh_update', True)
+            setattr(response_order, 'message', 'Limit order placed on IBKR')
+            
+        elif order.order_type == 'STOPLOSS':
+            contract = self.ib.qualifyContracts(Stock(symbol, exchange, currency))[0]
+            ib_order = StopOrder(orderDirection, orderQuantity, order.price)
+            if not hasattr(order, 'order_id') or order.order_id is None:
+                mathematricks_order_id = generate_hash_id(order.dict(), system_timestamp)
+            else:
+                mathematricks_order_id = order.order_id
+            
+            ib_order_response = self.ib.placeOrder(contract, ib_order)
+            self.ib.sleep(1)
+            response_order = deepcopy(order)
+            response_order.order_id = mathematricks_order_id
+            response_order.broker_order_id = ib_order_response.order.permId
+            
+            ibkr_order_status = ib_order_response.orderStatus.status if hasattr(ib_order_response.orderStatus, 'status') else None
+            
+            if ibkr_order_status in ['PendingSubmit']:
+                response_order.status = 'submitted'
+            elif ibkr_order_status in ['Submitted', 'PreSubmitted']:
+                response_order.status = 'open'
+            elif ibkr_order_status == 'Filled':
+                response_order.status = 'closed'
+            elif ibkr_order_status == 'Cancelled':
+                response_order.status = 'cancelled'
+            else:
+                response_order.status = 'pending'
+            
+            setattr(response_order, 'filled', ib_order_response.orderStatus.filled)
+            setattr(response_order, 'remaining', ib_order_response.orderStatus.remaining)
+            response_order.filled_price = ib_order_response.orderStatus.avgFillPrice
+            setattr(response_order, 'tradeLogEntryTime', ib_order_response.log[0].time if ib_order_response.log else None)
+            setattr(response_order, 'errorCode', ib_order_response.log[0].errorCode if ib_order_response.log else None)
+            setattr(response_order, 'fresh_update', True)
+            setattr(response_order, 'message', 'Stop-loss order placed on IBKR')
+
         else:
-            raise Exception(f"Order type {order['orderType']} not supported. Use 'market', 'stoploss_abs', 'stoploss_pct")
-        # Return the response_order
+            response_order = deepcopy(order)
+            response_order.status = 'rejected'
+            setattr(response_order, 'fresh_update', True)
+            setattr(response_order, 'message', f"Order type {order.order_type} not supported. Use MARKET, LIMIT, or STOPLOSS")
+            self.logger.error(f"Order type {order.order_type} not supported. Use MARKET, LIMIT, or STOPLOSS")
 
         return response_order
     
@@ -874,35 +852,27 @@ class IBKR_Execute:
         return message
     
     def update_order_status(self, order, system_timestamp):
-        # self.logger.debug(f"Trying to update the status of Live IBKR order: {order}")
-        '''if the order is open, check if it's filled'''
-        # system_timestamp = market_data_df.index.get_level_values(1)[-1]
-        # symbol = order['symbol']
-        # granularity = order['granularity']
-        # current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'][-1]
         response_order = order
-        # Check if the order is open
-        if order['status'] in ['open', 'submitted']:
+        
+        if order.status in ['open', 'submitted', 'pendingsubmit']:
             if self.ibkr_open_orders['updated_time'] is None or system_timestamp != self.ibkr_open_orders['updated_time']:
                 self.ibkr_open_orders['open_orders'] = self.ib.reqOpenOrders()
                 self.ibkr_open_orders['updated_time'] = system_timestamp
             
-            current_status = order['status']
-            # Check if the order is filled
-            # if order['orderType'].lower() == 'market':
+            current_status = order.status
             for open_order in self.ibkr_open_orders['open_orders']:
-                if open_order.order.permId == order['broker_order_id']:
+                if open_order.order.permId == order.broker_order_id:
                     new_status = self.ibkr_order_status_to_mathematricks_order_status(open_order.orderStatus.status)
                     if new_status != current_status:
                         response_order = deepcopy(order)
-                        response_order['status'] = new_status
-                        response_order['filled'] = open_order.orderStatus.filled
-                        response_order['remaining'] = open_order.orderStatus.remaining
-                        response_order['avgFillPrice'] = open_order.orderStatus.avgFillPrice
-                        response_order['tradeLogEntryTime'] = open_order.log[0].time
-                        response_order['errorCode'] = open_order.log[0].errorCode
-                        response_order['message'] = self.order_status_change_message(current_status, new_status)
-                        response_order['fresh_update'] = True
+                        response_order.status = new_status
+                        setattr(response_order, 'filled', open_order.orderStatus.filled)
+                        setattr(response_order, 'remaining', open_order.orderStatus.remaining)
+                        response_order.filled_price = open_order.orderStatus.avgFillPrice
+                        setattr(response_order, 'tradeLogEntryTime', open_order.log[0].time if open_order.log else None)
+                        setattr(response_order, 'errorCode', open_order.log[0].errorCode if open_order.log else None)
+                        setattr(response_order, 'message', self.order_status_change_message(current_status, new_status))
+                        setattr(response_order, 'fresh_update', True)
                     else:
                         response_order = order
                     break
@@ -919,29 +889,25 @@ class IBKR_Execute:
         target_order = None
         # Fetch the open order by order ID
         for unfilled_order in self.unfilled_orders_ibkr:
-            if unfilled_order.order.permId == order['broker_order_id']:
+            if unfilled_order.order.permId == order.broker_order_id:
                 target_order = unfilled_order
                 break
         if not target_order:
             for unfilled_order in self.unfilled_orders_ibkr:
-                if unfilled_order.contract.symbol == order['symbol'] and unfilled_order.order.action == order['orderDirection']:
+                if unfilled_order.contract.symbol == order.symbol and unfilled_order.order.action == order.orderDirection:
                     target_order = unfilled_order
                     break
         
-        if 'new_price' in order['modify_reason']:
-            new_price = order['stoploss_abs']
-            # self.logger.debug({'symbol':order['symbol'], 'new_price':new_price})
-        if 'new_quantity' in order['modify_reason']:
-            new_quantity = order['orderQuantity']
-            # self.logger.debug({'symbol':order['symbol'], 'new_quantity':new_quantity})
+        if hasattr(order, 'modify_reason') and 'new_price' in order.modify_reason:
+            new_price = order.price
+        if hasattr(order, 'modify_reason') and 'new_quantity' in order.modify_reason:
+            new_quantity = order.orderQuantity
             
         if target_order:
             order_id = target_order.order.orderId
             
             new_price = target_order.order.auxPrice if not new_price else new_price
             new_quantity = target_order.order.totalQuantity if not new_quantity else new_quantity
-            # self.logger.info({'symbol':order['symbol'], 'new_quantity':new_quantity, 'new_price':new_price})
-            # raise AssertionError('STOP')
             # Check if the order is already filled or canceled
             order_status = target_order.orderStatus.status
             if order_status not in ["Filled", "Cancelled"]:
@@ -954,7 +920,7 @@ class IBKR_Execute:
                 self.ib.sleep(1)
 
                 # Place a new order with updated details
-                new_order = Order(
+                new_order = IBOrder(
                     action=target_order.order.action,  # e.g., 'BUY' or 'SELL'
                     orderType='STP',                   # Assuming a limit order, can be modified if needed
                     totalQuantity=new_quantity,
@@ -963,32 +929,44 @@ class IBKR_Execute:
                 )
                 trade = self.ib.placeOrder(target_order.contract, new_order)
                 response_order = deepcopy(order)
-                response_order['stoploss_abs'] = new_price
-                response_order['exitPrice'] = new_price
-                response_order['orderQuantity'] = new_quantity
-                response_order['fresh_update'] = True
-                if 'entryPrice' in order:
-                    del response_order['entryPrice']
+                response_order.price = new_price
+                response_order.orderQuantity = new_quantity
+                setattr(response_order, 'fresh_update', True)
                 if trade.orderStatus.status in ['PendingSubmit']:
-                    response_order['status'] = 'submitted'
+                    response_order.status = 'submitted'
                     self.logger.info(f"New order placed with updated price: {new_price} and quantity: {new_quantity}. Order Status: {trade.orderStatus.status}")
             else:
                 self.logger.error("Order is already done (filled or canceled); no modification needed.")
         else:
-            self.logger.error(f"Order for symbol {order['symbol']} not found among open orders.")
+            self.logger.error(f"Order for symbol {order.symbol} not found among open orders.")
+
+        return response_order
 
         return response_order
 
     def execute_order(self, order, multi_leg_order, market_data_df, system_timestamp):
         response_order = order
-        if order['status'] == 'pending':
+        # Extract slippage and fees from order if present
+        slippage = getattr(order, 'slippage', 0.001)  # Default 0.1%
+        brokerage_fee = getattr(order, 'brokerage_fee', 0.0035)  # Default 0.35%
+        
+        if order.status == 'pending':
             # Execute the order in the simulator
             response_order = self.place_order(order, multi_leg_order, market_data_df=market_data_df)
-        elif order['status'].lower() in ['open', 'submitted' 'pendingsubmit']:
+        elif order.status.lower() in ['open', 'submitted', 'pendingsubmit']:
             # Update the order status in the simulator and check if it's filled
-            response_order = self.update_order_status(order, system_timestamp)
-        elif order['status'] == 'modify':
-            # self.logger.debug({f"Modifying order: {order}"})
+            response_order = self.update_order_status(order, system_timestamp) 
+            
+            # Apply slippage and fees when order is filled
+            if hasattr(response_order, 'fresh_update') and response_order.status == 'closed':
+                direction = 1 if response_order.orderDirection == 'BUY' else -1
+                if hasattr(response_order, 'filled_price') and response_order.filled_price is not None:
+                    # Apply slippage to fill price
+                    response_order.filled_price *= (1 + direction * slippage)
+                    # Apply brokerage fee
+                    response_order.filled_price *= (1 + direction * brokerage_fee)
+            
+        elif order.status == 'modify':
             response_order = self.modify_order(order, system_timestamp=system_timestamp)
         
         return response_order

@@ -59,8 +59,20 @@ def sleeper(total_seconds, message="System Sleeping"):
     sys.stdout.write("\r" + " " * 100)  # Clear the line
     sys.stdout.write("\r")
 
+def serialize_for_hash(obj):
+    """Helper function to serialize objects for hashing"""
+    if isinstance(obj, (pd.Timestamp, datetime.datetime)):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {str(k): serialize_for_hash(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [serialize_for_hash(x) for x in obj]
+    return str(obj)
+
 def generate_hash_id(input_dict, system_timestamp):
-    json_str = json.dumps(input_dict, default=str) + str(system_timestamp)
+    """Generate a hash ID for a dictionary, handling Timestamps and other complex types"""
+    serialized_dict = serialize_for_hash(input_dict)
+    json_str = json.dumps(serialized_dict) + serialize_for_hash(system_timestamp)
     json_bytes = json_str.encode('utf-8')
     order_id = hashlib.sha256(json_bytes).hexdigest()
     return order_id

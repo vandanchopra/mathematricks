@@ -1,39 +1,58 @@
+from ast import Or
 import numpy as np
-from datetime import timedelta
+from datetime import timedelta, datetime
 import pandas as pd
 from systems.utils import create_logger, sleeper
-from pydantic import BaseModel, Field, constr
-from typing import List, Dict, Optional, Union, Literal
-from datetime import datetime
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional, Union, Literal, Any, Tuple
 
-class Signal(BaseModel):
+class Order(BaseModel):
     symbol: str
-    signal_strength: int
-    strategy_name: str
-    timestamp: datetime
-    entry_order_type: Literal["MARKET", "STOPLOSS-MARKET"]
-    exit_order_type: Literal["stoploss_pct", "sl_abs"]
-    stoploss_pct: float
-    symbol_ltp: Dict[datetime, float]
-    timeInForce: Literal["DAY", "Expiry", "IoC", "TTL"]
     orderQuantity: int
     orderDirection: Literal["BUY", "SELL"]
+    order_type: Literal["MARKET", "LIMIT", "STOPLOSS"]
+    price: Optional[float] = None  # For LIMIT and STOPLOSS orders, None for MARKET
+    symbol_ltp: Dict[datetime, float]
+    timeInForce: Literal["DAY", "Expiry", "IoC", "TTL", "GTC"]
+    status: str = "pending"
+    filled_price: Optional[float] = None
+    filled_timestamp: Optional[datetime] = None
+    order_id: Optional[str] = None
+    broker_order_id: Optional[str] = None
+    history: List[Dict[str, Any]] = []
+    message: Optional[str] = None
+    fresh_update: Optional[bool] = False
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
+
+class Signal(BaseModel):
+    strategy_name: str
+    signal_id: Optional[str] = None
+    timestamp: datetime
+    orders: List[Order] = []  # Multiple orders per signal
+    signal_strength: float = 1.0  # Signal conviction level (0.0 to 1.0)
+    signal_correlation: Optional[float] = None  # For correlated asset signals
     granularity: str
     signal_type: Literal["BUY_SELL"]
     market_neutral: bool
-
-    class Config:
-        allow_mutation = True  # Allow field updates
-        arbitrary_types_allowed = True
+    total_buying_power: float = 0.0
+    buying_power_used: float = 0.0
+    strategy_inputs: Optional[Dict[str, Any]] = None
+    status: str = "pending"
+    rejection_reason: Optional[str] = None
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 class SignalResponse(BaseModel):
     return_type: Optional[Literal["signals"]] = None
     signals: List[Signal] = Field(default_factory=list)
     tickers: List[str]
 
-    class Config:
-        allow_mutation = True
-        arbitrary_types_allowed = True
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 class BaseStrategy:
     def __init__(self):
@@ -44,22 +63,25 @@ class BaseStrategy:
     def get_name(self):
         return self.strategy_name
     
-    def get_signal(self, data):
-        raise NotImplementedError
+    def generate_signals(
+        self, 
+        next_rows, 
+        market_data_df, 
+        system_timestamp, 
+        total_buying_power: float = 0.0,
+        buying_power_used: float = 0.0,
+        open_signals: Optional[List[Signal]] = None
+    ) -> Tuple[Optional[str], List[Signal], List[str]]:
+        """
+        Generate trading signals with dynamic risk management
+        Parameters:
+            total_buying_power: Total available buying power for the strategy
+            buying_power_used: Current buying power being used 
+            open_signals: List of currently active signals
+        """
+        raise NotImplementedError("Subclasses must implement generate_signals")
 
-    def get_target(self, data):
-        raise NotImplementedError
-
-    def get_trades(self, data):
-        raise NotImplementedError
-
-    def get_metrics(self, data):
-        raise NotImplementedError
-
-    def get_params(self):
-        raise NotImplementedError
-
-    def set_params(self, config):
+    def set_params(self, config: Dict[str, Any]):
         raise NotImplementedError
     
     def create_analysis_array_symbol_efficient(self, df, start_date_dt, days_ago_list):
@@ -133,42 +155,33 @@ class BaseStrategy:
         data_index_final = []
         
         for count, symbol in enumerate(symbols):
-            # Call your existing function for each symbol
-            # try:
-                analysis_array, dates, data_index = self.create_analysis_array_symbol(historical_data_interval[symbol], start_date_dt, days_ago_list)
-                # Get the price difference at each period.
-                analysis_np = np.array(analysis_array)
-                if analysis_np.size > 2:
-                    if update_data_index_final:
-                        data_index_final = data_index
-                        for days_ago in days_ago_list[:-1]:
-                            data_index_final.append('{}d_pct_change'.format(days_ago))
-                        for days_ago in days_ago_list[:-1]:
-                            data_index_final.append('{}d_pct_growth'.format(days_ago))
-                        update_data_index_final = False
+            analysis_array, dates, data_index = self.create_analysis_array_symbol(historical_data_interval[symbol], start_date_dt, days_ago_list)
+            analysis_np = np.array(analysis_array)
+            if analysis_np.size > 2:
+                if update_data_index_final:
+                    data_index_final = data_index
+                    for days_ago in days_ago_list[:-1]:
+                        data_index_final.append('{}d_pct_change'.format(days_ago))
+                    for days_ago in days_ago_list[:-1]:
+                        data_index_final.append('{}d_pct_growth'.format(days_ago))
+                    update_data_index_final = False
 
-                    # Append symbol to the index array
-                    symbols_array.append(symbol)
-                    
-                    # Append analysis array to the data array
-                    data_array.append(analysis_np)
-                    
-                    # Append dates to the dates dictionary
-                    dates_final[symbol] = dates
-                else:
-                    pass
-                    
-            # except Exception as e:
-            #     print(f'Error processing {symbol}: Exception: {Exception}, e: {e}')
+                # Append symbol to the index array
+                symbols_array.append(symbol)
+                
+                # Append analysis array to the data array
+                data_array.append(analysis_np)
+                
+                # Append dates to the dates dictionary
+                dates_final[symbol] = dates
+
         return symbols_array, np.array(data_array), data_index_final, dates_final
     
     def get_long_short_symbols(self, long_count, short_count, symbols_array, data_array, data_index):
-        #### Get the Stocks to Short
-        # Use lowest_10_indexes to filter other_array
+        # Get the Stocks to Short
         short_symbols = np.random.choice(symbols_array, short_count)
 
-        #### Get the Stocks for LONG
-        # Use lowest_10_indexes to filter other_array
+        # Get the Stocks for LONG
         long_symbols = np.random.choice(symbols_array, long_count)
 
         return long_symbols, short_symbols, symbols_array, data_array, data_index

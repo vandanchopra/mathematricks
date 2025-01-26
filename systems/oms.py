@@ -1,27 +1,13 @@
-#from ib_insync import *
 from copy import deepcopy
-from operator import le
-from os import close
-import sys
-from urllib import response
-from matplotlib.pylab import f
 import pandas as pd
-#from brokers import Brokers
-import json
-from config import config_dict
-import pandas as pd  # Assuming you are using pandas Timestamps
+from datetime import datetime
+from systems.utils import create_logger, MarketDataExtractor
 from brokers.brokers import Brokers
-from systems.utils import create_logger, generate_hash_id, sleeper, MarketDataExtractor
-from pprint import pprint
 from systems.performance_reporter import PerformanceReporter
+from systems.order_margin_manager import OrderMarginManager
 from systems.telegram import TelegramBot
-
-class CustomJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle non-serializable types like pd.Timestamp."""
-    def default(self, obj):
-        if isinstance(obj, pd.Timestamp):
-            return obj.isoformat()  # Convert Timestamp to ISO format
-        return super().default(obj)
+from vault.base_strategy import Signal, Order
+from typing import List, Dict
 
 class OMS:
     def __init__(self, config):
@@ -31,875 +17,413 @@ class OMS:
         self.brokers = Brokers()
         self.profit = 0
         self.margin_available = self.update_all_margin_available()
-        self.open_orders = self.load_json('db/oms/backtests/open_orders.json')
-        self.closed_orders = self.load_json('db/oms/backtests/closed_orders.json')
+        self.open_signals = []
+        self.closed_signals = []
         self.portfolio = {}
         self.reporter = PerformanceReporter(self.market_data_extractor)
         self.granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
-        self.unfilled_orders = []
         self.telegram_bot = TelegramBot()
         self.update_telegram = self.config_dict['update_telegram']
-        
-    def get_strategy_margin_available(self, strategy_name):
+        self.brokerage_fee = self.config_dict.get('brokerage_fee', 0.0035)
+        self.slippage = self.config_dict.get('slippage', 0.001)
+        self.margin_manager = OrderMarginManager(self.config_dict)
+    
+    def get_open_signals(self):
+        """Get currently open signals"""
+        return self.open_signals
+
+    def get_unfilled_orders(self) -> List[Order]:
+        """Get all unfilled orders from open signals
+        Returns:
+            List[Order]: List of orders that are not closed or cancelled
+        """
+        unfilled_orders = []
+        for signal in self.open_signals:
+            for order in signal.orders:
+                if order.status in ['pending', 'open']:
+                    unfilled_orders.append(order)
+        return unfilled_orders
+
+    def get_strategy_margin_available(self, strategy_name: str) -> float:
+        """Calculate available margin for a strategy"""
         num_of_strategy_count = len(self.config_dict["strategies"])
         strategy_margin = self.margin_available['all']['total_margin_available'] / num_of_strategy_count
-        
         return strategy_margin
     
-    def update_all_margin_available(self):
+    def update_all_margin_available(self) -> Dict:
+        """Update available margin across all accounts and strategies"""
         trading_currency = self.config_dict['trading_currency']
         base_currency = self.config_dict['base_currency']
         base_currency_to_trading_currency_exchange_rate = self.config_dict['base_currency_to_trading_currency_exchange_rate']
         margin_dict = {}
+        # self.logger.info({'self.brokers':self.brokers})
+
+        # Update margin for each broker and account
         for broker in self.config_dict['account_info']:
             if broker not in margin_dict:
                 margin_dict[broker] = {}
+
             for account_number in self.config_dict['account_info'][broker]:
                 if account_number not in margin_dict[broker]:
                     margin_dict[broker][account_number] = {'combined':{}}
-                if broker == 'sim':
-                    margin_dict[broker][account_number]['combined'] = self.brokers.sim.execute.create_account_summary(trading_currency, base_currency, base_currency_to_trading_currency_exchange_rate, self.config_dict['account_info'][broker][account_number])
-                elif broker == 'ibkr':
-                    if self.config_dict['run_mode'] in [1,2]:
-                        margin_dict[broker][account_number]['combined'] = self.brokers.ib.execute.get_account_summary(trading_currency, base_currency, account_number)
-                else:
-                    raise AssertionError(f"Broker {broker} not supported.")
                 
-        '''STEP 2: Calculate the total margin available for all strategies'''
+                if broker == 'sim':
+                    margin_dict[broker][account_number]['combined'] = (
+                        self.brokers.sim.execute.create_account_summary(
+                        trading_currency, base_currency, base_currency_to_trading_currency_exchange_rate, 
+                        self.config_dict['account_info'][broker][account_number]
+                        )
+                    )
+                elif broker == 'ibkr' and self.config_dict['run_mode'] in [1,2]:
+                    margin_dict[broker][account_number]['combined'] = (
+                        self.brokers.ib.execute.get_account_summary(
+                            trading_currency, base_currency, account_number
+                        )
+                    )
+                elif broker == 'ibkr' and self.config_dict['run_mode'] == 3:
+                            margin_dict[broker][account_number]['combined'] = self.brokers.sim.execute.create_account_summary(
+                        trading_currency, base_currency, base_currency_to_trading_currency_exchange_rate,
+                        self.config_dict['account_info']['sim']['sim_1']
+                    )
+                else:
+                    raise AssertionError(f"Broker '{broker}' not supported in run_mode {self.config_dict['run_mode']}")
+        # Distribute margin among strategies
         for broker in margin_dict:
             for account_number in margin_dict[broker]:
                 for strategy_name in self.config_dict["strategies"]:
                     strategy_name = strategy_name.split('.')[-1] if '.' in strategy_name else strategy_name
                     if strategy_name not in margin_dict[broker][account_number]:
                         margin_dict[broker][account_number][strategy_name] = {}
+                    
                     for currency in margin_dict[broker][account_number]['combined']:
                         if currency not in margin_dict[broker][account_number][strategy_name]:
                             margin_dict[broker][account_number][strategy_name][currency] = {}
+                        
                         for key in margin_dict[broker][account_number]['combined'][currency]:
                             if key not in ['cushion', 'margin_multiplier', 'pct_of_margin_used']:
-                                margin_dict[broker][account_number][strategy_name][currency][key] = margin_dict[broker][account_number]['combined'][currency][key] / len(self.config_dict["strategies"])
+                                margin_dict[broker][account_number][strategy_name][currency][key] = (
+                                    margin_dict[broker][account_number]['combined'][currency][key] / 
+                                    len(self.config_dict["strategies"])
+                                )
                             else:
-                                margin_dict[broker][account_number][strategy_name][currency][key] = margin_dict[broker][account_number]['combined'][currency][key]
+                                margin_dict[broker][account_number][strategy_name][currency][key] = (
+                                    margin_dict[broker][account_number]['combined'][currency][key]
+                                )
 
         return margin_dict
-    
-    def update_all_margin_available_old(self):
-        self.margin_available = {}
-        if 'all' not in self.margin_available:
-            self.margin_available['all'] = {}
-        self.margin_available['all']['total_margin_available'] = self.config_dict["oms"]["funds_available"] * (1 - self.config_dict["risk_management"]["margin_reserve_pct"])
-        self.margin_available['all']['current_margin_available'] = self.config_dict["oms"]["funds_available"] * (1 - self.config_dict["risk_management"]["margin_reserve_pct"])
-        
-        for strategy_name in self.config_dict["strategies"]:
-            strategy_name = strategy_name.split('.')[-1] if '.' in strategy_name else strategy_name
-            if strategy_name not in self.margin_available:
-                self.margin_available[strategy_name] = {}
-            self.margin_available[strategy_name]['total_margin_available'] = self.get_strategy_margin_available(strategy_name)
-            self.margin_available[strategy_name]['current_margin_available'] = self.get_strategy_margin_available(strategy_name)
-        return self.margin_available
-    
-    def load_json(self, file_name):
-        """Load JSON data from the file, or return an empty list if not found."""
-        data = []
-        try:
-            with open(file_name, 'r') as file:
-                data = json.load(file)
-        except FileNotFoundError:
-            self.logger.debug(f"No {file_name} file found, starting with an empty list.")
-        except json.JSONDecodeError:
-            self.logger.error(f"Error decoding the {file_name}, please check the format.")
-        return data
 
-    def save_json(self, file_name, data):
-        """Save the data to a JSON file using the custom encoder."""
-        with open(file_name, 'w') as file:
-            json.dump(data, file, cls=CustomJSONEncoder)
+    def update_portfolio(self, signal: Signal):
+        """Update portfolio based on executed signal orders"""
+        # Initialize portfolio structures if needed
+        if signal.strategy_name not in self.portfolio:
+            self.portfolio[signal.strategy_name] = {}
+        if 'all' not in self.portfolio:
+            self.portfolio['all'] = {}
+            
+        # Process all orders (both regular and multi-asset)
+        all_orders = []
+        for order in signal.orders:
+            if order.status != 'closed':
+                continue
+            all_orders.append({
+                'symbol': order.symbol,
+                'direction': 1 if order.orderDirection == 'BUY' else -1,
+                'quantity': order.orderQuantity,
+                'price': order.filled_price or 0
+            })
 
-    def create_postions_from_open_orders(self, open_orders):
-        positions = {'all':{}}
-        pending_orders_sim = {'all':{}}
-        for open_order in open_orders:
-            for order in open_order:
-                symbol = order['symbol']
-                strategy_name = order['strategy_name']
-                
-                if order['status'] not in ['pending', 'open']:
-                    # If stragegy_name not in current_positions, then add it
-                    if strategy_name not in positions:
-                        positions[strategy_name] = {}
-                    # if symbol not in strategy_name, then add it
-                    if symbol not in positions[strategy_name]:
-                        positions[strategy_name][symbol] = 0
-                    if symbol not in positions['all']:
-                        positions['all'][symbol] = 0
-                    order_direction_multiplier = 1 if order['orderDirection'].lower() == 'buy' else -1
-                    positions['all'][symbol] += order['orderQuantity'] * order_direction_multiplier
-                    positions[strategy_name][symbol] += order['orderQuantity'] * order_direction_multiplier
-                    # print(f"Order ADDED: symbol: {symbol}, status: {order['status']}, strategy_name: {strategy_name}, orderDirection: {order['orderDirection'].upper()}, orderQuantity: {order['orderQuantity']}")
-                else:
-                    if strategy_name not in pending_orders_sim:
-                        pending_orders_sim[strategy_name] = {}
-                    # if symbol not in strategy_name, then add it
-                    if symbol not in pending_orders_sim[strategy_name]:
-                        pending_orders_sim[strategy_name][symbol] = 0
-                    if symbol not in pending_orders_sim['all']:
-                        pending_orders_sim['all'][symbol] = 0
-                    # print(f"Order is still pending: symbol: {symbol}, status: {order['status']}, strategy_name: {strategy_name}, orderDirection: {order['orderDirection'].upper()}, orderQuantity: {order['orderQuantity']}")
-                    order_direction_multiplier = 1 if order['orderDirection'].lower() == 'buy' else -1
-                    pending_orders_sim['all'][symbol] += order['orderQuantity'] * order_direction_multiplier
-                    pending_orders_sim[strategy_name][symbol] += order['orderQuantity'] * order_direction_multiplier
-            
-        return positions, pending_orders_sim
-    
-    def get_account_balances(self):
-        account_summary = self.brokers.ib.ib.accountSummary()
-        account_balances_dict = {}
-        tags_of_interest = ['TotalCashValue', 'AvailableFunds', 'NetLiquidation', 'BuyingPower', 'MaintMarginReq',
-                            'GrossPositionValue'
-                            ]
-        # Find and display relevant fields for account balance and margin
-        for count, item in enumerate(account_summary):
-            if item.account in ['DU7994930', 'U13152795']:
-                if item.tag in tags_of_interest:
-                    account_balances_dict[item.tag] = item.value
-                    
-        for count, item in enumerate(account_summary):
-            if item.tag == 'ExchangeRate' and item.currency == 'USD':
-                account_balances_dict[item.tag] = item.value
-        return account_balances_dict
-    
-    def sync_open_orders(self, sync_direction, market_data_df, system_timestamp, brokers=['IBKR']):
-        self.brokers.ib.execute.check_ib_connection()
-
-        def get_positions_to_buy_for_sync(market_data_df, sim_open_orders, sim_net_liquidation_value, ibkr_available_funds, open_orders_ibkr, unfilled_orders_ibkr):
-            # self.logger.debug({'open_orders_ibkr':open_orders_ibkr})
-            # calculate % of balance being used for sim.
-            total_ratio_of_each_order_to_net_liquidation_value = {}
-            actual_quantity_to_buy = {}
-            ideal_quantity_to_buy = {}
-            for sim_open_order in sim_open_orders:
-                for order in sim_open_order:
-                    if order['status'] == 'closed':
-                        symbol = order['symbol']
-                        if symbol not in total_ratio_of_each_order_to_net_liquidation_value:
-                            total_ratio_of_each_order_to_net_liquidation_value[symbol] = {'open_positions':[]}
-                        total_ratio_of_each_order_to_net_liquidation_value[symbol]['open_positions'].append({'entryPrice': order['fill_price'], 'orderQuantity': order['orderQuantity'], 'orderDirection': order['orderDirection']})
-            # ratio_of_funds_utilized_sim = total_value_of_open_positions_sim / sim_net_liquidation_value
-
-            for symbol in total_ratio_of_each_order_to_net_liquidation_value:
-                # First get the value of all orders.
-                symbol_invested_value = 0
-                total_quantity_open_symbol = 0
-                
-                for order_entry in total_ratio_of_each_order_to_net_liquidation_value[symbol]['open_positions']:
-                    orderDirection_multiplier = 1 if order_entry['orderDirection'].lower() == 'buy' else -1
-                    symbol_invested_value += order_entry['entryPrice'] * order_entry['orderQuantity'] * orderDirection_multiplier
-                    total_quantity_open_symbol += order_entry['orderQuantity'] * orderDirection_multiplier
-                    # self.logger.debug({'symbol':symbol, 'orderQuantity':order_entry['orderQuantity'], 'symbol_invested_value':symbol_invested_value, 'total_quantity_open_symbol':total_quantity_open_symbol, 'sim_invested_ratio_symbol':symbol_invested_value / sim_net_liquidation_value})
-                    
-                # Then get the ratio to sim_net_liquidation_value
-                total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'] = symbol_invested_value / sim_net_liquidation_value
-                # self.logger.debug({'symbol':symbol, 'ratio_of_invested_value_to_sim_net_liquidation_value': total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value']})
-                # Then calculate the ratio of funds to be alloted to symbol on IBKR
-                total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'] * ibkr_available_funds
-                # self.logger.debug({'symbol':symbol, 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr']})
-                
-                # self.logger.debug({'symbol':symbol, 'symbol_invested_value':symbol_invested_value, 'avail_funds_for_asset_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'ratio_of_sim_funds': total_ratio_of_each_order_to_net_liquidation_value[symbol]['ratio_of_invested_value_to_sim_net_liquidation_value'], 'sim_net_liquidation_value':sim_net_liquidation_value, 'ibkr_avail_funds':ibkr_available_funds})
-                # Then get the current value of the stock.
-                min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
-                close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, symbol, 'close')
-                # self.logger.debug({'symbol':symbol, 'close_prices':close_prices})
-                close_prices.dropna(inplace=True)
-                close_prices = close_prices.tolist()
-                if len(close_prices) == 0:
-                    close_price = None
-                    for sim_open_order in sim_open_orders:
-                        for order in sim_open_order:
-                            if order['status'].lower() in ['open', 'pending'] and order['symbol'] == symbol:
-                                if 'symbol_ltp' in order:
-                                    close_price = list(order['symbol_ltp'].values())[-1]
-                                    self.logger.debug(f"Close Price extraced from sim_open_orders: {symbol}|{close_price}")
-                                    break
-                else:
-                    close_price = close_prices[-1]
-                
-                if close_price is None:
-                    raise AssertionError(f"Close price is None for symbol: {symbol}")
-                
-                # self.logger.debug({'symbol':symbol, 'symbol_data':market_data_df.loc['1m'].xs(symbol, level=1, axis=1)})
-                total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'] = close_price # THIS VALUE IS HYPOTHETICAL
-                # Then calculate the closest integer number of stocks that can be bought with the funds available for IBKR
-                total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] = int(total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'] / total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'])
-            
-                # self.logger.debug({'symbol':symbol, 'ibkr_available_funds':ibkr_available_funds, 'availble_funds_for_asset_from_ibkr':total_ratio_of_each_order_to_net_liquidation_value[symbol]['availble_funds_for_asset_from_ibkr'], 'ideal_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'], 'current_price':total_ratio_of_each_order_to_net_liquidation_value[symbol]['current_price'], 'fill_price':symbol_invested_value/total_quantity_open_symbol})
-                # Find out how much of the quantity is already bought
-                for open_order_ibkr in open_orders_ibkr:
-                    if open_order_ibkr[0]['symbol'] == symbol:
-                        ibkr_orderDirection_multiplier = 1 if open_order_ibkr[0]['orderDirection'].lower() == 'buy' else -1
-                        total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] = open_order_ibkr[0]['orderQuantity'] * ibkr_orderDirection_multiplier
-                        break
-                    else:
-                        total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] = 0
-                
-                for unfilled_order in unfilled_orders_ibkr:
-                    if unfilled_order.contract.symbol == symbol and unfilled_order.order.orderType.lower() not in ['stp']:
-                        ibkr_orderDirection_multiplier = 1 if unfilled_order.order.action == 'BUY' else -1
-                        if symbol not in total_ratio_of_each_order_to_net_liquidation_value:
-                            total_ratio_of_each_order_to_net_liquidation_value[symbol] = {}
-                        if 'quantity_bought' not in total_ratio_of_each_order_to_net_liquidation_value[symbol]:
-                            total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] = 0
-                        total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] += unfilled_order.order.totalQuantity * ibkr_orderDirection_multiplier
-                        # self.logger.debug({'symbol':symbol, 'Quantity bought':unfilled_order.order.totalQuantity * ibkr_orderDirection_multiplier})
-                        
-                # self.logger.debug({'symbol':symbol, 'quantity_bought':total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought']})
-                # Find out actual quantity to buy
-                total_ratio_of_each_order_to_net_liquidation_value[symbol]['actual_quantity_to_buy'] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] - (total_ratio_of_each_order_to_net_liquidation_value[symbol]['quantity_bought'] if 'quantity_bought' in total_ratio_of_each_order_to_net_liquidation_value[symbol] else 0)
-                # self.logger.debug({'symbol':symbol, 'actual_quantity_to_buy':total_ratio_of_each_order_to_net_liquidation_value[symbol]['actual_quantity_to_buy']})
-                if total_ratio_of_each_order_to_net_liquidation_value[symbol]['actual_quantity_to_buy'] != 0:
-                    actual_quantity_to_buy[symbol] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['actual_quantity_to_buy']
-                if total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy'] != 0:
-                    ideal_quantity_to_buy[symbol] = total_ratio_of_each_order_to_net_liquidation_value[symbol]['ideal_quantity_to_buy']
-
-            # Now Remove all open Orders that are not in ideal_quantity_to_buy
-            # self.logger.debug({'ideal_quantity_to_buy':ideal_quantity_to_buy})
-            
-            '''Last Step: Remove all open orders that are not in ideal_quantity_to_buy'''
-            for open_order_ibkr in open_orders_ibkr:
-                symbol = open_order_ibkr[0]['symbol']
-                if symbol not in ideal_quantity_to_buy:
-                    # self.logger.debug({'symbol':symbol, 'open_order_ibkr':open_order_ibkr})
-                    order_quantity = open_order_ibkr[0]['orderQuantity']
-                    order_direction = open_order_ibkr[0]['orderDirection']
-                    order_direction_multiplier = 1 if order_direction.lower() == 'buy' else -1
-                    if symbol in actual_quantity_to_buy:
-                        actual_quantity_to_buy['MKT_EXIT|'+symbol] -= order_quantity * order_direction_multiplier * -1
-                    else:
-                        actual_quantity_to_buy['MKT_EXIT|'+symbol] = order_quantity * order_direction_multiplier * -1
-                
-            return actual_quantity_to_buy, ideal_quantity_to_buy
-        
-        def create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr, open_orders_ibkr):
-            new_entry_orders = []
-            new_cancellation_orders = []
-            
-            for symbol, actual_symbol_quantity in actual_quantity_to_buy.items():
-                mkt_exit_bool = True if 'MKT_EXIT' in symbol else False
-                if not mkt_exit_bool:
-                    run_once = 0
-                    for multi_leg_order in sim_open_orders:
-                        if run_once == 0:
-                            for order in multi_leg_order:
-                                if order['symbol'] == symbol and 'entryPrice' in order:
-                                    new_order = deepcopy(order)
-                                    new_order['orderQuantity'] = abs(actual_symbol_quantity)
-                                    # fix entry price
-                                    close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, '1d', symbol, 'close')
-                                    close_prices.dropna(inplace=True)
-                                    close_prices = close_prices.tolist()
-                                    close_price = close_prices[-1]
-                                    new_order['entryPrice'] = close_price
-                                    # fix broker
-                                    new_order['broker'] = 'IBKR'
-                                    # status
-                                    new_order['status'] = 'pending'
-                                    # make fill_price = 0
-                                    # new_order['fill_price'] = 0
-                                    # filled_timestamp = None
-                                    new_order['filled_timestamp'] = None
-                                    # broker_order_id = None
-                                    new_order['broker_order_id'] = None
-                                    # Remove fresh_update
-                                    if 'fresh_update' in new_order:
-                                        new_order.pop('fresh_update')
-                                    # Remove message
-                                    if 'message' in new_order:
-                                        new_order.pop('message')
-                                    # Remove history
-                                    if 'history' in new_order:
-                                        new_order.pop('history')
-                                    new_order['orderDirection'] = 'BUY' if actual_symbol_quantity > 0 else 'SELL'
-                                    
-                                    # order_id = create new order_id
-                                    new_order['original_order_id'] = new_order['order_id']
-                                    new_order['order_id'] = generate_hash_id(new_order, system_timestamp)
-                                    new_entry_orders.append([new_order]) # Order is being sent as a single-leg multi-leg order, that's why it's in a list.
-                                    # self.logger.debug({'symbol':symbol, 'new_order':new_order})
-                                    run_once += 1
-                else:
-                    symbol = symbol.split('|')[-1]
-                    # Now create a MARKET_EXIT ORDER
-                    run_once = 0
-                    for multi_leg_order in open_orders_ibkr:
-                        for order in multi_leg_order:
-                            if order['symbol'] == symbol and 'entryPrice' in order:
-                                new_order = deepcopy(order)
-                                new_order['status'] = 'pending'
-                                new_order['timestamp'] = system_timestamp
-                                new_order['orderDirection'] = 'SELL' if order['orderDirection'].lower() == 'buy' else 'BUY'
-                                new_order['fill_price'] = None
-                                new_order['filled_timestamp'] = None
-                                new_order['broker_order_id'] = None
-                                new_order['order_id'] = generate_hash_id(new_order, system_timestamp)
-                                new_order['orderType'] = 'MARKET_EXIT'
-                                new_order['timeInForce'] = 'GTC'
-                                new_cancellation_orders.append([new_order])
-            
-            # Put in the cancellation orders first, and then the entry orders (So that the system doesn't go into -ve buying power values)
-            new_entry_orders_full_list = new_cancellation_orders + new_entry_orders
-                                
-            return new_entry_orders_full_list
-        
-        def create_exit_orders_for_sync(sim_open_orders, new_entry_orders, system_timestamp, ideal_quantity_to_buy, unfilled_orders_ibkr, open_orders_ibkr):
-            # self.logger.debug({'ideal_quantity_to_buy':ideal_quantity_to_buy})
-            '''
-            For each symbol that has ideal quantity to buy, we need to place a equal stoploss
-            
-            for symbol in ideal_quantity_to_buy:
-                first find the entry order. It's either in open_orders_ibkr or in new_entry_orders.
-                once you've found it, then find the stoploss order in unfilled_orders. If it's there, then modify it.
-                if it's not there, then find the stoploss order in sim_open_orders and use that and add it to the order
-            '''
-            for symbol, ideal_stoploss_quantity in ideal_quantity_to_buy.items():
-                # First find the entry order.
-                entry_order = None
-                entry_order_location = {}
-                for count, multi_leg_order in enumerate(open_orders_ibkr):
-                    for order in multi_leg_order:
-                        if order['symbol'] == symbol:
-                            entry_order = multi_leg_order
-                            entry_order_location['open_orders_ibkr'] = count
-                            break
-                    if entry_order:
-                        break
-                if not entry_order:
-                    for count, multi_leg_order in enumerate(new_entry_orders):
-                        for order in multi_leg_order:
-                            if order['symbol'] == symbol:
-                                entry_order = multi_leg_order
-                                entry_order_location['new_entry_orders'] = count
-                                break
-                        if entry_order:
-                            break
-                
-                if entry_order:
-                    # Find the stoploss order
-                    stoploss_order_location = None
-                    current_stoploss_quantity = 0
-                    current_stoploss_list = []
-                    stoploss_order_temp = None
-                    for unfilled_order in unfilled_orders_ibkr:
-                        if unfilled_order.contract.symbol == symbol and unfilled_order.order.orderType.lower() in ['stp']:
-                            stoploss_order_temp = unfilled_order
-                            current_stoploss_quantity += unfilled_order.order.totalQuantity
-                            current_stoploss_list.append(unfilled_order)
-                            stoploss_order_location = 'unfilled_orders_ibkr'
-                            # self.logger.debug(f'Found in unfilled_orders_ibkr: {unfilled_order}')
-                            break
-                        
-                    if not stoploss_order_temp:
-                        for multi_leg_order in sim_open_orders:
-                            for order in multi_leg_order:
-                                if order['symbol'] == symbol and 'exitPrice' in order:
-                                    stoploss_order_temp = order
-                                    # self.logger.debug(f'Found in sim_open_orders: {order}')
-                                    break
-                            if stoploss_order_temp:
-                                break
-                            
-                    if stoploss_order_temp:
-                        if current_stoploss_quantity == 0:
-                            stoploss_order = deepcopy(stoploss_order_temp)
-                            stoploss_order['orderQuantity'] = abs(ideal_stoploss_quantity)
-                            # fix broker
-                            stoploss_order['broker'] = 'IBKR'
-                            # status
-                            stoploss_order['status'] = 'pending'
-                            # make fill_price = 0
-                            stoploss_order['fill_price'] = 0
-                            # filled_timestamp = None
-                            stoploss_order['filled_timestamp'] = None
-                            # broker_order_id = None
-                            stoploss_order['broker_order_id'] = None
-                            # Remove fresh_update
-                            if 'fresh_update' in stoploss_order:
-                                stoploss_order.pop('fresh_update')
-                            # Remove message
-                            if 'message' in stoploss_order:
-                                stoploss_order.pop('message')
-                            # Remove history
-                            if 'history' in stoploss_order:
-                                stoploss_order.pop('history')
-                            # order_id = create new order_id
-                            if 'order_id' in stoploss_order:
-                                stoploss_order['original_order_id'] = stoploss_order['order_id']
-                            stoploss_order['order_id'] = generate_hash_id(stoploss_order, system_timestamp)
-                            if 'open_orders_ibkr' in entry_order_location:
-                                open_orders_ibkr[entry_order_location['open_orders_ibkr']].append(stoploss_order)
-                            else:
-                                new_entry_orders[entry_order_location['new_entry_orders']].append(stoploss_order)
-                            # self.logger.debug({'symbol':symbol, 'stoploss_order':stoploss_order})
-                            self.logger.debug(f"SYNC STOPLOSS ORDER: Symbol: {symbol}, OrderQuantity: {stoploss_order['orderQuantity']}, OrderDirection: {stoploss_order['orderDirection']}, Stoploss Price: {stoploss_order['exitPrice']}")
-                            if 'entryPrice' in stoploss_order:
-                                raise AssertionError(f"STOPLOSS ORDER HAS ENTRY PRICE")
-                        else:
-                            # self.logger.debug({'stoploss_order_temp':stoploss_order_temp})
-                            new_system_stoploss_order = self.brokers.ib.execute.create_system_order_from_ibkr_order(stoploss_order_temp)
-                            orderdirection_multiplier = 1 if new_system_stoploss_order['orderDirection'].lower() == 'buy' else -1
-                            if current_stoploss_quantity * orderdirection_multiplier * -1 != ideal_stoploss_quantity:
-                                # self.logger.debug({'symbol':symbol, 'current_stoploss_quantity':current_stoploss_quantity, 'ideal_stoploss_quantity':ideal_stoploss_quantity})
-                                modified_order = self.modify_order(new_system_stoploss_order, new_quantity=abs(ideal_stoploss_quantity))
-                                if 'open_orders_ibkr' in entry_order_location:
-                                    open_orders_ibkr[entry_order_location['open_orders_ibkr']].append(modified_order)
-                                    self.logger.debug(f"SYNC STOPLOSS ORDER: Symbol: {symbol}, OrderQuantity: {modified_order['orderQuantity']}, OrderDirection: {modified_order['orderDirection']}, Stoploss Price: {modified_order['exitPrice']}")
-                                    if 'entryPrice' in modified_order:
-                                        raise AssertionError(f"modified_order ORDER HAS ENTRY PRICE")
-                                else:
-                                    new_entry_orders[entry_order_location['new_entry_orders']].append(modified_order)
-                                    self.logger.debug(f"SYNC STOPLOSS ORDER: Symbol: {symbol}, OrderQuantity: {modified_order['orderQuantity']}, OrderDirection: {modified_order['orderDirection']}, Stoploss Price: {modified_order['exitPrice']}")
-                                    if 'entryPrice' in modified_order:
-                                        raise AssertionError(f"modified_order ORDER HAS ENTRY PRICE")
-
-            return new_entry_orders, open_orders_ibkr
-        
-        new_orders = []
-        if sync_direction == 'broker-to-oms':
-            raise NotImplementedError(f'This {sync_direction} direction is not supported yet.')
-        elif sync_direction == 'oms-to-broker':
-            sim_open_orders = deepcopy(self.open_orders)
-            
-            ''' First Get Account balances from the broker and update the margin_available dict'''
-            self.margin_available = self.update_all_margin_available()
-            # self.logger.debug({'self.margin_available':self.margin_available})
-            
-            #### Get the minimum granularity from market_data_df
-            self.available_granularities = market_data_df.index.get_level_values(0).unique()
-            self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
-            self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
-            
-            open_orders_ibkr, unfilled_orders_ibkr = self.brokers.ib.execute.get_open_orders(market_data_df, system_timestamp, self.min_granularity)
-            
-            # # get open positions from SIM
-            # open_positions_sim, pending_orders_sim = self.create_postions_from_open_orders(sim_open_orders)
-            # get account balance for IBKR
-            # account_balances_dict = self.get_account_balances()
-            self.update_all_margin_available()
-            # self.logger.debug({'account_balances_dict':account_balances_dict})
-            margin_pct_available_to_use = self.config_dict['risk_management']['maximum_margin_used_pct']
-            ibkr_available_funds = self.margin_available['ibkr'][self.config_dict['base_account_numbers']['ibkr']]['combined'][self.config_dict['trading_currency']]['total_buying_power'] * margin_pct_available_to_use
-            
-            # self.logger.debug({'ibkr_available_funds':ibkr_available_funds})
-            # get account balance for SIM
-            sim_net_liquidation_value = self.margin_available['sim']['sim_1']['combined'][self.config_dict['trading_currency']]['buying_power_available']
-            # self.logger.debug({'sim_net_liquidation_value':sim_net_liquidation_value})
-            # get positions to buy
-            actual_quantity_to_buy, ideal_quantity_to_buy = get_positions_to_buy_for_sync(market_data_df, sim_open_orders, sim_net_liquidation_value, ibkr_available_funds, open_orders_ibkr, unfilled_orders_ibkr)
-            # self.logger.debug({'ideal_quantity_to_buy':ideal_quantity_to_buy})
-            # Create a log msg with the keys and values of the ideal_quantity_to_buy seperated by a ' | '
-            self.logger.info("Ideal Position Size: " + ' | '.join(f"{key}: {value}" for key, value in ideal_quantity_to_buy.items()))
-            self.logger.info("Actual Qty to Buy:   " + ' | '.join(f"{key}: {value}" for key, value in actual_quantity_to_buy.items()))
-            # Create new orders
-            new_entry_orders = create_entry_orders_for_sync(actual_quantity_to_buy, market_data_df, sim_open_orders, system_timestamp, unfilled_orders_ibkr, open_orders_ibkr)
-            new_entry_orders, open_orders_ibkr = create_exit_orders_for_sync(sim_open_orders, new_entry_orders, system_timestamp, ideal_quantity_to_buy, unfilled_orders_ibkr, open_orders_ibkr)
-            
-            '''LAST STEP: Fix the order in which the orders are placed in the new_orders list. Right now we're going above margin'''
-            new_orders.extend(new_entry_orders)
-            self.open_orders = open_orders_ibkr
-            # self.logger.debug({'self.open_orders':self.open_orders})
-        return new_orders
-
-    def get_open_orders(self, broker):
-        if broker == 'IBKR':
-            return self.brokers.ib.get_open_orders()
-        elif broker == 'SIM':
-            return self.open_orders['SIM']
-        else:
-            raise AssertionError(f"Broker {broker} not supported.")
-
-    def modify_order(self, order, new_price=None, new_quantity=None):
-        if new_price or new_quantity:
-            modify_reason = []
-            modify_message = ''
-            
-            if new_price:
-                modify_reason.append('new_price')
-                modify_message += f'| New Price: {new_price}, old price: {order["stoploss_abs"]}'
-                order['exitPrice'] = new_price
-                order['stoploss_abs'] = new_price
-            if new_quantity:
-                modify_reason.append('new_quantity')
-                modify_message += f'| New Quantity: {new_quantity}, old quantity: {order["orderQuantity"]}'
-                order['orderQuantity'] = new_quantity
-                
-            order['status'] = 'modify'
-            order['modify_reason'] = modify_reason
-            order['message'] = modify_message
-            
-        return order
-    
-    def update_trailing_stop_losses(self, order, market_data_df):
-        if order['status'] != 'pending' and order['orderType'] == 'stoploss_pct':
+        # Update portfolio for each order
+        for order in all_orders:
             symbol = order['symbol']
-            # granularity = order['granularity'] # Get minimum granularity from market_data_df
-            granularity = minimum_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
-            # system_timestamp = market_data_df.index.get_level_values(1)[-1]
-            stoploss_pct = order['stoploss_pct']
-            # current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
-            current_price = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, granularity, symbol, 'close').iloc[-1]
-            if current_price:
-                # stoploss_abs = order['stoploss_abs']
-                orderDirection = order['orderDirection']
-
-                current_stoploss = order['exitPrice']
-                ideal_stoploss = current_price * (1 - stoploss_pct) if orderDirection == 'SELL' else current_price * (1 + stoploss_pct)
-                acceptable_loss_pct_deviation = stoploss_pct/5
-                acceptable_spotloss = current_price * (1 - (stoploss_pct+acceptable_loss_pct_deviation)) if orderDirection == 'SELL' else current_price * (1 + (stoploss_pct-acceptable_loss_pct_deviation))
-                update_stoploss = current_stoploss < acceptable_spotloss and ideal_stoploss > current_stoploss if orderDirection == 'SELL' else current_stoploss > acceptable_spotloss and ideal_stoploss < current_stoploss
+            
+            # Initialize symbol in strategy portfolio if needed
+            if symbol not in self.portfolio[signal.strategy_name]:
+                self.portfolio[signal.strategy_name][symbol] = {
+                    'position': 0,
+                    'average_price': 0,
+                    'total_value': 0
+                }
                 
-                if update_stoploss:
-                    order = self.modify_order(order, new_price=ideal_stoploss)
-            else:
-                raise AssertionError(f"Current Price is None for symbol: {symbol}")
-    
-        return order
-            
-    def check_if_all_legs_of_the_order_are_closed(self, multi_leg_order):
-        '''Check if the order is closed and move it to closed orders list.'''
-        order_open = False
-        for leg in multi_leg_order:
-            if leg['status'] not in ['closed', 'rejected', 'cancelled']: # Basically if status is 'open' or 'pending'
-                order_open = True
-                break
-        return order_open
-    
-    def remove_closed_orders_from_open_orders_list(self, open_orders, closed_orders):
-        updated_open_orders = []
-        # check if order is closed
-        for level_1_count, multi_leg_order in enumerate(open_orders):
-            order_open = self.check_if_all_legs_of_the_order_are_closed(multi_leg_order)
-            # self.logger.debug({f'Symbol: {multi_leg_order[0]["symbol"]}, order_open':order_open})
-            if not order_open:
-                # remove updated_open_orders[level_1_count][level_2_count] from open_orders
-                if len(multi_leg_order) == 0:
-                    raise AssertionError(f"Multi-leg order is empty: {multi_leg_order}")
-                closed_orders.append(multi_leg_order)
-            else:
-                # Remove multi_leg_order from self.open_orders
-                updated_open_orders.append(multi_leg_order)
-            
-        return updated_open_orders, closed_orders
-    
-    def update_porfolio(self, response_order):
-        if response_order['status'] == 'closed':
-            '''Update the portfolio with the response_order.'''
-            # self.logger.debug(f"Updating portfolio with response_order: {response_order}")
-            strategy_name = response_order['strategy_name']
-            symbol = response_order['symbol']
-            orderDirection = response_order['orderDirection']
-            orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
-            orderQuantity = response_order['orderQuantity']
-            price = response_order['fill_price']
-            
-            # Strategy Level Update
-            if strategy_name not in self.portfolio:
-                self.portfolio[strategy_name] = {}
-            if symbol not in self.portfolio[strategy_name]:
-                self.portfolio[strategy_name][symbol] = {}
-            if 'position' not in self.portfolio[strategy_name][symbol]:
-                self.portfolio[strategy_name][symbol]['position'] = 0
-            if 'average_price' not in self.portfolio[strategy_name][symbol]:
-                self.portfolio[strategy_name][symbol]['average_price'] = 0
-            if 'total_value' not in self.portfolio[strategy_name][symbol]:
-                self.portfolio[strategy_name][symbol]['total_value'] = 0
-
-            # Overall Portfolio Update
-            if 'all' not in self.portfolio:
-                self.portfolio['all'] = {}
+            # Initialize symbol in overall portfolio if needed
             if symbol not in self.portfolio['all']:
-                self.portfolio['all'][symbol] = {}
-            if 'position' not in self.portfolio['all'][symbol]:
-                self.portfolio['all'][symbol]['position'] = 0
-            if 'average_price' not in self.portfolio['all'][symbol]:
-                self.portfolio['all'][symbol]['average_price'] = 0
-            if 'total_value' not in self.portfolio['all'][symbol]:
-                self.portfolio['all'][symbol]['total_value'] = 0
+                self.portfolio['all'][symbol] = {
+                    'position': 0,
+                    'average_price': 0,
+                    'total_value': 0
+                }
+            
+            # Update positions and values
+            position_change = order['quantity'] * order['direction']
+            value_change = order['price'] * order['quantity'] * order['direction']
+            
+            # Update strategy portfolio
+            self.portfolio[signal.strategy_name][symbol]['position'] += position_change
+            self.portfolio[signal.strategy_name][symbol]['total_value'] += value_change
+            
+            # Update overall portfolio
+            self.portfolio['all'][symbol]['position'] += position_change
+            self.portfolio['all'][symbol]['total_value'] += value_change
+            
+            # Update average prices
+            for portfolio_type in [signal.strategy_name, 'all']:
+                if self.portfolio[portfolio_type][symbol]['position'] != 0:
+                    self.portfolio[portfolio_type][symbol]['average_price'] = (
+                        self.portfolio[portfolio_type][symbol]['total_value'] /
+                        self.portfolio[portfolio_type][symbol]['position']
+                    )
+        
+        # Clean up zero positions
+        for strategy in list(self.portfolio.keys()):
+            for symbol in list(self.portfolio[strategy].keys()):
+                if self.portfolio[strategy][symbol]['position'] == 0:
+                    del self.portfolio[strategy][symbol]
 
-            # Now Update the order to the Portfolio
-            if response_order['orderType'].lower() == 'market':
-                self.portfolio[strategy_name][symbol]['position'] += orderQuantity * orderDirection_multiplier
-                self.portfolio[strategy_name][symbol]['total_value'] += (price * orderQuantity) * orderDirection_multiplier
-                self.portfolio[strategy_name][symbol]['average_price'] = (self.portfolio[strategy_name][symbol]['total_value'] / self.portfolio[strategy_name][symbol]['position']) if self.portfolio[strategy_name][symbol]['position'] > 0 else 0
-                self.portfolio['all'][symbol]['position'] += orderQuantity * orderDirection_multiplier
-                self.portfolio['all'][symbol]['total_value'] += (price * orderQuantity) * orderDirection_multiplier
-                self.portfolio['all'][symbol]['average_price'] = (self.portfolio['all'][symbol]['total_value'] / self.portfolio['all'][symbol]['position']) if self.portfolio['all'][symbol]['position'] > 0 else 0
-            elif response_order['orderType'].lower() in ['stoploss_pct', 'stoploss_abs', 'market_exit']:
-                self.portfolio[strategy_name][symbol]['position'] += orderQuantity * orderDirection_multiplier
-                self.portfolio[strategy_name][symbol]['total_value'] += (price * orderQuantity) * orderDirection_multiplier
-                self.portfolio[strategy_name][symbol]['average_price'] = (self.portfolio[strategy_name][symbol]['total_value'] / self.portfolio[strategy_name][symbol]['position']) if self.portfolio[strategy_name][symbol]['position'] > 0 else 0
-                self.portfolio['all'][symbol]['position'] += orderQuantity * orderDirection_multiplier
-                self.portfolio['all'][symbol]['total_value'] += (price * orderQuantity) * orderDirection_multiplier
-                self.portfolio['all'][symbol]['average_price'] = (self.portfolio['all'][symbol]['total_value'] / self.portfolio['all'][symbol]['position']) if self.portfolio['all'][symbol]['position'] > 0 else 0
-            else:
-                raise AssertionError('OrderType not supported: {}'.format(response_order['orderType']))
-            # self.logger.debug({'self.portfolio':self.portfolio})
+    def update_margin_on_fill(self, order: Order, signal: Signal):
+        """Update margin immediately when an order is filled"""
+        if order.filled_price is None:
+            self.logger.error(f"Cannot update margin: Order {order.symbol} marked as closed but has no fill price")
+            return
         
-        # Remove all symbols with 0 position
-        portfolio_copy = deepcopy(self.portfolio)
-        for strategy_name in portfolio_copy:
-            for symbol in portfolio_copy[strategy_name]:
-                if portfolio_copy[strategy_name][symbol]['position'] == 0:
-                    del self.portfolio[strategy_name][symbol]
-    
-    def update_available_margin(self, response_order, multi_leg_order, system_timestamp):
-        '''Update the available margin after executing the order.'''
-        if response_order['status'] == 'closed':
-            # self.logger.debug({f'system_timestamp':system_timestamp, 'response_order':response_order})
-            strategy_name = response_order['strategy_name'] if  response_order['strategy_name'] != 'Unknown' else self.config_dict['strategies'][0].split('.')[-1]
-            symbol = response_order['symbol']
-            orderDirection = response_order['orderDirection']
-            orderDirection_multiplier = 1 if orderDirection == 'BUY' else -1
-            orderQuantity = response_order['orderQuantity']
-            try:
-                fill_price = response_order['fill_price']
-            except Exception as e:
-                self.logger.debug({'response_order':response_order})
-                raise Exception(e)
-            broker = response_order['broker'].lower()
-            margin_used_by_order = round((fill_price * orderQuantity), 10)
-            # self.logger.debug({f"Symbol: {symbol} | Margin Used: {margin_used_by_order}, Fill Price: {fill_price}, Order Quantity: {orderQuantity}, Order Type: {response_order['orderType']}"})
-            base_account_number = list(self.config_dict['account_info'][broker].keys())[0]
-            trading_currency = self.config_dict['trading_currency']
-            # self.logger.debug({'broker':broker, 'base_account_number':base_account_number, 'strategy_name':strategy_name, 'trading_currency':trading_currency})
-            # self.logger.debug({f"Symbol: {symbol} | Margin Used: {margin_used_by_order}, Order Type: {response_order['orderType']}"})
-            # msg = f"BEFORE: Symbol: {symbol} | Total Margin: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']} | Margin Used: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']} | Margin Available: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']}"
-            prev_margin_available = deepcopy(self.margin_available)
-            profit = 0
+        broker = 'sim' if self.config_dict['run_mode'] == 3 else 'ibkr'
+        base_account_number = self.config_dict['base_account_numbers'][broker]
+        trading_currency = self.config_dict['trading_currency']
+        strategy_name = signal.strategy_name
+
+        # Get current position
+        current_position = 0
+        if strategy_name in self.portfolio and order.symbol in self.portfolio[strategy_name]:
+            current_position = self.portfolio[strategy_name][order.symbol]['position']
+
+        # Calculate base margin amount
+        margin_used = order.filled_price * order.orderQuantity
+        transaction_costs = margin_used * (self.brokerage_fee + self.slippage)
+        total_margin = margin_used + transaction_costs
+
+        # Calculate position after this order
+        order_size = order.orderQuantity if order.orderDirection == 'BUY' else -order.orderQuantity
+        new_position = current_position + order_size
+
+        # Determine if this is a position opening/increasing or closing/reducing order
+        is_opening_order = False
+        if order.orderDirection == 'BUY':
+            # BUY orders:
+            # - If current position >= 0: Opening/increasing long (use margin)
+            # - If current position < 0: Closing/reducing short (free margin)
+            is_opening_order = current_position >= 0
+        else:  # SELL order
+            # SELL orders:
+            # - If current position <= 0: Opening/increasing short (use margin)
+            # - If current position > 0: Closing/reducing long (free margin)
+            is_opening_order = current_position <= 0
+
+        # For opening orders we use margin (positive), for closing orders we free margin (negative)
+        margin_multiplier = 1 if is_opening_order else -1
+        
+        # Update strategy margin
+        self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] += (total_margin * margin_multiplier)
+        self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] -= (total_margin * margin_multiplier)
+
+        # Update combined margin
+        self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] += (total_margin * margin_multiplier)
+        self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] -= (total_margin * margin_multiplier)
+        
+        # # Enhanced logging with position and margin details
+        # self.logger.info(f"""
+        #                     Margin Update for {order.symbol}:
+        #                     Order Details:
+        #                     - Direction: {order.orderDirection}
+        #                     - Quantity: {order.orderQuantity}
+        #                     - Fill Price: ${order.filled_price:.2f}
+
+        #                     Position Status:
+        #                     - Current Position: {current_position} ({'Long' if current_position > 0 else 'Short' if current_position < 0 else 'Flat'})
+        #                     - New Position: {new_position} ({'Long' if new_position > 0 else 'Short' if new_position < 0 else 'Flat'})
+        #                     - Order Type: {'Opening/Increasing' if is_opening_order else 'Closing/Reducing'}
+
+        #                     Margin Calculation:
+        #                     - Base Margin: ${margin_used:.2f}
+        #                     - Transaction Costs: ${transaction_costs:.2f}
+        #                     - Margin Impact: ${total_margin * margin_multiplier:.2f} ({'Using' if margin_multiplier > 0 else 'Freeing'} margin)
+
+        #                     Current Margin Status:
+        #                     - Strategy {strategy_name} Margin Used: ${self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used']:.2f}
+        #                     - Overall Account Margin Used: ${self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']:.2f}
+        #                     """)
+
+    def execute_signals(self, new_signals: List[Signal], system_timestamp: datetime, market_data_df: pd.DataFrame, live_bool: bool):
+        """Process and execute trading signals"""
+        # Add new signals to open signals
+        if new_signals:
+            # self.logger.info("\n=== OMS Executing Signals ===")
+            self.open_signals.extend(new_signals)
+        
+        # Process all open signals
+        updated_signals = []
+        closed_signals = []
             
-            # self.logger.debug(msg)
-            if response_order['orderType'].lower() == 'market':
-                self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] -= abs(margin_used_by_order)
-                self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] -= abs(margin_used_by_order)
-                self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] += abs(margin_used_by_order)
-                self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] += abs(margin_used_by_order)
-                profit = 0
+        for signal in self.open_signals:
+            active_orders = []
+            positions_by_symbol = {}  # Track positions from closed orders
+            # self.logger.info(f"\nProcessing Signal {signal.signal_id} - {signal.strategy_name}")
+
+            all_orders = signal.orders
+            
+            for order in all_orders:
+                # self.logger.info({'order':order})
+                symbol = order.symbol
+                status = order.status
                 
-            elif response_order['orderType'].lower() in ['stoploss_pct', 'stoploss_abs', 'market_exit']:
-                order_open = self.check_if_all_legs_of_the_order_are_closed(multi_leg_order)
-                if not order_open:
-                    profit, profit_pct = self.reporter.calculate_multi_leg_order_pnl(multi_leg_order, self.unfilled_orders, force_close=False)
-                    # self.logger.info(f"Order Closed | Symbol: {symbol} | Profit: {round(profit, 2)} | Order Quantiy: {orderQuantity}")
-                # self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
-                # self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += abs(margin_used_by_order)
-                # self.logger.info({'broker':broker, 'base_account_number':base_account_number, 'strategy_name':strategy_name, 'trading_currency':trading_currency})
-                margin_used_by_entry_order = round((margin_used_by_order - (profit * (orderDirection_multiplier * -1))), 10)
-                self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] -= margin_used_by_entry_order
-                self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] -= margin_used_by_entry_order
-                self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] += margin_used_by_entry_order + profit
-                self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] += margin_used_by_entry_order + profit
-                # self.logger.debug({f"Symbol: {symbol} | Margin Used by Order: {margin_used_by_order}, Profit: {profit}, Order Type: {response_order['orderType']}"})
-                    
-            else:
-                profit = 0
-                raise AssertionError('OrderType not supported: {}'.format(response_order['orderType']))
-            
-            self.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power'] = self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] + self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']
-            self.margin_available[broker][base_account_number][strategy_name][trading_currency]['total_buying_power'] = self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] + self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used']
-            self.margin_available[broker][base_account_number]['combined'][trading_currency]['pct_of_margin_used'] = self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] / self.margin_available[broker][base_account_number][strategy_name][trading_currency]['total_buying_power']
-            self.margin_available[broker][base_account_number][strategy_name][trading_currency]['pct_of_margin_used'] = self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] / self.margin_available[broker][base_account_number][strategy_name][trading_currency]['total_buying_power']
-            self.margin_available[broker][base_account_number]['combined'][trading_currency]['cushion'] = 1 - self.margin_available[broker][base_account_number]['combined'][trading_currency]['pct_of_margin_used']
-            self.margin_available[broker][base_account_number][strategy_name][trading_currency]['cushion'] = 1 - self.margin_available[broker][base_account_number][strategy_name][trading_currency]['pct_of_margin_used']
-            self.margin_available[broker][base_account_number]['combined'][trading_currency]['pledge_to_margin_used'] = round(self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] / self.margin_available[broker][base_account_number]['combined'][trading_currency]['margin_multiplier'], 4)
-            self.margin_available[broker][base_account_number][strategy_name][trading_currency]['pledge_to_margin_used'] = round(self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] / self.margin_available[broker][base_account_number][strategy_name][trading_currency]['margin_multiplier'], 4)
-            self.margin_available[broker][base_account_number]['combined'][trading_currency]['pledge_to_margin_availble'] = round(self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] / self.margin_available[broker][base_account_number]['combined'][trading_currency]['margin_multiplier'], 4)
-            self.margin_available[broker][base_account_number][strategy_name][trading_currency]['pledge_to_margin_availble'] = round(self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] / self.margin_available[broker][base_account_number][strategy_name][trading_currency]['margin_multiplier'], 4)
-            # msg = f"AFTER: Broker: {broker} | Symbol: {symbol} | Total Margin: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']} | Margin Used: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']} | Margin Available: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']}"
-            # self.logger.debug(msg)
-            # if profit:
-                # msg = f"Margin MATH: Margin Used Diff: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] - prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']} | Margin Available Diff: {self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] - prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']} | Margin Used + Profit + Profit: {abs(margin_used_by_order) + profit + profit}"
-                # self.logger.debug(msg)
-            
-            # self.logger.debug(f"Margin Available - AFTER: {self.margin_available} | Symbol: {symbol} | Order Direction: {orderDirection} | Order Type: {response_order['orderType']} | Order Quantity: {orderQuantity} | Fill Price: {fill_price} | Margin Used: {margin_used_by_order}")
-            
-            # MARGIN CALCULATION MATH:
-            opening_buying_power_available = prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']
-            opening_buying_power_used = prev_margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']
-            closing_buying_power_available = self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available']
-            closing_buying_power_used = self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']
-            change_in_buying_power_available = closing_buying_power_available-opening_buying_power_available
-            change_in_buying_power_used = closing_buying_power_used-opening_buying_power_used
-            margin_math = (change_in_buying_power_available - profit) + change_in_buying_power_used
-            # if margin_math != 0:
-            # self.logger.debug(f"Margin Math: {margin_math} | Profit: {profit} | Opening Buying Power Available: {opening_buying_power_available} | Opening Buying Power Used: {opening_buying_power_used} | Closing Buying Power Available: {closing_buying_power_available} | Closing Buying Power Used: {closing_buying_power_used} | Change in Buying Power Available: {change_in_buying_power_available} | Change in Buying Power Used: {change_in_buying_power_used}")
-            
-            return profit
-    
-    def update_order_history(self, order, response_order):
-        # remove 'fresh_update' from order
-        del response_order['fresh_update']
-        updated_order = response_order.copy()
-        
-        # remove 'history' from order and response_order
-        order_history = order['history'] if 'history' in order else []
-        if 'history' in updated_order:
-            del order['history']
-        order_history.append(order)
-        updated_order['history'] = order_history
-        
-        return updated_order
-        
-    def process_open_orders(self, open_orders, closed_orders, system_timestamp, market_data_df, live_bool):
-        """Execute a list of multi-leg orders."""
-        
-        for level_1_count, multi_leg_order in enumerate(open_orders):
-            for level_2_count, order in enumerate(multi_leg_order):
-                updated_order = None
-                response_order = None
-                order_status = order['status']
-                
-                # Update symbol_ltp to the order
-                if order_status not in ['closed', 'cancelled']:
-                    if 'symbol_ltp' not in order:
-                        order['symbol_ltp'] = {}
+                if status not in ['closed', 'cancelled']:
+                    # Update market data
                     min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
-                    close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, order['symbol'], 'close')
-                    if type(close_prices) != type(None):
+                    close_prices = self.market_data_extractor.get_market_data_df_symbol_prices(
+                        market_data_df, min_granularity, symbol, 'close'
+                    )
+                    if close_prices is not None and not close_prices.empty:
                         close_prices.dropna(inplace=True)
-                        close_prices = close_prices.tolist()
-
-                        # Drop nan values
                         if len(close_prices) > 0:
-                            order['symbol_ltp'][str(system_timestamp)] = close_prices[-1]
-                
-                if order_status not in ['closed', 'cancelled']: # Basically if status is 'open' or 'pending'
-                    # First check if Stoploss needs to be udpated.
-                    order = self.update_trailing_stop_losses(order, market_data_df)
+                            last_price = close_prices.iloc[-1]
+                            if hasattr(order, 'symbol_ltp'):
+                                order.symbol_ltp[system_timestamp] = last_price
+                            else:
+                                setattr(order, 'symbol_ltp', {str(system_timestamp): last_price})
+                            # self.logger.info(f"Updated price: ${last_price:.2f}")
+
+                    # Execute through broker
+                    prev_status = getattr(order, 'status', None)
+                    broker = 'sim' if self.config_dict['run_mode'] == 3 or not live_bool else 'ibkr'
                     
-                    # Make the order broker SIM if run_mode is Backtest or if live_bool is False
-                    if self.config_dict['run_mode'] == 3 or not live_bool:
-                        order['broker'] = 'SIM'
+                    # 1. Execute order through broker
+                    if broker == 'ibkr':
+                        self.logger.info(f"Sending to IBKR broker...")
+                        response = self.brokers.ib.execute.execute_order(
+                            order,
+                            all_orders,
+                            market_data_df,
+                            system_timestamp
+                        )
+                    else:
+                        # self.logger.info(f"Sending to SIM broker...")
+                        response = self.brokers.sim.execute.execute_order(
+                            order,
+                            market_data_df,
+                            system_timestamp
+                        )
+                    
+                    # Process broker response
+                    # self.logger.info({'type':type(response), 'response':response})
+                    if response:
+                        # Update order with response data
+                        old_order = deepcopy(order)
+                        order = deepcopy(response)
+                        order.history.append(old_order)
                         
-                    if order['broker'] == 'IBKR':
-                        # self.logger.debug(f'Order being sent to IBKR: Symbol: {order["symbol"]} | orderType: {order["orderType"]} | Order Direction: {order["orderDirection"]} | orderQuantity: {order["orderQuantity"]} |  Status: {order["status"]}')
-                        response_order = self.brokers.ib.execute.execute_order(order, multi_leg_order, market_data_df=market_data_df, system_timestamp=system_timestamp)
+                        # Get new status after update
+                        new_status = order.status
+                        
+                        # 2. Update history - Log status change
+                        if prev_status != new_status:
+                            self.logger.info(f"""
+                                                ORDER STATUS CHANGE:
+                                                - Signal ID: {signal.signal_id}
+                                                - Strategy: {signal.strategy_name}
+                                                - Symbol: {order.symbol}
+                                                - Direction: {order.orderDirection}
+                                                - Quantity: {order.orderQuantity}
+                                                - Status Change: {prev_status} -> {new_status}
+                                                - Fill Price: ${getattr(response, 'fill_price', 'N/A')}
+                                                """)
+                        
+                        # 3. Handle closed status updates
+                        if new_status == 'closed' and prev_status != 'closed':
+                            # Calculate PnL when closing any position (long or short)
+                            current_position = 0
+                            if order.symbol in self.portfolio.get(signal.strategy_name, {}):
+                                current_position = self.portfolio[signal.strategy_name][order.symbol]['position']
+                                # Check if this order is closing a position
+                                is_closing_position = (current_position > 0 and order.orderDirection == 'SELL') or \
+                                                    (current_position < 0 and order.orderDirection == 'BUY')
+                                if is_closing_position:
+                                    avg_price = self.portfolio[signal.strategy_name][order.symbol]['average_price']
+                                    # For shorts, reverse the PnL calculation
+                                    position_multiplier = 1 if current_position > 0 else -1
+                                    pnl = position_multiplier * (response.fill_price - avg_price)
+                                    # Calculate PnL based on actual closing quantity
+                                    closing_quantity = min(order.orderQuantity, abs(current_position))
+                                    pnl = position_multiplier * (response.fill_price - avg_price) * closing_quantity
+                                    self.logger.info(f"Final PnL: ${pnl:.2f} ({'PROFIT' if pnl > 0 else 'LOSS' if pnl < 0 else 'BREAKEVEN'})")
+                                    self.margin_available = self.margin_manager.update_margin(self.margin_available, order, response.fill_price, signal.strategy_name, pnl)
+                            
+                            # Update margin and position tracking
+                            self.update_margin_on_fill(order, signal)
+                            
+                            # Calculate position change
+                            direction = 1 if order.orderDirection == 'BUY' else -1
+                            quantity = order.orderQuantity * direction
+                            
+                            # Remove from unfilled orders if it was there
+
+                            positions_by_symbol[order.symbol] = positions_by_symbol.get(order.symbol, 0) + quantity
+                            
+                            position_type = "LONG" if positions_by_symbol[order.symbol] > 0 else \
+                                          "SHORT" if positions_by_symbol[order.symbol] < 0 else "FLAT"
+                        
+                        # 4. Track active orders
+                        if new_status != 'closed':
+                            active_orders.append(order)
+
+            # Update signal status
+            all_positions_closed = all(position == 0 for position in positions_by_symbol.values())
+
+            if not active_orders and all_positions_closed:
+                if all(order.status == 'closed' for order in signal.orders):
+                    # Update signal status and portfolio
+                    signal.status = 'closed'
+                    self.update_portfolio(signal)
+
+                    # Prepare margin info for final report
+                    broker = 'sim' if self.config_dict['run_mode'] == 3 else 'ibkr'
+                    base_account_number = self.config_dict['base_account_numbers'][broker]
+                    trading_currency = self.config_dict['trading_currency']
+                    margin_info = self.margin_available[broker][base_account_number]
                     
-                    elif order['broker'] == 'SIM':
-                        response_order = self.brokers.sim.execute.execute_order(order, market_data_df=market_data_df, system_timestamp=system_timestamp)
-                    else:
-                        raise Exception(f"Broker {order['broker']} not supported.")
+                    # Generate position summary
+                    positions_str = "\n".join([f"  - {symbol}: {pos} (FLAT)" for symbol, pos in positions_by_symbol.items()])
                     
+                    # Log final signal status
+                    self.logger.info(f"""
+                                    Signal {signal.signal_id} closed:
+                                    - All orders complete
+                                    - All positions flat
+                                    - Strategy: {signal.strategy_name}
+                                    - Order count: {len(signal.orders)}
+
+                                    Strategy Margin ({signal.strategy_name}):
+                                    - Total Buying Power: ${margin_info[signal.strategy_name][trading_currency]['total_buying_power']:.2f}
+                                    - Buying Power Used: ${margin_info[signal.strategy_name][trading_currency]['buying_power_used']:.2f}
+                                    - Buying Power Available: ${margin_info[signal.strategy_name][trading_currency]['buying_power_available']:.2f}
+
+                                    Overall Account Margin:
+                                    - Total Buying Power: ${margin_info['combined'][trading_currency]['total_buying_power']:.2f}
+                                    - Buying Power Used: ${margin_info['combined'][trading_currency]['buying_power_used']:.2f}
+                                    - Buying Power Available: ${margin_info['combined'][trading_currency]['buying_power_available']:.2f} 
+                                    - Margin Used: {(margin_info['combined'][trading_currency]['buying_power_used'] / 
+                                            margin_info['combined'][trading_currency]['total_buying_power'] * 100):.1f}%
+
+                                    Position Summary:
+                                    {positions_str}""")
+                    # Move signal to closed signals list
+                    closed_signals.append(signal)
+                    self.open_signals = [s for s in self.open_signals if s.signal_id != signal.signal_id]
                 else:
-                    order['fresh_update'] = False
-                    response_order = order
-                    
-                '''Update the response order in oms order lists.'''
-                
-                if response_order and ('fresh_update' in response_order) and (response_order['fresh_update'] == True):
-                    # self.logger.debug({'response_order':response_order})
-                    updated_order = self.update_order_history(order, response_order)
-                    # Update the updated order to open orders list
-                    open_orders[level_1_count][level_2_count] = updated_order
-                    multi_leg_order[level_2_count] = updated_order
-                    # self.update_porfolio(updated_order)
-                    profit = self.update_available_margin(response_order, open_orders[level_1_count], system_timestamp)
-                    
-                    # PRINT UPDATE TO LOG
-                    if 'entryPrice' in updated_order:
-                        price = round(updated_order['entryPrice'], 3)
-                    elif 'exitPrice' in updated_order:
-                        price = round(updated_order['exitPrice'], 3)
-                    else:
-                        price = None
-                    fill_price = updated_order['fill_price'] if 'fill_price' in updated_order else 'Not Filled'
-                    orderValue = updated_order['orderQuantity'] * fill_price if isinstance(fill_price, float) else None
-                    if 'fresh_update' in updated_order:
-                        self.logger.info(f"Symbol: {updated_order['symbol']} | Fresh Update: {updated_order['fresh_update']} | Type: {updated_order['orderType']} | Dir: {updated_order['orderDirection']} | Qty: {updated_order['orderQuantity']} | Symbol LTP: {list(updated_order['symbol_ltp'].values())[-5:]}")
-                    msg = f"ORDER UPDATED: Symbol:{updated_order['symbol']} | Type:{updated_order['orderType']} | Dir:{updated_order['orderDirection']} | Qty:{updated_order['orderQuantity']} | Price:{price} | Fill Price:{fill_price} | orderValue: {orderValue} | Status:{updated_order['status']} | Msg:{updated_order['message']}"
-                    if isinstance(profit, float) or isinstance(profit, int):
-                        msg += f" | Profit: {round(profit, 2)}"
-                    else:
-                        msg += f" | Profit: {profit}"
-                    self.logger.info(msg)
-                    if live_bool and self.update_telegram:
-                        self.telegram_bot.send_message(msg)                    
-                    
-                    self.available_granularities = market_data_df.index.get_level_values(0).unique()
-                    # if '1m' in self.available_granularities:
-                    #     self.logger.debug({'Symbol':updated_order['symbol'], 'updated_order_last_prices':list(updated_order['symbol_ltp'].values())[-5:]})
-                    #     self.logger.debug({'Symbol':updated_order['symbol'], 'current_price': self.market_data_extractor.get_market_data_df_symbol_prices(market_data_df, min_granularity, updated_order['symbol'], 'close').iloc[-1]})
-                    #     input('Press Enter to continue...')
-        
-        updated_open_orders, closed_orders = self.remove_closed_orders_from_open_orders_list(open_orders, closed_orders)
-        # self.logger.debug({'updated_open_orders':len(updated_open_orders), 'closed_orders':len(closed_orders)})
-        
-        return updated_open_orders, closed_orders
-    
-    def execute_orders(self, new_orders, system_timestamp, market_data_df, live_bool):
-        """ add the list of new orders to open_orders list """
-        if len(new_orders) > 0:
-            new_orders_bifurcated = {'new_orders':[], 'update_orders':[]}
-            for multi_leg_order_new_order in new_orders:
-                update_order_bool = False
-                for new_order in multi_leg_order_new_order:
-                    # self.logger.debug({'new_order':new_order})
-                    if new_order['status'] == 'cancel_pending':
-                        update_order_bool = True
-                
-                if not update_order_bool:
-                    new_orders_bifurcated['new_orders'].append(multi_leg_order_new_order)
-                else:
-                    new_orders_bifurcated['update_orders'].append(multi_leg_order_new_order)
-                    
-            # self.logger.debug({'len-new_order_bifurcated-new_orders':len(new_orders_bifurcated['new_orders']), 'len-new_order_bifurcated-update_orders':len(new_orders_bifurcated['update_orders'])})
-                    
-            for multi_leg_order in new_orders_bifurcated['new_orders']:
-                self.open_orders.append(multi_leg_order)
-            
-            for multi_leg_update_order in new_orders_bifurcated['update_orders']:
-                # find the open order to update
-                open_order_to_update = None
-                open_order_to_update_count = None
-                for update_order in multi_leg_update_order:
-                    for open_order_count, multi_leg_open_order in enumerate(self.open_orders):
-                        for open_order in multi_leg_open_order:
-                            if not open_order_to_update and 'order_id' in open_order and 'order_id' in update_order and open_order['order_id'] == update_order['order_id']:
-                                open_order['status'] = 'cancelled'
-                                open_order['message'] = 'Order Cancelled due to new order update.'
-                                open_order_to_update = multi_leg_open_order
-                                open_order_to_update_count = open_order_count
-                
-                for update_order in multi_leg_update_order:
-                    status = update_order['status']
-                    if status == 'cancel_pending':
-                        for open_order in open_order_to_update:
-                            if open_order['status'] != 'pending' and open_order['order_id'] == update_order['order_id']:
-                                open_order['status'] = 'cancelled'
-                                open_order['message'] = 'Order Cancelled and replaced by new MARKET ORDER.'
-                    else:
-                        open_order_to_update.append(update_order)
-                
-                self.open_orders[open_order_to_update_count] = open_order_to_update
-                # self.logger.debug('UPDATED ORDER: {}'.format(pprint(self.open_orders[open_order_to_update_count])))
+                    self.logger.warning(f"Signal {signal.signal_id} has flat positions but unclosed orders - keeping open")
+            else:
+                # Update active orders and keep signal open
+                signal.orders = active_orders
+                updated_signals.append(signal)
+                # self.logger.info(f"Signal {signal.signal_id} remains open with {len(active_orders)} active orders")
 
-        # Process all open orders
-        self.open_orders, self.closed_orders = self.process_open_orders(self.open_orders, self.closed_orders, system_timestamp, market_data_df, live_bool)
+        # Update closed signals list
+        self.closed_signals.extend(closed_signals)
 
-        # if len(new_orders) > 0:
-        #     self.logger.debug(f'NOTE NOTE: This is where you save the open orders to a file. len(closed_orders): {len(self.closed_orders)}')
-        #     self.logger.debug('NOTE NOTE: This is where you save the closed orders to a file.')
-        #     self.logger.debug('NOTE NOTE: This is where you save the open portfolio to a file.')
-        # self.save_json('open_orders.json', self.open_orders)
-        # self.update_order_status()
-    
-# Usage example
-if __name__ == '__main__':    
-    # ibkr_trader = IBKR(None)
-    # sim_trader = Sim()
-    # instance1 = ibkr.IBKR(ib)
-    # sim_instance = sim.Execute()
-    # SIM = sim.Sim()
-    
-    
-    # orders = retOrders()  # Example orders to execute
-
-    # instance = OMS(config_dict)
-    # instance.execute_orders(orders)
-    pass
+        return updated_signals, closed_signals
