@@ -224,6 +224,13 @@ class OMS:
         self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
         input("Press Enter to continue...")
 
+    def check_if_signal_closed(self, signal: Signal, closed_signals: List[Signal]):
+        # Close the signal and move it to closed_signals and pop it from open_signals if all orders in the signal are closed
+        if all([order.status == 'closed' for order in signal.orders]):
+            self.logger.info(f"Signal {signal.signal_id} closed. Moving to closed_signals...")
+            closed_signals.append(signal)
+            self.open_signals.remove(signal)
+    
     def execute_signals(self, new_signals: List[Signal], system_timestamp: datetime, market_data_df: pd.DataFrame, live_bool: bool):
         """Process and execute trading signals"""
         # Add new signals to open signals
@@ -328,14 +335,5 @@ class OMS:
                             input("Press Enter to continue...")
                             
                             # 5. Move closed signals to closed_signals list if all orders are closed
-                            # # Check if all orders in the signal are closed
-                            # all_orders_closed = all(ord.status == 'closed' for ord in signal.orders)
-                            # if all_orders_closed:
-                            #     # Calculate final metrics before closing
-                            #     self.signal_close_metrics(signal)
-                            #     # Add to closed signals
-                            #     closed_signals.append(signal)
-                            #     # Send update to telegram if enabled
-                            #     if self.update_telegram:
-                            #         self.telegram_bot.send_signal_close_message(signal)
-                            
+                            if new_status == 'closed':
+                                self.check_if_signal_closed(signal, closed_signals)
