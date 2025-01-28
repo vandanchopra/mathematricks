@@ -1,10 +1,10 @@
 from copy import deepcopy
+import enum
 import pandas as pd
 from datetime import datetime
 from systems.utils import create_logger, MarketDataExtractor
 from brokers.brokers import Brokers
 from systems.performance_reporter import PerformanceReporter
-from systems.order_margin_manager import OrderMarginManager
 from systems.telegram import TelegramBot
 from vault.base_strategy import Signal, Order
 from typing import List, Dict
@@ -26,7 +26,6 @@ class OMS:
         self.update_telegram = self.config_dict['update_telegram']
         self.brokerage_fee = self.config_dict.get('brokerage_fee', 0.0035)
         self.slippage = self.config_dict.get('slippage', 0.001)
-        self.margin_manager = OrderMarginManager(self.config_dict)
     
     def get_open_signals(self):
         """Get currently open signals"""
@@ -83,7 +82,7 @@ class OMS:
                 elif broker == 'ibkr' and self.config_dict['run_mode'] == 3:
                             margin_dict[broker][account_number]['combined'] = self.brokers.sim.execute.create_account_summary(
                         trading_currency, base_currency, base_currency_to_trading_currency_exchange_rate,
-                        self.config_dict['account_info']['sim']['sim_1']
+                        account_number
                     )
                 else:
                     raise AssertionError(f"Broker '{broker}' not supported in run_mode {self.config_dict['run_mode']}")
@@ -112,143 +111,118 @@ class OMS:
 
         return margin_dict
 
-    def update_portfolio(self, signal: Signal):
-        """Update portfolio based on executed signal orders"""
+    def update_portfolio(self, order: Order, signal: Signal):
+        """Update portfolio based on a single executed order"""
+        if order.status != 'closed':
+            return
+        
+        symbol = order.symbol
+        
         # Initialize portfolio structures if needed
         if signal.strategy_name not in self.portfolio:
             self.portfolio[signal.strategy_name] = {}
         if 'all' not in self.portfolio:
             self.portfolio['all'] = {}
-            
-        # Process all orders (both regular and multi-asset)
-        all_orders = []
-        for order in signal.orders:
-            if order.status != 'closed':
-                continue
-            all_orders.append({
-                'symbol': order.symbol,
-                'direction': 1 if order.orderDirection == 'BUY' else -1,
-                'quantity': order.orderQuantity,
-                'price': order.filled_price or 0
-            })
-
-        # Update portfolio for each order
-        for order in all_orders:
-            symbol = order['symbol']
-            
-            # Initialize symbol in strategy portfolio if needed
-            if symbol not in self.portfolio[signal.strategy_name]:
-                self.portfolio[signal.strategy_name][symbol] = {
-                    'position': 0,
-                    'average_price': 0,
-                    'total_value': 0
-                }
-                
-            # Initialize symbol in overall portfolio if needed
-            if symbol not in self.portfolio['all']:
-                self.portfolio['all'][symbol] = {
-                    'position': 0,
-                    'average_price': 0,
-                    'total_value': 0
-                }
-            
-            # Update positions and values
-            position_change = order['quantity'] * order['direction']
-            value_change = order['price'] * order['quantity'] * order['direction']
-            
-            # Update strategy portfolio
-            self.portfolio[signal.strategy_name][symbol]['position'] += position_change
-            self.portfolio[signal.strategy_name][symbol]['total_value'] += value_change
-            
-            # Update overall portfolio
-            self.portfolio['all'][symbol]['position'] += position_change
-            self.portfolio['all'][symbol]['total_value'] += value_change
-            
-            # Update average prices
-            for portfolio_type in [signal.strategy_name, 'all']:
-                if self.portfolio[portfolio_type][symbol]['position'] != 0:
-                    self.portfolio[portfolio_type][symbol]['average_price'] = (
-                        self.portfolio[portfolio_type][symbol]['total_value'] /
-                        self.portfolio[portfolio_type][symbol]['position']
-                    )
         
-        # Clean up zero positions
-        for strategy in list(self.portfolio.keys()):
-            for symbol in list(self.portfolio[strategy].keys()):
-                if self.portfolio[strategy][symbol]['position'] == 0:
-                    del self.portfolio[strategy][symbol]
-
+        # Initialize symbol in strategy portfolio if needed
+        if symbol not in self.portfolio[signal.strategy_name]:
+            self.portfolio[signal.strategy_name][symbol] = {
+                'position': 0,
+                'average_price': 0,
+                'total_value': 0
+            }
+            
+            
+        # Initialize symbol in overall portfolio if needed
+        if symbol not in self.portfolio['all']:
+            self.portfolio['all'][symbol] = {
+                'position': 0,
+                'average_price': 0,
+                'total_value': 0
+            }
+        
+        # Update positions and values
+        position_change = order.orderQuantity if order.orderDirection == 'BUY' else -order.orderQuantity
+        
+        for portfolio_type in [signal.strategy_name, 'all']:
+            current_pos = self.portfolio[portfolio_type][symbol]['position']
+            new_pos = current_pos + position_change
+            self.logger.info({'position_change':position_change, 'current_pos':current_pos, 'new_pos':new_pos})
+            input('Press Enter to continue...')
+            # Update position and recalculate value
+            self.portfolio[portfolio_type][symbol]['position'] = new_pos
+            if new_pos == 0:
+                self.portfolio[portfolio_type][symbol]['average_price'] = 0
+                self.portfolio[portfolio_type][symbol]['total_value'] = 0
+            else:
+                self.portfolio[portfolio_type][symbol]['average_price'] = abs((order.filled_price or 0))
+                self.portfolio[portfolio_type][symbol]['total_value'] = new_pos * self.portfolio[portfolio_type][symbol]['average_price']
+            
+    def calculate_position_pnl(self, order: Order, signal: Signal) -> float:
+        """Calculate PnL for a position"""
+        if order.status != 'closed':
+            return 0
+        
+        symbol = order.symbol
+        order_direction = order.orderDirection
+        exit_position_size = order.orderQuantity
+        exit_position_value = exit_position_size * order.filled_price
+        
+        # Find the entry order for the symbol and calculate the average entry price
+        entry_position = 0
+        entry_position_value = 0
+        for entry_order in signal.orders:
+            if entry_order.symbol == symbol and entry_order.entryOrderBool:
+                entry_position += entry_order.orderQuantity
+                entry_position_value += entry_position * entry_order.filled_price
+                if entry_position == exit_position_size:
+                    break
+            
+        # Calculate PnL
+        pnl = 0
+        if entry_position > 0:
+            pnl = exit_position_value - entry_position_value
+            self.logger.info(f"PnL for {symbol} - Entry Position: {entry_position}, Entry Value: {entry_position_value}, Exit Value: {exit_position_value}, PnL: {pnl}")
+            
+        return pnl
+        
+        
+    
     def update_margin_on_fill(self, order: Order, signal: Signal):
-        """Update margin immediately when an order is filled"""
-        if order.filled_price is None:
-            self.logger.error(f"Cannot update margin: Order {order.symbol} marked as closed but has no fill price")
+        if order.status != 'closed' or not signal.strategy_name:
             return
-        
+            
         broker = 'sim' if self.config_dict['run_mode'] == 3 else 'ibkr'
-        base_account_number = self.config_dict['base_account_numbers'][broker]
-        trading_currency = self.config_dict['trading_currency']
+        account = list(self.config_dict['account_info'][broker].keys())[0]  # Get first account from config
         strategy_name = signal.strategy_name
-
-        # Get current position
-        current_position = 0
-        if strategy_name in self.portfolio and order.symbol in self.portfolio[strategy_name]:
-            current_position = self.portfolio[strategy_name][order.symbol]['position']
-
-        # Calculate base margin amount
-        margin_used = order.filled_price * order.orderQuantity
-        transaction_costs = margin_used * (self.brokerage_fee + self.slippage)
-        total_margin = margin_used + transaction_costs
-
-        # Calculate position after this order
-        order_size = order.orderQuantity if order.orderDirection == 'BUY' else -order.orderQuantity
-        new_position = current_position + order_size
-
-        # Determine if this is a position opening/increasing or closing/reducing order
-        is_opening_order = False
-        if order.orderDirection == 'BUY':
-            # BUY orders:
-            # - If current position >= 0: Opening/increasing long (use margin)
-            # - If current position < 0: Closing/reducing short (free margin)
-            is_opening_order = current_position >= 0
-        else:  # SELL order
-            # SELL orders:
-            # - If current position <= 0: Opening/increasing short (use margin)
-            # - If current position > 0: Closing/reducing long (free margin)
-            is_opening_order = current_position <= 0
-
-        # For opening orders we use margin (positive), for closing orders we free margin (negative)
-        margin_multiplier = 1 if is_opening_order else -1
+        trading_currency = self.config_dict['trading_currency']
         
-        # Update strategy margin
-        self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used'] += (total_margin * margin_multiplier)
-        self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] -= (total_margin * margin_multiplier)
-
-        # Update combined margin
-        self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used'] += (total_margin * margin_multiplier)
-        self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_available'] -= (total_margin * margin_multiplier)
+        # Calculate transaction cost
+        transaction_value = order.orderQuantity * order.filled_price
+        transaction_cost = transaction_value * (self.brokerage_fee + self.slippage)
         
-        # # Enhanced logging with position and margin details
-        # self.logger.info(f"""
-        #                     Margin Update for {order.symbol}:
-        #                     Order Details:
-        #                     - Direction: {order.orderDirection}
-        #                     - Quantity: {order.orderQuantity}
-        #                     - Fill Price: ${order.filled_price:.2f}
+        # Reduce total_buying_power by transaction cost
+        self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power'] -= transaction_cost
+        self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power'] -= transaction_cost
+        
+        # Calculate position value
+        position_value = order.orderQuantity * order.filled_price
+        
+        # If entering position
+        if order.entryOrderBool:
+            # Increase margin used
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] += abs(position_value)
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] += abs(position_value)
+        else:
+            # Exiting position - calculate PnL
+            pnl = self.calculate_position_pnl(order, signal)
+            
+            # Decrease margin used and add PnL * -1
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= (position_value - pnl)
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= (position_value - pnl)
 
-        #                     Position Status:
-        #                     - Current Position: {current_position} ({'Long' if current_position > 0 else 'Short' if current_position < 0 else 'Flat'})
-        #                     - New Position: {new_position} ({'Long' if new_position > 0 else 'Short' if new_position < 0 else 'Flat'})
-        #                     - Order Type: {'Opening/Increasing' if is_opening_order else 'Closing/Reducing'}
-
-        #                     Margin Calculation:
-        #                     - Base Margin: ${margin_used:.2f}
-        #                     - Transaction Costs: ${transaction_costs:.2f}
-        #                     - Margin Impact: ${total_margin * margin_multiplier:.2f} ({'Using' if margin_multiplier > 0 else 'Freeing'} margin)
-
-        #                     Current Margin Status:
-        #                     - Strategy {strategy_name} Margin Used: ${self.margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_used']:.2f}
-        #                     - Overall Account Margin Used: ${self.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']:.2f}
-        #                     """)
+        self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
+        input("Press Enter to continue...")
 
     def execute_signals(self, new_signals: List[Signal], system_timestamp: datetime, market_data_df: pd.DataFrame, live_bool: bool):
         """Process and execute trading signals"""
@@ -258,17 +232,14 @@ class OMS:
             self.open_signals.extend(new_signals)
         
         # Process all open signals
-        updated_signals = []
         closed_signals = []
             
-        for signal in self.open_signals:
+        self.logger.info(f"Processing {len(self.open_signals)} open signals... Signal IDs: {[signal.signal_id for signal in self.open_signals]}")
+        for sig_i, signal in enumerate(self.open_signals):
             active_orders = []
             positions_by_symbol = {}  # Track positions from closed orders
-            # self.logger.info(f"\nProcessing Signal {signal.signal_id} - {signal.strategy_name}")
 
-            all_orders = signal.orders
-            
-            for order in all_orders:
+            for order in signal.orders:
                 # self.logger.info({'order':order})
                 symbol = order.symbol
                 status = order.status
@@ -298,7 +269,6 @@ class OMS:
                         self.logger.info(f"Sending to IBKR broker...")
                         response = self.brokers.ib.execute.execute_order(
                             order,
-                            all_orders,
                             market_data_df,
                             system_timestamp
                         )
@@ -307,123 +277,65 @@ class OMS:
                         response = self.brokers.sim.execute.execute_order(
                             order,
                             market_data_df,
-                            system_timestamp
-                        )
+                            system_timestamp)
                     
                     # Process broker response
                     # self.logger.info({'type':type(response), 'response':response})
                     if response:
-                        # Update order with response data
-                        old_order = deepcopy(order)
-                        order = deepcopy(response)
-                        order.history.append(old_order)
-                        
                         # Get new status after update
-                        new_status = order.status
-                        
+                        new_status = response.status
                         # 2. Update history - Log status change
                         if prev_status != new_status:
+                            # Update the order with response data
+                            order = response
+                            # Update order with response data
+                            old_order = deepcopy(order)
+                            old_order_history = getattr(old_order, 'history', [])
+                            old_order.history = []
+                            order.history = old_order_history + [old_order]
+                            # Preserve the history when updating order
+                            response.history = order.history + [old_order]
+                            
+                            # Update the order in both the current signal and open_signals list
+                            # This ensures the updated status persists across iterations
+                            for i, existing_order in enumerate(signal.orders):
+                                if existing_order.order_id == order.order_id:
+                                    signal.orders[i] = order
+                                    break
+                            
                             self.logger.info(f"""
                                                 ORDER STATUS CHANGE:
                                                 - Signal ID: {signal.signal_id}
                                                 - Strategy: {signal.strategy_name}
+                                                - Order Type: {order.order_type}
                                                 - Symbol: {order.symbol}
                                                 - Direction: {order.orderDirection}
                                                 - Quantity: {order.orderQuantity}
                                                 - Status Change: {prev_status} -> {new_status}
-                                                - Fill Price: ${getattr(response, 'fill_price', 'N/A')}
+                                                - Filled Price: ${getattr(order, 'filled_price', 'N/A')}
+                                                - Order Value: ${order.orderQuantity * order.filled_price if getattr(order, 'filled_price', None) else 'N/A'}
                                                 """)
-                        
-                        # 3. Handle closed status updates
-                        if new_status == 'closed' and prev_status != 'closed':
-                            # Calculate PnL when closing any position (long or short)
-                            current_position = 0
-                            if order.symbol in self.portfolio.get(signal.strategy_name, {}):
-                                current_position = self.portfolio[signal.strategy_name][order.symbol]['position']
-                                # Check if this order is closing a position
-                                is_closing_position = (current_position > 0 and order.orderDirection == 'SELL') or \
-                                                    (current_position < 0 and order.orderDirection == 'BUY')
-                                if is_closing_position:
-                                    avg_price = self.portfolio[signal.strategy_name][order.symbol]['average_price']
-                                    # For shorts, reverse the PnL calculation
-                                    position_multiplier = 1 if current_position > 0 else -1
-                                    pnl = position_multiplier * (response.fill_price - avg_price)
-                                    # Calculate PnL based on actual closing quantity
-                                    closing_quantity = min(order.orderQuantity, abs(current_position))
-                                    pnl = position_multiplier * (response.fill_price - avg_price) * closing_quantity
-                                    self.logger.info(f"Final PnL: ${pnl:.2f} ({'PROFIT' if pnl > 0 else 'LOSS' if pnl < 0 else 'BREAKEVEN'})")
-                                    self.margin_available = self.margin_manager.update_margin(self.margin_available, order, response.fill_price, signal.strategy_name, pnl)
                             
-                            # Update margin and position tracking
+                            
+                            # input("Press Enter to continue...")
+                            # 3. Update portfolio based on executed orders
+                            if new_status == 'closed':
+                                self.update_portfolio(order, signal)
+                            
+                            # 4. Update margin based on new portfolio state
                             self.update_margin_on_fill(order, signal)
+                            self.logger.info({"portfolio":self.portfolio})
+                            input("Press Enter to continue...")
                             
-                            # Calculate position change
-                            direction = 1 if order.orderDirection == 'BUY' else -1
-                            quantity = order.orderQuantity * direction
+                            # 5. Move closed signals to closed_signals list if all orders are closed
+                            # # Check if all orders in the signal are closed
+                            # all_orders_closed = all(ord.status == 'closed' for ord in signal.orders)
+                            # if all_orders_closed:
+                            #     # Calculate final metrics before closing
+                            #     self.signal_close_metrics(signal)
+                            #     # Add to closed signals
+                            #     closed_signals.append(signal)
+                            #     # Send update to telegram if enabled
+                            #     if self.update_telegram:
+                            #         self.telegram_bot.send_signal_close_message(signal)
                             
-                            # Remove from unfilled orders if it was there
-
-                            positions_by_symbol[order.symbol] = positions_by_symbol.get(order.symbol, 0) + quantity
-                            
-                            position_type = "LONG" if positions_by_symbol[order.symbol] > 0 else \
-                                          "SHORT" if positions_by_symbol[order.symbol] < 0 else "FLAT"
-                        
-                        # 4. Track active orders
-                        if new_status != 'closed':
-                            active_orders.append(order)
-
-            # Update signal status
-            all_positions_closed = all(position == 0 for position in positions_by_symbol.values())
-
-            if not active_orders and all_positions_closed:
-                if all(order.status == 'closed' for order in signal.orders):
-                    # Update signal status and portfolio
-                    signal.status = 'closed'
-                    self.update_portfolio(signal)
-
-                    # Prepare margin info for final report
-                    broker = 'sim' if self.config_dict['run_mode'] == 3 else 'ibkr'
-                    base_account_number = self.config_dict['base_account_numbers'][broker]
-                    trading_currency = self.config_dict['trading_currency']
-                    margin_info = self.margin_available[broker][base_account_number]
-                    
-                    # Generate position summary
-                    positions_str = "\n".join([f"  - {symbol}: {pos} (FLAT)" for symbol, pos in positions_by_symbol.items()])
-                    
-                    # Log final signal status
-                    self.logger.info(f"""
-                                    Signal {signal.signal_id} closed:
-                                    - All orders complete
-                                    - All positions flat
-                                    - Strategy: {signal.strategy_name}
-                                    - Order count: {len(signal.orders)}
-
-                                    Strategy Margin ({signal.strategy_name}):
-                                    - Total Buying Power: ${margin_info[signal.strategy_name][trading_currency]['total_buying_power']:.2f}
-                                    - Buying Power Used: ${margin_info[signal.strategy_name][trading_currency]['buying_power_used']:.2f}
-                                    - Buying Power Available: ${margin_info[signal.strategy_name][trading_currency]['buying_power_available']:.2f}
-
-                                    Overall Account Margin:
-                                    - Total Buying Power: ${margin_info['combined'][trading_currency]['total_buying_power']:.2f}
-                                    - Buying Power Used: ${margin_info['combined'][trading_currency]['buying_power_used']:.2f}
-                                    - Buying Power Available: ${margin_info['combined'][trading_currency]['buying_power_available']:.2f} 
-                                    - Margin Used: {(margin_info['combined'][trading_currency]['buying_power_used'] / 
-                                            margin_info['combined'][trading_currency]['total_buying_power'] * 100):.1f}%
-
-                                    Position Summary:
-                                    {positions_str}""")
-                    # Move signal to closed signals list
-                    closed_signals.append(signal)
-                    self.open_signals = [s for s in self.open_signals if s.signal_id != signal.signal_id]
-                else:
-                    self.logger.warning(f"Signal {signal.signal_id} has flat positions but unclosed orders - keeping open")
-            else:
-                # Update active orders and keep signal open
-                signal.orders = active_orders
-                updated_signals.append(signal)
-                # self.logger.info(f"Signal {signal.signal_id} remains open with {len(active_orders)} active orders")
-
-        # Update closed signals list
-        self.closed_signals.extend(closed_signals)
-
-        return updated_signals, closed_signals

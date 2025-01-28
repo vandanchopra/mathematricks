@@ -24,7 +24,8 @@ class Mathematricks:
         self.market_data_extractor = MarketDataExtractor()
         self.config_dict = config_dict
         self.sleep_time = self.config_dict['sleep_time']
-        self.current_market_data_df = pd.DataFrame()
+        # Initialize with empty DataFrame but with correct structure
+        self.current_market_data_df = pd.DataFrame(columns=pd.MultiIndex.from_product([[], []], names=['interval', 'datetime']))
         self.oms = OMS(self.config_dict)
         # Update the config_dict with the latest values from Vault
         self.config_dict = self.oms.config_dict
@@ -247,14 +248,24 @@ class Mathematricks:
                     if next_rows is not None:
                         msg = "------------------------ New Timestamp "
                         print(msg + '-'*(os.get_terminal_size().columns - len(msg)))
-                        self.current_market_data_df = pd.concat([self.current_market_data_df, next_rows], axis=0)
-                        self.current_market_data_df = self.current_market_data_df[~self.current_market_data_df.index.duplicated(keep='last')]
+                        
+                        # Trim existing data before concatenation
+                        if not self.current_market_data_df.empty:
+                            self.current_market_data_df = self.datafeeder.trim_current_market_data_df(self.current_market_data_df)
+                        
+                        # Efficient concatenation
+                        if not next_rows.empty:
+                            if self.current_market_data_df.empty:
+                                self.current_market_data_df = next_rows
+                            else:
+                                self.current_market_data_df = pd.concat([self.current_market_data_df, next_rows], copy=False)
                         
                         if next_rows.index.get_level_values(1)[-1] > self.system_timestamp: #isinstance(self.system_timestamp, type(None)) or 
                             self.system_timestamp = next_rows.index.get_level_values(1)[-1]
                             
                             '''PRINT 1: Print Details of the next Timestamp'''
                             for interval, next_datetime in next_rows.index:
+                                time_start = time.time()
                                 next_datetime_EST = next_datetime.astimezone(pytz.timezone('US/Eastern'))
                                 system_timestamp_EST = self.system_timestamp.astimezone(pytz.timezone('US/Eastern'))
                                 self.logger.info(f"Interval: {interval}, Latest Data Datetime: {next_datetime_EST}, System Datetime: {system_timestamp_EST}, Live Bool: {self.live_bool}, Data Source: {next_rows.loc[interval].iloc[-1][('data_source', '')]}")
@@ -268,29 +279,38 @@ class Mathematricks:
                             trading_currency = self.config_dict['trading_currency']
                             
                             # Generate Signals with margin information
-                            new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp)
+                            time_start = time.time()
+                            new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp, self.oms.open_signals)
                             self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
                             
                             # Check if we're going live
+                            time_start = time.time()
                             prev_live_bool = self.live_bool
                             if prev_live_bool == False:
                                 self.live_bool = self.are_we_live(run_mode, self.system_timestamp, start_date)
                             
                             # Convert signals to orders
+                            time_start = time.time()
                             new_signals = self.rms.run_rms(new_signals, self.oms.margin_available, self.oms.open_signals, self.system_timestamp, self.live_bool)
                             
                             # If the system is going live, sync the orders with the broker # Get a list of orders that'll be sent to the LIVE broker, based on current open orders
                             if prev_live_bool == False and self.live_bool == True:
+                                time_start = time.time()
                                 new_signals = self.sync_orders_on_live(new_signals, self.current_market_data_df, self.system_timestamp)
                                 
                             # Execute orders on the market with the OMS
+                            time_start = time.time()
                             self.oms.execute_signals(new_signals, self.system_timestamp, self.current_market_data_df, live_bool=self.live_bool)
                             
                             # Print update messages to console
                             self.print_update_to_console(next_rows)
                             
-                            # # Trim the current_market_data_df to only keep 1.5x of the lookback_dict
-                            self.current_market_data_df = self.datafeeder.trim_current_market_data_df(self.current_market_data_df)
+                            # Only trim if we've accumulated significant data
+                            total_rows = sum(len(self.current_market_data_df.loc[interval]) 
+                                           for interval in self.current_market_data_df.index.get_level_values(0).unique())
+                            
+                            if total_rows > 1000:  # Arbitrary threshold, adjust based on your needs
+                                self.current_market_data_df = self.datafeeder.trim_current_market_data_df(self.current_market_data_df)
                             
                         else:
                             self.logger.info('No new data available. Next Rows: {}'.format(next_rows))
@@ -301,15 +321,13 @@ class Mathematricks:
                         # self.logger.info(pprint(self.config_dict))
                         self.logger.info(pprint(self.oms.margin_available))
                         
-                        self.reporter.calculate_backtest_performance_metrics(
+                        self.reporter.generate_report(
                             self.config_dict,
                             self.oms.get_open_signals(),
                             self.oms.closed_signals,
                             self.current_market_data_df,
                             self.oms.get_unfilled_orders()
                         )
-                        
-                        self.reporter.generate_report()
                         
                         if self.config_dict['backtest_inputs']['save_backtest_results']:
                             self.test_folder_path, self.test_name = self.reporter.save_backtest(

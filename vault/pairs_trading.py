@@ -396,15 +396,17 @@ class Strategy(BaseStrategy):
         if self.granularity not in market_data_df.index.levels[0]:
             return None, signals, self.tickers
 
+        
+        # Track active pairs to avoid duplicate trades
+        active_pairs = set()
+        for signal in open_signals:
+            # Get the strategy_order_id from signal inputs
+            open_pair = set([order.symbol for order in signal.orders])
+            active_pairs.update(open_pair)
+        
         # Validate and update pairs
         self.validated_pairs = []
         
-        # Track symbols in open signals to avoid duplicate trades
-        active_symbols = set()
-        for signal in open_signals:
-            for order in signal.orders:
-                active_symbols.add(order.symbol)
-                
         for pair in self.potential_pairs:
             spread, hedge_ratio = self.calculate_spread(market_data_df, pair, system_timestamp)
             if spread is not None and hedge_ratio is not None:
@@ -414,8 +416,11 @@ class Strategy(BaseStrategy):
         for (pair, hedge_ratio) in self.validated_pairs:
             stock1, stock2 = pair
             
-            # Skip if either stock is already in an open signal
-            if stock1 in active_symbols or stock2 in active_symbols:
+            # Skip pairs with active positions            
+            # self.logger.info({'pair': pair, 'active_pairs': active_pairs})
+            # check if the two symbols in the pair are in any of the active pairs
+            if any(symbol in active_pairs for symbol in pair):
+                self.logger.info(f"Skipping pair {pair} due to active positions")
                 continue
                 
             spread, _ = self.calculate_spread(market_data_df, pair, system_timestamp)
@@ -484,6 +489,7 @@ class Strategy(BaseStrategy):
                             orderQuantity=abs(size),
                             orderDirection="BUY" if (is_long == is_first_leg) else "SELL",
                             order_type=self.orderType,
+                            entryOrderBool=True,
                             symbol_ltp={system_timestamp: price},
                             status="pending",
                             timeInForce=self.timeInForce
@@ -499,6 +505,7 @@ class Strategy(BaseStrategy):
                             orderDirection="SELL" if is_buy else "BUY",  # Opposite of main order
                             order_type="STOPLOSS",
                             price=stoploss_price,
+                            entryOrderBool=False,
                             symbol_ltp={system_timestamp: price},
                             status="pending",
                             timeInForce=self.timeInForce
@@ -508,16 +515,17 @@ class Strategy(BaseStrategy):
                     signal.orders = orders
                     signal.strategy_inputs = {'strategy_order_id': strategy_order_id}
                     signals.append(signal)
-                    # self.logger.info(f"""
-                    #                     SIGNAL GENERATED:
-                    #                     - Strategy: {signal.strategy_name}
-                    #                     - Strength: {signal.signal_strength}
-                    #                     - Orders:
-                    #                     - {stock1}: Direction={orders[0].orderDirection}, Qty={orders[0].orderQuantity}, Price=${price1:.2f}, Value=${(orders[0].orderQuantity * price1):.2f}
-                    #                     - {stock2}: Direction={orders[1].orderDirection}, Qty={orders[1].orderQuantity}, Price=${price2:.2f}, Value=${(orders[1].orderQuantity * price2):.2f}
-                    #                     - Z-Score: {current_z:.2f}
-                    #                     - Status: {signal.status}
-                    #                     """)
+                    self.logger.info(f"""
+                                        SIGNAL GENERATED:
+                                        - Strategy: {signal.strategy_name}
+                                        - Strength: {signal.signal_strength}
+                                        - Orders:
+                                        - {stock1}: Direction={orders[0].orderDirection}, Qty={orders[0].orderQuantity}, Price=${price1:.2f}, Value=${(orders[0].orderQuantity * price1):.2f}
+                                        - {stock2}: Direction={orders[1].orderDirection}, Qty={orders[1].orderQuantity}, Price=${price2:.2f}, Value=${(orders[1].orderQuantity * price2):.2f}
+                                        - Z-Score: {current_z:.2f}
+                                        - Status: {signal.status}
+                                        """)
+                    # input("Press Enter to continue...")
                     return_type = 'signals'
 
                 except (ValueError, TypeError) as e:

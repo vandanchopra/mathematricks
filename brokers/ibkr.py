@@ -695,7 +695,7 @@ class IBKR_Execute:
                 
         return open_orders_ibkr, self.unfilled_orders_ibkr
     
-    def place_order(self, order, multi_leg_order, market_data_df):
+    def place_order(self, order, market_data_df):
         # Create a contract for the stock
         system_timestamp = market_data_df.index.get_level_values(1)[-1]
         symbol = order.symbol
@@ -944,7 +944,7 @@ class IBKR_Execute:
 
         return response_order
 
-    def execute_order(self, order, multi_leg_order, market_data_df, system_timestamp):
+    def execute_order(self, order, market_data_df, system_timestamp):
         response_order = order
         # Extract slippage and fees from order if present
         slippage = getattr(order, 'slippage', 0.001)  # Default 0.1%
@@ -952,7 +952,7 @@ class IBKR_Execute:
         
         if order.status == 'pending':
             # Execute the order in the simulator
-            response_order = self.place_order(order, multi_leg_order, market_data_df=market_data_df)
+            response_order = self.place_order(order, market_data_df=market_data_df)
         elif order.status.lower() in ['open', 'submitted', 'pendingsubmit']:
             # Update the order status in the simulator and check if it's filled
             response_order = self.update_order_status(order, system_timestamp) 
@@ -984,7 +984,7 @@ class IBKR_Execute:
                 ExchangeRate = float(item.value)
         
         for key in account_balance_dict_temp:
-            if key in ['NetLiquidation', 'BuyingPower', 'GrossPositionValue', 'Cushion', 'MaintMarginReq', 'AvailableFunds']:
+            if key in ['NetLiquidation', 'BuyingPower', 'GrossPositionValue', 'Cushion']:
                 value = float(account_balance_dict_temp[key]['value'])
                 currency = account_balance_dict_temp[key]['currency']
                 if currency != trading_currency and currency != '':
@@ -997,11 +997,7 @@ class IBKR_Execute:
                     account_balance_dict[trading_currency]['buying_power_used'] = value
                 elif key == 'Cushion':
                     account_balance_dict[trading_currency]['cushion'] = value
-                elif key == 'MaintMarginReq':
-                    account_balance_dict[trading_currency]['pledge_to_margin_used'] = value
-                elif key == 'AvailableFunds':
-                    account_balance_dict[trading_currency]['pledge_to_margin_availble'] = value
-        
+
         account_balance_dict[trading_currency]['margin_multiplier'] = (float(account_balance_dict[trading_currency]['buying_power_available']) + float(account_balance_dict[trading_currency]['buying_power_used'])) / (float(account_balance_dict[trading_currency]['pledge_to_margin_used']) + float(account_balance_dict[trading_currency]['pledge_to_margin_availble']))
         account_balance_dict[trading_currency]['total_buying_power'] = float(account_balance_dict[trading_currency]['buying_power_available']) + float(account_balance_dict[trading_currency]['buying_power_used'])
         account_balance_dict[trading_currency]['pct_of_margin_used'] = float(account_balance_dict[trading_currency]['pledge_to_margin_used']) / float(account_balance_dict[trading_currency]['total_account_value'])

@@ -44,14 +44,15 @@ class Vault:
         
         return config_dict
         
-    def generate_signals(self, next_rows, market_data_df, system_timestamp):
+    def generate_signals(self, next_rows, market_data_df, system_timestamp, open_signals):
         signals_output = {'signals':[], 'ideal_portfolios':[]}
         ''' 
         for each strategy in self.strategies, get the signals and ideal portfolio.
         combine the signals and ideal portfolio from all strategies and return the combined signals.
         '''
         for strategy in self.strategies.values():
-            return_type, return_item, list_of_symbols_temp = strategy.generate_signals(next_rows, market_data_df, system_timestamp)
+            strategy_open_signals = [signal for signal in open_signals if signal.strategy_name == strategy.strategy_name]
+            return_type, return_item, list_of_symbols_temp = strategy.generate_signals(next_rows, market_data_df, system_timestamp, open_signals=strategy_open_signals)
             self.tickers_dict[strategy.strategy_name] = list_of_symbols_temp
             if return_type == 'signals':
                 for signal in return_item:

@@ -34,8 +34,7 @@ config_dict = {
                             },
                     'sim':{'sim_1': {base_currency:{'total_account_value': sim_account_starting_value_base, 
                                                     'buying_power_available':sim_account_starting_value_base * sim_account_margin_multiplier, 
-                                                    'buying_power_used':0, 'cushion':0, 'pledge_to_margin_used':0, 
-                                                    'pledge_to_margin_availble':sim_account_starting_value_base
+                                                    'buying_power_used':0, 'cushion':0, 
                                                     }
                                      }
                            }

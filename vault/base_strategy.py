@@ -18,6 +18,7 @@ class Order(BaseModel):
     filled_price: Optional[float] = None
     filled_timestamp: Optional[datetime] = None
     order_id: Optional[str] = None
+    entryOrderBool: Optional[bool] = False
     broker_order_id: Optional[str] = None
     history: List[Dict[str, Any]] = []
     message: Optional[str] = None

@@ -237,35 +237,31 @@ class DataFeeder:
         return False
     
     def trim_current_market_data_df(self, current_market_data_df):
+        # Create an empty DataFrame with the same structure to store trimmed data
+        trimmed_data = pd.DataFrame()
+        
         for interval in current_market_data_df.index.get_level_values(0).unique():
             lookback = self.lookback_dict_original[interval] if interval in self.lookback_dict_original.keys() else 0
-            # self.logger.debug(f'Interval: {interval} | Lookback: {lookback} | Market Data DF Shape: {current_market_data_df.loc[interval].shape[0]}')
-            if current_market_data_df.loc[interval].shape[0] > int(lookback * 2) and lookback > 0:
-                # self.logger.debug(f'Market Data DF BEFORE TRIM: Shape: {current_market_data_df.loc[interval].shape}')
-                # current_market_data_df.loc[pd.IndexSlice[interval, :], :] = current_market_data_df.loc[pd.IndexSlice[interval, :], :].iloc[int(-lookback * 1.25):].dropna()
-                # Extract the slice for '1m'
-                slice_to_process = current_market_data_df.loc[pd.IndexSlice[interval, :], :]
-                # Take the last 120 rows and drop NaNs
-                processed_slice = slice_to_process.iloc[int(-lookback * 1.25):].dropna()
-                # Remove the old slice and reinsert only the cleaned data
-                current_market_data_df = current_market_data_df.drop(index=slice_to_process.index)
-                current_market_data_df = pd.concat([current_market_data_df, processed_slice])
-                # self.logger.debug(f'Market Data DF Trimmed: Shape: {current_market_data_df.loc[interval].shape}')
-                # time.sleep(2)
-            elif current_market_data_df.loc[interval].shape[0] > 120 * 2 and lookback == 0:
-                # self.logger.debug(f'Market Data DF BEFORE TRIM:: Shape: {current_market_data_df.loc[interval].shape}')
-                # current_market_data_df.loc[pd.IndexSlice[interval, :], :] = current_market_data_df.loc[pd.IndexSlice[interval, :], :].iloc[-120:].dropna()
-                # current_market_data_df.loc[pd.IndexSlice[interval, :], :] = current_market_data_df.loc[pd.IndexSlice[interval, :], :].iloc[int(-lookback * 1.25):].dropna()
-                # Extract the slice for '1m'
-                slice_to_process = current_market_data_df.loc[pd.IndexSlice[interval, :], :]
-                # Take the last 120 rows and drop NaNs
-                processed_slice = slice_to_process.iloc[-120:].dropna()
-                # Remove the old slice and reinsert only the cleaned data
-                current_market_data_df = current_market_data_df.drop(index=slice_to_process.index)
-                current_market_data_df = pd.concat([current_market_data_df, processed_slice])
-                # self.logger.debug(f'Market Data DF Trimmed: Shape: {current_market_data_df.loc[interval].shape}')
-                # time.sleep(2)
-        return current_market_data_df            
+            
+            interval_data = current_market_data_df.loc[pd.IndexSlice[interval, :], :]
+            keep_rows = 0
+            
+            if lookback > 0 and interval_data.shape[0] > int(lookback * 2):
+                keep_rows = int(lookback * 1.25)
+            elif lookback == 0 and interval_data.shape[0] > 120 * 2:
+                keep_rows = 120
+                
+            if keep_rows > 0:
+                # Keep only the most recent data
+                interval_data = interval_data.iloc[-keep_rows:].copy()
+                
+            # Append to trimmed data
+            if trimmed_data.empty:
+                trimmed_data = interval_data
+            else:
+                trimmed_data = pd.concat([trimmed_data, interval_data])
+                
+        return trimmed_data
     
     def next(self, system_timestamp, run_mode, start_date, end_date, sleep_time=0, live_bool=False):
         throttle_secs = 1 if run_mode in [1,2] else 60

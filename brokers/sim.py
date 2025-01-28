@@ -50,8 +50,7 @@ class SIM_Execute():
         elif order.order_type == 'STOPLOSS':
             response_order = deepcopy(order)
             response_order.status = 'open'
-            response_order.order_id = generate_hash_id(order.dict(), system_timestamp)
-            response_order.broker_order_id = response_order.order_id
+            response_order.broker_order_id = generate_hash_id(order.dict(), system_timestamp)
             setattr(response_order, 'message', 'Stop-loss order placed.')
             setattr(response_order, 'fresh_update', True)
             
@@ -82,7 +81,7 @@ class SIM_Execute():
         low_prices.dropna(inplace=True)
         low_prices = low_prices.tolist()
         current_low_price = low_prices[-1]
-        
+                
         if order.order_type == 'STOPLOSS':
             if order.orderDirection == 'BUY' and current_high_price >= order.price or order.orderDirection == 'SELL' and current_low_price <= order.price:
                 response_order = deepcopy(order)
@@ -148,9 +147,8 @@ class SIM_Execute():
             if base_currency != trading_currency and currency == base_currency:
                 base_currency_account_balance_dict = {}
                 base_currency_account_balance_dict[currency] = starting_account_inputs[currency]
-                base_currency_account_balance_dict[currency]['margin_multiplier'] = (float(base_currency_account_balance_dict[currency]['buying_power_available']) + float(base_currency_account_balance_dict[currency]['buying_power_used'])) / (float(base_currency_account_balance_dict[currency]['pledge_to_margin_used']) + float(base_currency_account_balance_dict[currency]['pledge_to_margin_availble']))
                 base_currency_account_balance_dict[currency]['total_buying_power'] = float(base_currency_account_balance_dict[currency]['buying_power_available']) + float(base_currency_account_balance_dict[currency]['buying_power_used'])
-                base_currency_account_balance_dict[currency]['pct_of_margin_used'] = float(base_currency_account_balance_dict[currency]['pledge_to_margin_used']) / float(base_currency_account_balance_dict[currency]['total_account_value'])
+                base_currency_account_balance_dict[currency]['pct_of_margin_used'] = float(base_currency_account_balance_dict[currency]['buying_power_used']) / float(base_currency_account_balance_dict[currency]['buying_power_available'])
                 
                 for key, value in base_currency_account_balance_dict[currency].items():
                     if key not in ['cushion', 'margin_multipler', 'pct_of_margin_used']:

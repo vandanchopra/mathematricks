@@ -123,6 +123,12 @@ class RMS:
                 signal.signal_id = str(uuid.uuid4().hex)
                 # self.logger.info(f"- Assigned new ID: {signal.signal_id}")
 
+            # Assign UUIDs to orders that don't have IDs
+            for order in signal.orders:
+                if not order.order_id:
+                    order.order_id = str(uuid.uuid4().hex)
+                    # self.logger.debug(f"- Assigned new order ID: {order.order_id}")
+
             # self.logger.info(f"""
             #                     Processing Signal:
             #                     - ID: {signal.signal_id}

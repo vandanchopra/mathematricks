@@ -155,14 +155,20 @@ Signal Total PnL:
             'trades_per_day': 0.0,
             'trades_by_symbol': {},
             'pnl_by_symbol': {},
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'total_trades': 0
+            'winning_signals': 0,
+            'losing_signals': 0,
+            'total_signals': 0
         }
 
         if not closed_signals:
             return metrics
 
+        # Ensure we're working with Signal objects only
+        if closed_signals and isinstance(closed_signals[0], tuple):
+            self.logger.error(f"Invalid type in closed_signals: expected Signal, got {type(closed_signals[0])}")
+            raise AssertionError(f"Invalid type in closed_signals: expected Signal, got {type(closed_signals[0])}")
+
+        self.logger.debug(f"Processing {len(closed_signals)} closed signals")
         # Track PnL and trades
         winning_pnls = []
         losing_pnls = []
@@ -174,56 +180,31 @@ Signal Total PnL:
         self.logger.info("Calculating backtest performance metrics...")
         
         for signal in closed_signals:
-            # Group orders by symbol to handle multi-symbol signals
-            orders_by_symbol: Dict[str, List[Order]] = {}
+            if not isinstance(signal, Signal):
+                self.logger.error(f"Invalid signal type: {type(signal)}, expected Signal")
+                raise AssertionError(f"Invalid signal type: {type(signal)}, expected Signal")
+                continue
+
+            # Calculate signal's PnL
+            signal_pnl, signal_return = self.calculate_signal_pnl(signal, unfilled_orders)
+            
+            # Track symbols for this signal
             for order in signal.orders:
-                if order.status == 'closed' and order.filled_price is not None:
-                    if order.symbol not in orders_by_symbol:
-                        orders_by_symbol[order.symbol] = []
-                    orders_by_symbol[order.symbol].append(order)
-                    
-                    # Track trade counts
+                if order.status == 'closed':
                     if order.symbol not in metrics['trades_by_symbol']:
                         metrics['trades_by_symbol'][order.symbol] = 0
                         metrics['pnl_by_symbol'][order.symbol] = 0.0
                     metrics['trades_by_symbol'][order.symbol] += 1
+                    metrics['pnl_by_symbol'][order.symbol] += signal_pnl
 
-            # Calculate PnL for each symbol in the signal
-            signal_pnl = 0.0
-            for symbol, orders in orders_by_symbol.items():
-                position = 0
-                position_value = 0.0
-                
-                # Process orders chronologically
-                sorted_orders = sorted(orders, key=lambda x: x.filled_timestamp or datetime.max)
-                for order in sorted_orders:
-                    # Calculate trade impact
-                    qty = order.orderQuantity
-                    price = order.filled_price
-                    direction = 1 if order.orderDirection == "BUY" else -1
-                    trade_value = qty * price * direction
-                    
-                    # Update position
-                    prev_position = position
-                    position += qty * direction
-                    
-                    # Calculate trade PnL if reducing/closing position
-                    if (prev_position > 0 and direction < 0) or (prev_position < 0 and direction > 0):
-                        trade_pnl = -trade_value - (position_value * (qty / abs(prev_position)))
-                        metrics['pnl_by_symbol'][symbol] += trade_pnl
-                        signal_pnl += trade_pnl
-                        
-                        if trade_pnl > 0:
-                            winning_pnls.append(trade_pnl)
-                        else:
-                            losing_pnls.append(trade_pnl)
-                    
-                    # Update position value
-                    position_value = position * price if position != 0 else 0
-
-            # Update cumulative metrics
+            # Track signal performance
             cumulative_pnl += signal_pnl
-            daily_returns.append(signal_pnl / total_value if total_value > 0 else 0)
+            if signal_pnl > 0:
+                winning_pnls.append(signal_pnl)
+            else:
+                losing_pnls.append(signal_pnl)
+            
+            daily_returns.append(signal_return)
             peaks.append(max(peaks[-1], cumulative_pnl))
             drawdowns.append(peaks[-1] - cumulative_pnl)
 
@@ -231,12 +212,12 @@ Signal Total PnL:
         metrics['total_pnl'] = cumulative_pnl
         metrics['max_drawdown'] = max(drawdowns)
         
-        metrics['winning_trades'] = len(winning_pnls)
-        metrics['losing_trades'] = len(losing_pnls)
-        metrics['total_trades'] = metrics['winning_trades'] + metrics['losing_trades']
+        metrics['winning_signals'] = len(winning_pnls)
+        metrics['losing_signals'] = len(losing_pnls)
+        metrics['total_signals'] = metrics['winning_signals'] + metrics['losing_signals']
         
-        if metrics['total_trades'] > 0:
-            metrics['win_rate'] = metrics['winning_trades'] / metrics['total_trades']
+        if metrics['total_signals'] > 0:
+            metrics['win_rate'] = metrics['winning_signals'] / metrics['total_signals']
             metrics['avg_win'] = np.mean(winning_pnls) if winning_pnls else 0
             metrics['avg_loss'] = abs(np.mean(losing_pnls)) if losing_pnls else 0
             
@@ -245,7 +226,7 @@ Signal Total PnL:
             metrics['profit_factor'] = total_gains / total_losses if total_losses > 0 else float('inf')
             
             trading_days = max(1, (closed_signals[-1].timestamp - config_dict['backtest_inputs']['start_time']).days)
-            metrics['trades_per_day'] = metrics['total_trades'] / trading_days
+            metrics['trades_per_day'] = metrics['total_signals'] / trading_days
 
             # Calculate Sharpe Ratio (assuming 0 risk-free rate for simplicity)
             if len(daily_returns) > 1:
@@ -259,8 +240,8 @@ Signal Total PnL:
 Backtest Results:
 - Total PnL: ${metrics['total_pnl']:.2f}
 - Win Rate: {metrics['win_rate']*100:.1f}%
-- Winning Trades: {metrics['winning_trades']}
-- Losing Trades: {metrics['losing_trades']}
+- Winning Signals: {metrics['winning_signals']}
+- Losing Signals: {metrics['losing_signals']}
 - Average Win: ${metrics['avg_win']:.2f}
 - Average Loss: ${metrics['avg_loss']:.2f}
 - Profit Factor: {metrics['profit_factor']:.2f}
@@ -323,3 +304,42 @@ Backtest Results:
         
         msg = "Current Stoploss Signals: " + ' | '.join(msg_parts) if msg_parts else "Current Stoploss Signals: "
         return msg
+
+    def save_backtest(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal]):
+        """Save backtest results to a file"""
+        try:
+            # Create backtest folder if it doesn't exist
+            os.makedirs(self.backtest_folder_path, exist_ok=True)
+            
+            # Generate a unique test name using timestamp and strategy
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            strategy_name = config_dict.get('strategy_name', 'unknown_strategy')
+            test_name = f"{strategy_name}_{timestamp}"
+            
+            # Create test-specific folder
+            test_folder_path = os.path.join(self.backtest_folder_path, test_name)
+            os.makedirs(test_folder_path, exist_ok=True)
+            
+            # Save backtest results
+            results = {
+                'config': config_dict,
+                'metrics': self.backtest_performance_metrics,
+                'report': self.backtest_report
+            }
+            
+            with open(os.path.join(test_folder_path, 'results.json'), 'w') as f:
+                json.dump(results, f, indent=4, default=str)
+            
+            return test_folder_path, test_name
+        except Exception as e:
+            self.logger.error(f"Error saving backtest results: {e}")
+            raise
+    def generate_report(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal], market_data_df: pd.DataFrame, unfilled_orders: List[Order]):
+        """Generate a performance report for the trading system"""
+        try:
+            self.backtest_performance_metrics = self.calculate_backtest_performance_metrics(config_dict, open_signals, closed_signals, market_data_df, unfilled_orders)
+            self.backtest_report = {'metrics': self.backtest_performance_metrics}
+            self.logger.info("Performance report generated successfully")
+        except Exception as e:
+            self.logger.error(f"Error generating performance report: {e}")
+            raise
