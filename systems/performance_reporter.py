@@ -12,7 +12,259 @@ from scipy import stats
 from vault.base_strategy import Signal, Order
 from colorama import Fore, Style
 
-class PerformanceReporter:
+class Metrics:
+    def __init__(self):
+        self.logger = create_logger(log_level='DEBUG', logger_name='Metrics', print_to_console=True)
+        
+    def calculate_signal_pnl(self, signal, force_close=False):
+        """Calculate realized or unrealized PnL for a signal
+        Args:
+            signal: Signal object containing orders
+            force_close: If True, calculate unrealized PnL at current market price
+        Returns:
+            tuple (pnl_abs, pnl_pct): Absolute and percentage PnL
+        """
+        total_investment = 0
+        total_pnl = 0
+
+        for order in signal.orders:
+            if order.status == 'filled' or (force_close and order.status in ['pending', 'open']):
+                # Calculate investment and return for each order
+                quantity = order.orderQuantity
+                entry_price = order.filled_price if order.filled_price else order.price
+                
+                if force_close and order.status in ['pending', 'open']:
+                    # Use latest price from symbol_ltp for unrealized PnL
+                    exit_price = list(order.symbol_ltp.values())[-1] if order.symbol_ltp else entry_price
+                else:
+                    exit_price = order.filled_price
+                
+                if order.orderDirection == 'BUY':
+                    order_pnl = quantity * (exit_price - entry_price)
+                else:  # SELL
+                    order_pnl = quantity * (entry_price - exit_price)
+                
+                total_pnl += order_pnl
+                total_investment += abs(quantity * entry_price)
+
+        pnl_pct = (total_pnl / total_investment * 100) if total_investment > 0 else 0
+        return total_pnl, pnl_pct
+    
+    def calculate_signal_unrealized_pnl(self, signal, unfilled_orders):
+        """Calculate unrealized PnL for a signal considering unfilled orders
+        Args:
+            signal: Signal object to calculate unrealized PnL for
+            unfilled_orders: List of unfilled orders to consider
+        Returns:
+            float: Unrealized PnL for the signal
+        """
+        return self.calculate_signal_pnl(signal, force_close=True)[0]
+    
+    def calculate_backtest_winning_signals_count(self, closed_signals):
+        """Count number of winning signals (positive PnL) from backtest
+        Args:
+            closed_signals: List of closed Signal objects
+        Returns:
+            int: Number of winning signals
+        """
+        return sum(1 for signal in closed_signals if signal.pnl and signal.pnl > 0)
+    
+    def calculate_backtest_losing_signals_count(self, closed_signals):
+        """Count number of losing signals (negative PnL) from backtest"""
+        return sum(1 for signal in closed_signals if signal.pnl and signal.pnl < 0)
+    
+    def calculate_backtest_average_signal_duration(self, closed_signals):
+        """Calculate average duration of signals in days"""
+        durations = []
+        for signal in closed_signals:
+            if signal.orders:
+                # Find earliest entry and latest exit
+                entry_time = min(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                exit_time = max(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                if entry_time and exit_time:
+                    duration = (exit_time - entry_time).total_seconds() / 3600  # Convert to hours
+                    durations.append(duration)
+        return np.mean(durations) if durations else 0
+    
+    def calculate_backtest_average_signal_duration_profitable(self, closed_signals):
+        profitable_signals = [signal for signal in closed_signals if signal.pnl and signal.pnl > 0]
+        return self.calculate_backtest_average_signal_duration(profitable_signals)
+    
+    def calculate_backtest_average_signal_duration_loss(self, closed_signals):
+        loss_signals = [signal for signal in closed_signals if signal.pnl and signal.pnl < 0]
+        return self.calculate_backtest_average_signal_duration(loss_signals)
+    
+    def calculate_backtest_average_signal_return(self, closed_signals):
+        """Calculate average absolute return across all signals"""
+        returns = [signal.pnl for signal in closed_signals if signal.pnl is not None]
+        return np.mean(returns) if returns else 0
+    
+    def calculate_backtest_average_signal_return_pct(self, closed_signals):
+        """Calculate average percentage return across all signals"""
+        pct_returns = []
+        for signal in closed_signals:
+            total_investment = sum(abs(order.orderQuantity * order.filled_price) 
+                                 for order in signal.orders 
+                                 if order.filled_price)
+            if total_investment > 0 and signal.pnl is not None:
+                pct_return = (signal.pnl / total_investment) * 100
+                pct_returns.append(pct_return)
+        return np.mean(pct_returns) if pct_returns else 0
+    
+    def calculate_backtest_average_signal_return_pct_per_day(self, closed_signals):
+        """Calculate average daily percentage return"""
+        daily_returns = []
+        for signal in closed_signals:
+            if signal.orders and signal.pnl is not None:
+                entry_time = min(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                exit_time = max(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                if entry_time and exit_time:
+                    duration_days = (exit_time - entry_time).total_seconds() / (24 * 3600)
+                    if duration_days > 0:
+                        total_investment = sum(abs(order.orderQuantity * order.filled_price) 
+                                            for order in signal.orders 
+                                            if order.filled_price)
+                        if total_investment > 0:
+                            pct_return = (signal.pnl / total_investment) * 100
+                            daily_return = pct_return / duration_days
+                            daily_returns.append(daily_return)
+        return np.mean(daily_returns) if daily_returns else 0
+    
+    def calculate_backtest_average_win_signals_return(self, closed_signals):
+        """Calculate average return of winning signals"""
+        win_returns = [signal.pnl for signal in closed_signals if signal.pnl and signal.pnl > 0]
+        return np.mean(win_returns) if win_returns else 0
+    
+    def calculate_backtest_average_loss_signals_return_pct(self, closed_signals):
+        """Calculate average percentage return of losing signals"""
+        loss_pct_returns = []
+        for signal in closed_signals:
+            if signal.pnl and signal.pnl < 0:
+                total_investment = sum(abs(order.orderQuantity * order.filled_price) 
+                                     for order in signal.orders 
+                                     if order.filled_price)
+                if total_investment > 0:
+                    pct_return = (signal.pnl / total_investment) * 100
+                    loss_pct_returns.append(pct_return)
+        return np.mean(loss_pct_returns) if loss_pct_returns else 0
+    
+    def calculate_backtest_sharpe_ratio(self, closed_signals):
+        """Calculate Sharpe ratio (assuming risk-free rate of 0)"""
+        daily_returns = []
+        for signal in closed_signals:
+            if signal.orders and signal.pnl is not None:
+                entry_time = min(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                exit_time = max(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                if entry_time and exit_time:
+                    duration_days = (exit_time - entry_time).total_seconds() / (24 * 3600)
+                    if duration_days > 0:
+                        total_investment = sum(abs(order.orderQuantity * order.filled_price) 
+                                            for order in signal.orders 
+                                            if order.filled_price)
+                        if total_investment > 0:
+                            daily_return = (signal.pnl / total_investment) / duration_days
+                            daily_returns.append(daily_return)
+        
+        if not daily_returns:
+            return 0
+            
+        returns_array = np.array(daily_returns)
+        excess_returns = returns_array - 0  # Assuming 0 risk-free rate
+        if len(excess_returns) > 1:
+            sharpe_ratio = np.sqrt(252) * (np.mean(excess_returns) / np.std(excess_returns, ddof=1))
+            return sharpe_ratio
+        return 0
+    
+    def calculate_backtest_sortino_ratio(self, closed_signals):
+        """Calculate Sortino ratio (considering only downside volatility)"""
+        daily_returns = []
+        for signal in closed_signals:
+            if signal.orders and signal.pnl is not None:
+                entry_time = min(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                exit_time = max(order.filled_timestamp for order in signal.orders if order.filled_timestamp)
+                if entry_time and exit_time:
+                    duration_days = (exit_time - entry_time).total_seconds() / (24 * 3600)
+                    if duration_days > 0:
+                        total_investment = sum(abs(order.orderQuantity * order.filled_price) 
+                                            for order in signal.orders 
+                                            if order.filled_price)
+                        if total_investment > 0:
+                            daily_return = (signal.pnl / total_investment) / duration_days
+                            daily_returns.append(daily_return)
+        
+        if not daily_returns:
+            return 0
+            
+        returns_array = np.array(daily_returns)
+        excess_returns = returns_array - 0  # Assuming 0 risk-free rate
+        
+        if len(excess_returns) > 1:
+            # Calculate downside deviation (standard deviation of negative returns only)
+            negative_returns = excess_returns[excess_returns < 0]
+            if len(negative_returns) > 0:
+                downside_std = np.std(negative_returns, ddof=1)
+                if downside_std > 0:
+                    sortino_ratio = np.sqrt(252) * (np.mean(excess_returns) / downside_std)
+                    return sortino_ratio
+        return 0
+    
+    def calculate_backtest_calmar_ratio(self, closed_signals):
+        """Calculate Calmar ratio (average return / maximum drawdown)"""
+        max_dd = self.calculate_backtest_max_drawdown(closed_signals)
+        avg_return = self.calculate_backtest_average_signal_return_pct_per_day(closed_signals)
+        return abs(avg_return / max_dd) if max_dd != 0 else 0
+    
+    def calculate_backtest_max_drawdown(self, closed_signals):
+        """Calculate maximum drawdown percentage"""
+        # Sort signals by entry time
+        sorted_signals = sorted(closed_signals, 
+                              key=lambda x: min(order.filled_timestamp for order in x.orders if order.filled_timestamp))
+        
+        cumulative_returns = np.cumsum([signal.pnl for signal in sorted_signals if signal.pnl])
+        if len(cumulative_returns) > 0:
+            rolling_max = np.maximum.accumulate(cumulative_returns)
+            drawdowns = (rolling_max - cumulative_returns) / rolling_max
+            max_drawdown = np.max(drawdowns) * 100 if len(drawdowns) > 0 else 0
+            return max_drawdown
+        return 0
+    
+    def calculate_backtest_max_drawdown_duration(self, closed_signals):
+        """Calculate maximum drawdown duration in days"""
+        # Sort signals by entry time
+        sorted_signals = sorted(closed_signals, 
+                              key=lambda x: min(order.filled_timestamp for order in x.orders if order.filled_timestamp))
+        
+        cumulative_returns = np.cumsum([signal.pnl for signal in sorted_signals if signal.pnl])
+        if len(cumulative_returns) > 0:
+            rolling_max = np.maximum.accumulate(cumulative_returns)
+            drawdown_starts = np.where(rolling_max != cumulative_returns)[0]
+            
+            if len(drawdown_starts) > 0:
+                max_duration = 0
+                for start_idx in drawdown_starts:
+                    # Find where cumulative returns get back to the previous peak
+                    peak_value = rolling_max[start_idx]
+                    recovery_idx = np.where(cumulative_returns[start_idx:] >= peak_value)[0]
+                    if len(recovery_idx) > 0:
+                        duration = (sorted_signals[start_idx + recovery_idx[0]].orders[-1].filled_timestamp - 
+                                  sorted_signals[start_idx].orders[0].filled_timestamp).days
+                        max_duration = max(max_duration, duration)
+                return max_duration
+        return 0
+    
+    def calculate_backtest_profit_factor(self, closed_signals):
+        """Calculate ratio of gross profits to gross losses"""
+        gross_profits = sum(signal.pnl for signal in closed_signals if signal.pnl and signal.pnl > 0)
+        gross_losses = abs(sum(signal.pnl for signal in closed_signals if signal.pnl and signal.pnl < 0))
+        return gross_profits / gross_losses if gross_losses != 0 else float('inf')
+    
+    def calculate_backtest_win_loss_ratio(self, closed_signals):
+        """Calculate ratio of winning trades to losing trades"""
+        winning_count = self.calculate_backtest_winning_signals_count(closed_signals)
+        losing_count = self.calculate_backtest_losing_signals_count(closed_signals)
+        return winning_count / losing_count if losing_count > 0 else float('inf')
+    
+class PerformanceReporter(Metrics):
     def __init__(self, market_data_extractor):
         self.market_data_extractor = market_data_extractor
         self.backtest_folder_path = project_path + 'db/vault/backtest_reports'
@@ -30,7 +282,7 @@ class PerformanceReporter:
                 # For pairs trading, a signal can have multiple symbols
                 # Calculate PnL for each symbol in the signal
                 symbols = {order.symbol for order in signal.orders}
-                unrealized_pnl_abs, unrealized_pnl_pct = self.calculate_signal_pnl(signal, unfilled_orders, force_close=True)
+                unrealized_pnl_abs, unrealized_pnl_pct = self.calculate_signal_pnl(signal, force_close=True)
                 # Attribute the PnL to each symbol in the signal
                 for symbol in symbols:
                     unrealized_pnl_abs_dict[symbol] = unrealized_pnl_abs
@@ -38,78 +290,6 @@ class PerformanceReporter:
             
         return unrealized_pnl_abs_dict, unrealized_pnl_pct_dict
     
-    def calculate_signal_pnl(self, signal, unfilled_orders, force_close=False):
-        """Calculate PnL for a signal including unrealized PnL from unfilled orders"""
-        total_profit = 0
-        total_value = 0
-#         self.logger.info(f"""
-# PnL Calculation for Signal {signal.signal_id}:
-# - Strategy: {signal.strategy_name}
-# - Status: {signal.status}
-# - Order Count: {len(signal.orders)}
-# """)
-        
-        # First process filled orders
-        for order in signal.orders:
-            if order.status == 'cancelled':
-                continue
-            
-            try:
-                current_price = (
-                    order.filled_price if order.status == 'closed'
-                    else list(order.symbol_ltp.values())[-1]
-                )
-                
-                direction_multiplier = 1 if order.orderDirection == 'BUY' else -1
-                position_value = current_price * order.orderQuantity * direction_multiplier
-                
-                # For closed orders, use filled price
-                if order.status == 'closed' and order.filled_price is not None:
-                    total_profit += position_value
-                    total_value += abs(position_value)
-#                     self.logger.info(f"""
-# Order PnL:
-# - Symbol: {order.symbol}
-# - Direction: {order.orderDirection}
-# - Quantity: {order.orderQuantity}
-# - Fill Price: ${order.filled_price:.2f}""")
-                
-                # For unfilled orders in force_close mode, use current price
-                elif force_close and order in unfilled_orders:
-                    total_profit += position_value
-                    total_value += abs(position_value)
-#                     self.logger.info(f"""
-# Unrealized PnL:
-# - Symbol: {order.symbol}
-# - Direction: {order.orderDirection}
-# - Quantity: {order.orderQuantity}
-# - Current Price: ${current_price:.2f}""")
-            except Exception as e:
-                self.logger.error(f"Error calculating PnL for order {order.symbol}: {e}")
-                continue
-
-        # Calculate return percentage
-        return_pct = (total_profit / total_value) if total_value > 0 else 0
-#         self.logger.info(f"""
-# Signal PnL Summary:
-# - Total Profit: ${total_profit:.2f}
-# - Total Value: ${total_value:.2f}
-# - Return: {return_pct*100:.2f}%
-# """)
-        
-        return round(total_profit, 10), return_pct
-
-        # Calculate return percentage
-        return_pct = (total_profit / total_value) if total_value > 0 else 0
-        self.logger.info(f"""
-Signal Total PnL:
-- Total Profit: ${total_profit:.2f}
-- Total Value: ${total_value:.2f}
-- Return %: {return_pct * 100:.2f}%
-""")
-        
-        return round(total_profit, 10), return_pct
-
     def get_open_signals_print_msg(self, open_signals, total_buying_power, sequence_of_symbols):
         """Generate message about open signals and their positions"""
         signal_info = {}
@@ -142,116 +322,35 @@ Signal Total PnL:
         return msg
 
     def calculate_backtest_performance_metrics(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal], market_data_df: pd.DataFrame, unfilled_orders: List[Order]) -> Dict:
-        """Calculate performance metrics for backtest results"""
-        metrics = {
-            'total_pnl': 0.0,
-            'win_rate': 0.0,
-            'avg_win': 0.0,
-            'avg_loss': 0.0,
-            'profit_factor': 0.0,
-            'max_drawdown': 0.0,
-            'unrealized_pnl': 0.0,
-            'sharpe_ratio': 0.0,
-            'trades_per_day': 0.0,
-            'trades_by_symbol': {},
-            'pnl_by_symbol': {},
-            'winning_signals': 0,
-            'losing_signals': 0,
-            'total_signals': 0
-        }
-
-        if not closed_signals:
+        """Calculate various performance metrics for the backtest"""
+        try:
+            # Calculate performance metrics
+            metrics = {}
+            metrics['total_signals'] = len(open_signals) + len(closed_signals)
+            metrics['open_signals'] = len(open_signals)
+            metrics['closed_signals'] = len(closed_signals)
+            metrics['winning_signals'] = self.calculate_backtest_winning_signals_count(closed_signals)
+            metrics['losing_signals'] = self.calculate_backtest_losing_signals_count(closed_signals)
+            metrics['average_signal_duration'] = self.calculate_backtest_average_signal_duration(closed_signals)
+            metrics['average_signal_duration_profitable'] = self.calculate_backtest_average_signal_duration_profitable(closed_signals)
+            metrics['average_signal_duration_loss'] = self.calculate_backtest_average_signal_duration_loss(closed_signals)
+            metrics['average_signal_return'] = self.calculate_backtest_average_signal_return(closed_signals)
+            metrics['average_signal_return_pct'] = self.calculate_backtest_average_signal_return_pct(closed_signals)
+            metrics['average_signal_return_pct_per_day'] = self.calculate_backtest_average_signal_return_pct_per_day(closed_signals)
+            metrics['average_win_signals_return'] = self.calculate_backtest_average_win_signals_return(closed_signals)
+            metrics['average_loss_signals_return_pct'] = self.calculate_backtest_average_loss_signals_return_pct(closed_signals)
+            metrics['sharpe_ratio'] = self.calculate_backtest_sharpe_ratio(closed_signals)
+            metrics['sortino_ratio'] = self.calculate_backtest_sortino_ratio(closed_signals)
+            metrics['calmar_ratio'] = self.calculate_backtest_calmar_ratio(closed_signals)
+            metrics['max_drawdown'] = self.calculate_backtest_max_drawdown(closed_signals)
+            metrics['max_drawdown_duration'] = self.calculate_backtest_max_drawdown_duration(closed_signals)
+            metrics['profit_factor'] = self.calculate_backtest_profit_factor(closed_signals)
+            metrics['win_loss_ratio'] = self.calculate_backtest_win_loss_ratio(closed_signals)
+            
             return metrics
-
-        # Ensure we're working with Signal objects only
-        if closed_signals and isinstance(closed_signals[0], tuple):
-            self.logger.error(f"Invalid type in closed_signals: expected Signal, got {type(closed_signals[0])}")
-            raise AssertionError(f"Invalid type in closed_signals: expected Signal, got {type(closed_signals[0])}")
-
-        self.logger.debug(f"Processing {len(closed_signals)} closed signals")
-        # Track PnL and trades
-        winning_pnls = []
-        losing_pnls = []
-        cumulative_pnl = 0.0
-        peaks = [0.0]
-        drawdowns = [0.0]
-
-        daily_returns = []
-        self.logger.info("Calculating backtest performance metrics...")
-        
-        for signal in closed_signals:
-            if not isinstance(signal, Signal):
-                self.logger.error(f"Invalid signal type: {type(signal)}, expected Signal")
-                raise AssertionError(f"Invalid signal type: {type(signal)}, expected Signal")
-                continue
-
-            # Calculate signal's PnL
-            signal_pnl, signal_return = self.calculate_signal_pnl(signal, unfilled_orders)
-            
-            # Track symbols for this signal
-            for order in signal.orders:
-                if order.status == 'closed':
-                    if order.symbol not in metrics['trades_by_symbol']:
-                        metrics['trades_by_symbol'][order.symbol] = 0
-                        metrics['pnl_by_symbol'][order.symbol] = 0.0
-                    metrics['trades_by_symbol'][order.symbol] += 1
-                    metrics['pnl_by_symbol'][order.symbol] += signal_pnl
-
-            # Track signal performance
-            cumulative_pnl += signal_pnl
-            if signal_pnl > 0:
-                winning_pnls.append(signal_pnl)
-            else:
-                losing_pnls.append(signal_pnl)
-            
-            daily_returns.append(signal_return)
-            peaks.append(max(peaks[-1], cumulative_pnl))
-            drawdowns.append(peaks[-1] - cumulative_pnl)
-
-        # Calculate final metrics
-        metrics['total_pnl'] = cumulative_pnl
-        metrics['max_drawdown'] = max(drawdowns)
-        
-        metrics['winning_signals'] = len(winning_pnls)
-        metrics['losing_signals'] = len(losing_pnls)
-        metrics['total_signals'] = metrics['winning_signals'] + metrics['losing_signals']
-        
-        if metrics['total_signals'] > 0:
-            metrics['win_rate'] = metrics['winning_signals'] / metrics['total_signals']
-            metrics['avg_win'] = np.mean(winning_pnls) if winning_pnls else 0
-            metrics['avg_loss'] = abs(np.mean(losing_pnls)) if losing_pnls else 0
-            
-            total_gains = sum(winning_pnls)
-            total_losses = abs(sum(losing_pnls))
-            metrics['profit_factor'] = total_gains / total_losses if total_losses > 0 else float('inf')
-            
-            trading_days = max(1, (closed_signals[-1].timestamp - config_dict['backtest_inputs']['start_time']).days)
-            metrics['trades_per_day'] = metrics['total_signals'] / trading_days
-
-            # Calculate Sharpe Ratio (assuming 0 risk-free rate for simplicity)
-            if len(daily_returns) > 1:
-                metrics['sharpe_ratio'] = (np.mean(daily_returns) / np.std(daily_returns)) * np.sqrt(252)  # Annualized
-
-        # Calculate unrealized PnL from open signals
-        unrealized_pnl_abs_dict, _ = self.calculate_unrealized_pnl(open_signals, unfilled_orders)
-        metrics['unrealized_pnl'] = sum(unrealized_pnl_abs_dict.values())
-
-        self.logger.info(f"""
-Backtest Results:
-- Total PnL: ${metrics['total_pnl']:.2f}
-- Win Rate: {metrics['win_rate']*100:.1f}%
-- Winning Signals: {metrics['winning_signals']}
-- Losing Signals: {metrics['losing_signals']}
-- Average Win: ${metrics['avg_win']:.2f}
-- Average Loss: ${metrics['avg_loss']:.2f}
-- Profit Factor: {metrics['profit_factor']:.2f}
-- Max Drawdown: ${metrics['max_drawdown']:.2f}
-- Trades per Day: {metrics['trades_per_day']:.1f}
-- Unrealized PnL: ${metrics['unrealized_pnl']:.2f}
-- Sharpe Ratio: {metrics['sharpe_ratio']:.2f}
-""")
-
-        return metrics
+        except Exception as e:
+            self.logger.error(f"Error calculating backtest performance metrics: {e}")
+            raise
     
     def get_stoploss_orders_print_msg(self, signals, live_bool, sequence_of_symbols, market_data_df):
         """Generate message about stoploss orders for signals"""
@@ -334,12 +433,36 @@ Backtest Results:
         except Exception as e:
             self.logger.error(f"Error saving backtest results: {e}")
             raise
+    
     def generate_report(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal], market_data_df: pd.DataFrame, unfilled_orders: List[Order]):
         """Generate a performance report for the trading system"""
         try:
             self.backtest_performance_metrics = self.calculate_backtest_performance_metrics(config_dict, open_signals, closed_signals, market_data_df, unfilled_orders)
             self.backtest_report = {'metrics': self.backtest_performance_metrics}
             self.logger.info("Performance report generated successfully")
+            # create a nicely formatted and printed report using logger from backtest_report
+            self.logger.info(f"{Fore.BLUE}Total Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['total_signals']}")
+            self.logger.info(f"{Fore.BLUE}Open Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['open_signals']}")
+            self.logger.info(f"{Fore.BLUE}Closed Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['closed_signals']}")
+            self.logger.info(f"{Fore.BLUE}Winning Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['winning_signals']}")
+            self.logger.info(f"{Fore.BLUE}Losing Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['losing_signals']}")
+            self.logger.info(f"{Fore.BLUE}Win Loss Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['win_loss_ratio']}")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration']} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Profitable){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_profitable']} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Loss){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_loss']} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return']}")
+            self.logger.info(f"{Fore.BLUE}Average Signal Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct']}%")
+            self.logger.info(f"{Fore.BLUE}Average Signal Return (%/day){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct_per_day']}%")
+            self.logger.info(f"{Fore.BLUE}Average Win Signals Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return']}")
+            self.logger.info(f"{Fore.BLUE}Average Loss Signals Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return_pct']}%")
+            self.logger.info(f"{Fore.BLUE}Sharpe Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sharpe_ratio']}")
+            self.logger.info(f"{Fore.BLUE}Sortino Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sortino_ratio']}")
+            self.logger.info(f"{Fore.BLUE}Calmar Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['calmar_ratio']}")
+            self.logger.info(f"{Fore.BLUE}Max Drawdown{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown']}%")
+            self.logger.info(f"{Fore.BLUE}Max Drawdown Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown_duration']} days")
+            self.logger.info(f"{Fore.BLUE}Profit Factor{Style.RESET_ALL}: {self.backtest_performance_metrics['profit_factor']}")
+            
+            
         except Exception as e:
             self.logger.error(f"Error generating performance report: {e}")
             raise

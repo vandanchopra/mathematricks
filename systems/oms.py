@@ -206,6 +206,7 @@ class OMS:
         
         # Calculate transaction cost
         transaction_cost = order.brokerage_fee_abs + order.slippage_abs
+        self.logger.info(f"Transaction Cost: {transaction_cost}, Brokerage Fee: {order.brokerage_fee_abs}, Slippage: {order.slippage_abs}")
         
         # Reduce total_buying_power by transaction cost
         self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= transaction_cost
@@ -224,11 +225,16 @@ class OMS:
             
         else:
             # Decrease margin used and add PnL * -1
-            exit_order_direction = -1 if order.orderDirection == 'SELL' else 1
-            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= (position_value + (order.pnl * exit_order_direction))
-            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= (position_value + (order.pnl * exit_order_direction))
-            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] += (position_value + (order.pnl * exit_order_direction))
-            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] += (position_value + (order.pnl * exit_order_direction))
+            exit_order_direction = order.orderDirection
+            exit_order_multiplier = -1 if exit_order_direction == 'SELL' else 1
+            
+            entry_order_margin_used = position_value + (order.pnl * exit_order_multiplier)
+            exit_order_value_returned = entry_order_margin_used + order.pnl
+            
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= entry_order_margin_used
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= entry_order_margin_used
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] += exit_order_value_returned
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] += exit_order_value_returned
 
         self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power'] = (
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] + 
@@ -249,6 +255,9 @@ class OMS:
         pnl_with_fee_and_slippage = 0
         for order in signal.orders:
             pnl_with_fee_and_slippage += order.pnl_with_fee_and_slippage or 0
+            
+        self.logger.info(f"Signal PnL: {pnl}, Signal PnL with Fee and Slippage: {pnl_with_fee_and_slippage}")
+        
         return pnl, pnl_with_fee_and_slippage
     
     def check_if_signal_closed(self, signal: Signal):
