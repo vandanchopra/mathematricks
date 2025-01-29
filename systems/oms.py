@@ -206,7 +206,7 @@ class OMS:
         
         # Calculate transaction cost
         transaction_cost = order.brokerage_fee_abs + order.slippage_abs
-        self.logger.info(f"Transaction Cost: {transaction_cost}, Brokerage Fee: {order.brokerage_fee_abs}, Slippage: {order.slippage_abs}")
+        # self.logger.info(f"Transaction Cost: {transaction_cost}, Brokerage Fee: {order.brokerage_fee_abs}, Slippage: {order.slippage_abs}")
         
         # Reduce total_buying_power by transaction cost
         self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= transaction_cost
@@ -244,7 +244,7 @@ class OMS:
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] + 
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']
         )
-        self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']}, Total Buying Power: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
+        # self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']}, Total Buying Power: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
         
     def calculate_signal_pnl(self, signal: Signal) -> float:
         """Calculate PnL for a signal"""
@@ -379,7 +379,7 @@ class OMS:
                             if new_status == 'closed':
                                 # 3. Update portfolio based on executed orders
                                 self.update_portfolio(order, signal)
-                                self.logger.info({"portfolio":self.portfolio})
+                                # self.logger.info({"portfolio":self.portfolio})
                             
                                 # 4. Update margin based on new portfolio state
                                 self.update_margin_on_fill(order, signal)

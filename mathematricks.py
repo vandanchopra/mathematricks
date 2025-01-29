@@ -45,6 +45,81 @@ class Mathematricks:
         self.first_telegram_msg_sent = False
         self.update_telegram = self.config_dict['update_telegram']
     
+    def get_unrealized_pnl_dict(self):
+        unrealized_pnl_dict = {}
+        
+        # Get open signals from OMS
+        for signal in self.oms.get_open_signals():
+            if signal.status == 'closed':
+                continue
+            
+            # Process each order in the signal
+            for order in signal.orders:
+                symbol = order.symbol
+                
+                # Find entry orders that have been filled
+                if order.entryOrderBool and order.status == 'closed' and order.filled_price:
+                    # Check if we already processed this symbol for this signal
+                    if signal.signal_id in unrealized_pnl_dict and symbol in unrealized_pnl_dict[signal.signal_id]:
+                        continue
+                    
+                    # Get entry details
+                    entry_price = order.filled_price
+                    position_size = order.orderQuantity * (1 if order.orderDirection == "BUY" else -1)
+                    
+                    # Find matching exit order
+                    exit_order = None
+                    for o in signal.orders:
+                        if (o.symbol == symbol and not o.entryOrderBool and 
+                            o.status == 'open'):
+                            exit_order = o
+                            break
+                    
+                    # Get current price - first try exit order's LTP
+                    current_price = None
+                    if exit_order and hasattr(exit_order, 'symbol_ltp') and exit_order.symbol_ltp:
+                        latest_timestamp = max(exit_order.symbol_ltp.keys())
+                        current_price = exit_order.symbol_ltp[latest_timestamp]
+                    
+                    # If no exit order LTP, try market data
+                    if current_price is None and not self.current_market_data_df.empty:
+                        for interval in ['1m', '1d']:
+                            if interval in self.current_market_data_df.index.get_level_values(0):
+                                try:
+                                    current_price = self.current_market_data_df.loc[interval].iloc[-1][symbol]['Close']
+                                    break
+                                except (KeyError, IndexError):
+                                    continue
+                    
+                    # Calculate unrealized PnL if we have all needed values
+                    if current_price is not None:
+                        if signal.signal_id not in unrealized_pnl_dict:
+                            unrealized_pnl_dict[signal.signal_id] = {}
+                        unrealized_pnl = (current_price - entry_price) * position_size
+                        unrealized_pnl_dict[signal.signal_id][symbol] = unrealized_pnl
+        
+        return unrealized_pnl_dict
+    
+    def print_updates_to_console(self):
+        # Print margins from all brokers (only non-empty combined accounts)
+        for broker in self.oms.margin_available:
+            for account in self.oms.margin_available[broker]:
+                margin_info = self.oms.margin_available[broker][account]
+                if margin_info.get('combined', {}).get('USD', {}):  # Only print if margin info exists
+                    combined_margin = margin_info['combined']['USD']
+                    pct_used = (combined_margin['buying_power_used'] / combined_margin['total_buying_power'] * 100) if combined_margin['total_buying_power'] else 0
+                    self.logger.info(f"{Fore.CYAN}{broker.upper()} Account {account}: Used=${combined_margin['buying_power_used']:,.2f}, Available=${combined_margin['buying_power_available']:,.2f}, Total=${combined_margin['total_buying_power']:,.2f}, Used%={pct_used:.2f}%{Style.RESET_ALL}")
+        
+        # Print unrealized PnL for open signals
+        unrealized_pnl_dict = self.get_unrealized_pnl_dict()
+        pair_totals = {}
+        for positions in unrealized_pnl_dict.values():
+            if len(positions) == 2:  # If it's a pair trade (2 symbols)
+                symbols = sorted(positions.keys())  # Sort to ensure consistent pair naming
+                pair_name = f"{symbols[0]}_{symbols[1]}"
+                pair_totals[pair_name] = sum(positions.values())
+        self.logger.info(f"Unrealized PnL: {pair_totals}")
+    
     def are_we_live(self, run_mode, system_timestamp, start_date):
         # convert system_timestamp and start_date to date only
         live_bool = False
@@ -127,6 +202,12 @@ class Mathematricks:
                 price = order.entryPrice if hasattr(order, 'entryPrice') else order.exitPrice if hasattr(order, 'exitPrice') else None
                 if price is None:
                     continue
+        total_orders_value = 0
+        for count, signal in enumerate(new_orders_from_sync):
+            for order in signal.orders:
+                price = order.entryPrice if hasattr(order, 'entryPrice') else order.exitPrice if hasattr(order, 'exitPrice') else None
+                if price is None:
+                    continue
                 order_value = price * order.orderQuantity if hasattr(order, 'entryPrice') else 0
                 if hasattr(order, 'orderType') and order.orderType.lower() == 'market_exit':
                     order_value = order_value * -1
@@ -138,75 +219,6 @@ class Mathematricks:
     
         return new_orders
 
-    def print_update_to_console(self, next_rows):
-        telegram_send_bool = True if (self.live_bool and self.system_timestamp.minute % 10 == 0 and self.update_telegram) or (self.live_bool and not self.first_telegram_msg_sent and self.update_telegram) else False
-        if telegram_send_bool:
-            self.first_telegram_msg_sent = True
-        
-        '''PRINT 2: Print Margin Available'''
-        broker = 'IBKR'.lower() if self.live_bool else 'SIM'.lower()
-        base_account_number = list(self.oms.margin_available[broker].keys())[0]
-        trading_currency = self.config_dict['trading_currency']
-        margin_keys_of_interest = ['total_buying_power', 'buying_power_available', 'buying_power_used']
-        log_msg = f'{broker.upper()} :::: '
-        for key in margin_keys_of_interest:
-            current_value = self.oms.margin_available[broker][base_account_number]['combined'][trading_currency][key]
-            log_msg += f"{key}: {round(current_value, 1)} | "
-            # self.logger.debug({f"Margin Available: {self.oms.margin_available}"})
-            if round(current_value, 1) < 0:
-                raise AssertionError(f"Negative Margin Available: {log_msg}")
-        total_buying_power = self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']
-        buying_power_used_pct = (self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['buying_power_used']/self.oms.margin_available[broker][base_account_number]['combined'][trading_currency]['total_buying_power']) * 100
-        if buying_power_used_pct > 100:
-            raise AssertionError(f"Buying Power Used % is greater than 100%: {buying_power_used_pct}")
-        log_msg += f'Margin Used %: {round(buying_power_used_pct, 2)}%'
-        self.logger.info(log_msg)
-        if self.live_bool and telegram_send_bool:
-            self.telegram_bot.send_message(log_msg)
-    
-        '''PRINT 3: Print Unrealized PnL: Don't run it if the system is not live and the next timestamp is not 1m'''
-        if self.live_bool:
-            unfilled_orders = self.oms.get_unfilled_orders()
-        
-        unrealized_pnl_abs_dict, unrealized_pnl_pct_dict = self.reporter.calculate_unrealized_pnl(self.oms.get_open_signals(), self.oms.get_unfilled_orders())
-        # Sort dictionary by values
-        unrealized_pnl_abs_dict = dict(sorted(unrealized_pnl_abs_dict.items(), key=lambda item: item[1], reverse=True))
-        # Sum of all the values of unrealized_pnl_abs_dict
-        total_unrealized_pnl_abs = sum(unrealized_pnl_abs_dict.values())
-        log_msg = f'Unrealized PnL Abs: TOTAL: ${round(total_unrealized_pnl_abs, 2)} | '
-        for key in unrealized_pnl_abs_dict.keys():
-            log_msg += f"{Fore.BLUE}{key}{Style.RESET_ALL}: {round(unrealized_pnl_abs_dict[key], 2)} | "
-        self.logger.info(log_msg)
-        if self.live_bool and telegram_send_bool:
-            self.telegram_bot.send_message(log_msg)
-        
-        log_msg = 'Unrealized PnL % : '
-        unrealized_pnl_pct_dict = dict(sorted(unrealized_pnl_pct_dict.items(), key=lambda item: item[1], reverse=True))
-        for key in unrealized_pnl_pct_dict.keys():
-            log_msg += f"{Fore.BLUE}{key}{Style.RESET_ALL}: {round((unrealized_pnl_pct_dict[key] * 100), 2)}% | "
-        self.logger.info(log_msg)
-        if self.live_bool and telegram_send_bool:
-            self.telegram_bot.send_message(log_msg)
-        
-        sequence_of_symbols = list(unrealized_pnl_pct_dict.keys())
-        msg = self.reporter.get_open_signals_print_msg(self.oms.get_open_signals(), total_buying_power, sequence_of_symbols)
-        self.logger.info(msg)
-        if self.live_bool and telegram_send_bool:
-            self.telegram_bot.send_message(msg)
-        
-        msg = self.reporter.get_stoploss_orders_print_msg(self.oms.get_open_signals(), self.live_bool, sequence_of_symbols, self.current_market_data_df)
-        self.logger.info(msg)
-        if self.live_bool and telegram_send_bool:
-            self.telegram_bot.send_message(msg)
-            
-        msg = ''            
-        for symbol in sequence_of_symbols:
-            for signal in self.oms.get_open_signals():
-                for order in signal.orders:
-                    if order.symbol == symbol and hasattr(order, 'filled_timestamp'):
-                        msg += f"Symbol: {symbol}, Filled Timestamp: {order.filled_timestamp} | "
-        # self.logger.debug(msg)
-                        
     def run(self):
         run_mode = config_dict['run_mode']
         
@@ -303,7 +315,7 @@ class Mathematricks:
                             self.oms.execute_signals(new_signals, self.system_timestamp, self.current_market_data_df, live_bool=self.live_bool)
                             
                             # Print update messages to console
-                            self.print_update_to_console(next_rows)
+                            self.print_updates_to_console()
                             
                             # Only trim if we've accumulated significant data
                             total_rows = sum(len(self.current_market_data_df.loc[interval]) 

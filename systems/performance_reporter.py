@@ -50,7 +50,7 @@ class Metrics:
         pnl_pct = (total_pnl / total_investment * 100) if total_investment > 0 else 0
         return total_pnl, pnl_pct
     
-    def calculate_signal_unrealized_pnl(self, signal, unfilled_orders):
+    def calculate_signal_unrealized_pnl(self, signal):
         """Calculate unrealized PnL for a signal considering unfilled orders
         Args:
             signal: Signal object to calculate unrealized PnL for
@@ -58,7 +58,7 @@ class Metrics:
         Returns:
             float: Unrealized PnL for the signal
         """
-        return self.calculate_signal_pnl(signal, force_close=True)[0]
+        return self.calculate_signal_pnl(signal, force_close=True)
     
     def calculate_backtest_winning_signals_count(self, closed_signals):
         """Count number of winning signals (positive PnL) from backtest
@@ -271,56 +271,7 @@ class PerformanceReporter(Metrics):
         self.backtest_performance_metrics = None
         self.backtest_report = None
         self.logger = create_logger(log_level='DEBUG', logger_name='REPORTER', print_to_console=True)
-
-    def calculate_unrealized_pnl(self, signals, unfilled_orders):
-        """Calculate unrealized PnL for active signals"""
-        unrealized_pnl_abs_dict = {}
-        unrealized_pnl_pct_dict = {}
     
-        for signal in signals:
-            if signal.status != 'closed' and signal.orders:  # Only calculate for active signals with orders
-                # For pairs trading, a signal can have multiple symbols
-                # Calculate PnL for each symbol in the signal
-                symbols = {order.symbol for order in signal.orders}
-                unrealized_pnl_abs, unrealized_pnl_pct = self.calculate_signal_pnl(signal, force_close=True)
-                # Attribute the PnL to each symbol in the signal
-                for symbol in symbols:
-                    unrealized_pnl_abs_dict[symbol] = unrealized_pnl_abs
-                    unrealized_pnl_pct_dict[symbol] = unrealized_pnl_pct
-            
-        return unrealized_pnl_abs_dict, unrealized_pnl_pct_dict
-    
-    def get_open_signals_print_msg(self, open_signals, total_buying_power, sequence_of_symbols):
-        """Generate message about open signals and their positions"""
-        signal_info = {}
-        
-        # Process each signal to gather information
-        for signal in open_signals:
-            if signal.status != 'closed':
-                for order in signal.orders:
-                    if order.status not in ['closed', 'cancelled']:
-                        symbol = order.symbol
-                        if symbol not in signal_info:
-                            signal_info[symbol] = {
-                                'quantity': 0,
-                                'strategy': signal.strategy_name
-                            }
-                        
-                        quantity = order.orderQuantity
-                        if order.orderDirection == 'SELL':
-                            quantity = -quantity
-                        signal_info[symbol]['quantity'] += quantity
-        
-        # Format the message
-        try:
-            msg = ' | '.join([f"{Fore.BLUE}{symbol}{Style.RESET_ALL}: QTY: {signal_info[symbol]['quantity']}, Strategy: {signal_info[symbol]['strategy']}" for symbol in sequence_of_symbols if symbol in signal_info])
-            msg = "Current Open Signals: " + msg
-        except Exception as e:
-            msg = "Current Open Signals: "
-            self.logger.error({'signal_info': signal_info, 'sequence_of_symbols': sequence_of_symbols, 'error': str(e)})
-        
-        return msg
-
     def calculate_backtest_performance_metrics(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal], market_data_df: pd.DataFrame, unfilled_orders: List[Order]) -> Dict:
         """Calculate various performance metrics for the backtest"""
         try:
