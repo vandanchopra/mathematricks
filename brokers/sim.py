@@ -38,8 +38,8 @@ class SIM_Execute():
             fill_price = current_price
             direction = 1 if order.orderDirection == 'BUY' else -1
             response_order.filled_price = fill_price
-            
             response_order.filled_timestamp = system_timestamp
+            # input(f"Market order filled for {symbol} at {fill_price}")
             if not hasattr(order, 'order_id') or order.order_id is None:
                 order_ = deepcopy(order)
             
@@ -86,6 +86,7 @@ class SIM_Execute():
                 self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
                 self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
                 fill_price = order.price if self.min_granularity == '1d' else current_close_price
+                # input(f"Stoploss order filled for {symbol} at {fill_price}")
                 
                 # Apply slippage and fees
                 direction = 1 if order.orderDirection == 'BUY' else -1

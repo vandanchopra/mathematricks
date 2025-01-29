@@ -12,7 +12,7 @@ class Strategy(BaseStrategy):
         self.strategy_name = 'strategy_1'
         self.granularity = "1d"
         self.orderType = "MARKET"
-        self.stoploss_pct = 0.05  # 5% stoploss
+        self.stoploss_pct = 0.15  # 5% stoploss
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
         self.timeInForce = "DAY"    #DAY, Expiry, IoC (immediate or cancel) , TTL (Order validity in minutes) 
         self.orderQuantity = 10
@@ -22,7 +22,9 @@ class Strategy(BaseStrategy):
         return self.strategy_name
         
     def datafeeder_inputs(self):
-        tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
+        tickers = ['DIS', 
+                   'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE'
+                   ]
         data_inputs = {'1d': {'columns': ['open', 'high', 'close', 'low', 'volume'] , 'lookback':52}}
         return data_inputs, tickers
         
@@ -85,6 +87,7 @@ class Strategy(BaseStrategy):
                                 order.status = "cancel"
                                 order.message = "Cancelled due to exit signal"
                                 order.fresh_update = True
+                                # input(f"Existing stoploss order for {symbol} cancelled")
                         
                         # Add market exit order
                         exit_direction = "SELL" if existing_entry.orderDirection == "BUY" else "BUY"
@@ -142,5 +145,6 @@ class Strategy(BaseStrategy):
                         market_neutral=False
                     )
                     signals.append(signal)
+                    self.logger.info({f'SIGNAL GENERATED: {symbol}'})
                     return_type = 'signals'
         return return_type, signals, self.tickers

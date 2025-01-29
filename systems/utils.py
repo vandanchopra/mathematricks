@@ -10,7 +10,7 @@ def create_logger(log_level, logger_name='mathematricks', print_to_console=True)
     if not logger.hasHandlers():
         # Create formatter
         # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s - %(filename)s:%(lineno)d')
+        formatter = logging.Formatter('%(asctime)s-%(name)s-%(levelname)s- %(message)s - %(filename)s:%(lineno)d')
         
         # Ensure the logs directory exists
         os.makedirs('./logs', exist_ok=True)

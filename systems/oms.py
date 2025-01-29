@@ -26,6 +26,36 @@ class OMS:
         self.update_telegram = self.config_dict['update_telegram']
         self.brokerage_fee = self.config_dict.get('brokerage_fee', 0.0035)
         self.slippage = self.config_dict.get('slippage', 0.001)
+
+    def _format_order_status_message(self, signal, order, prev_status, new_status):
+        """Format order status message with proper numeric formatting"""
+        def format_dollar_value(value):
+            return f"${value:.2f}" if value is not None else "N/A"
+
+        filled_price = getattr(order, 'filled_price', None)
+        value = order.orderQuantity * filled_price if filled_price is not None else None
+
+        values = {
+            'status': f"{prev_status}->{new_status}",
+            'signal_id': signal.signal_id[-5:],
+            'strategy': signal.strategy_name,
+            'type': order.order_type,
+            'symbol': order.symbol,
+            'direction': order.orderDirection,
+            'quantity': order.orderQuantity,
+            'fill': format_dollar_value(filled_price),
+            'pnl': format_dollar_value(getattr(order, 'pnl', None)),
+            'fee': format_dollar_value(getattr(order, 'brokerage_fee_abs', None)),
+            'slip': format_dollar_value(getattr(order, 'slippage_abs', None)),
+            'net_pnl': format_dollar_value(getattr(order, 'pnl_with_fee_and_slippage', None)),
+            'value': format_dollar_value(value)
+        }
+
+        return (f"Order Status:{values['status']} | SignalID:{values['signal_id']} | "
+                f"Strategy:{values['strategy']} | Type:{values['type']} | Symbol:{values['symbol']} | "
+                f"Dir:{values['direction']} | Qty:{values['quantity']} | Fill:{values['fill']} | "
+                f"PnL:{values['pnl']} | Fee:{values['fee']} | Slip:{values['slip']} | "
+                f"NetPnL:{values['net_pnl']} | Value:{values['value']}")
     
     def get_open_signals(self):
         """Get currently open signals"""
@@ -190,7 +220,6 @@ class OMS:
             
         # Calculate PnL
         pnl = (exit_position_value - entry_position_value) * exit_order_multiplier
-        self.logger.info(f"PnL for {symbol} - Entry Position: {entry_position_size}, Entry Value: {entry_position_value}, Exit Value: {exit_position_value}, PnL: {pnl}")
         pnl_with_fee_and_slippage = pnl - (exit_brokerage_fee + exit_slippage + entry_brokerage_fee_abs + entry_slippage_abs)
         
         return pnl, pnl_with_fee_and_slippage
@@ -266,33 +295,38 @@ class OMS:
                 self.open_signals[i] = signal
                 break
     
-    def check_if_signal_closed(self, signal: Signal):
+    def update_order(self, order, signal):
+        """Update an order within a signal and persist changes to open_signals"""
+        # Update the order in signal's orders list
+        for i, existing_order in enumerate(signal.orders):
+            if existing_order.order_id == order.order_id:
+                signal.orders[i] = order
+                break
+        # Update the signal in open_signals
+        self.update_signal(signal)
+    
+    def close_completed_signals(self, signal: Signal):
         # Close the signal and move it to closed_signals and pop it from open_signals if all orders in the signal are closed
         updated_signal = deepcopy(signal)
-        if all([order.status == 'closed' for order in signal.orders]):
+        if all([order.status in ['closed', 'cancelled', 'cancel'] for order in signal.orders]):
             signal_pnl, signal_pnl_with_fee_and_slippage = self.calculate_signal_pnl(updated_signal)
             updated_signal.pnl = signal_pnl
             updated_signal.pnl_with_fee_and_slippage = signal_pnl_with_fee_and_slippage
             self.closed_signals.append(updated_signal)
-            self.open_signals.remove(signal)
-            self.logger.info(f"Signal {updated_signal.signal_id} closed. Moving to closed_signals...")
+            self.open_signals = [open_signal for open_signal in self.open_signals if open_signal.signal_id != updated_signal.signal_id]
     
     def execute_signals(self, new_signals: List[Signal], system_timestamp: datetime, market_data_df: pd.DataFrame, live_bool: bool):
         """Process and execute trading signals"""
+        
         # Add new signals to open signals
         if new_signals:
             # self.logger.info("\n=== OMS Executing Signals ===")
             self.open_signals.extend(new_signals)
         
         # Process all open signals
-        closed_signals = []
-            
         self.logger.info(f"Processing {len(self.open_signals)} open signals.")
-        for sig_i, signal in enumerate(self.open_signals):
-            active_orders = []
-            positions_by_symbol = {}  # Track positions from closed orders
-
-            for order in signal.orders:
+        for signal in self.open_signals:
+            for order_num, order in enumerate(signal.orders):
                 # self.logger.info({'order':order})
                 symbol = order.symbol
                 status = order.status
@@ -357,31 +391,10 @@ class OMS:
                                 order.pnl = pnl
                                 order.pnl_with_fee_and_slippage = pnl_with_fee_and_slippage
                         
+                            signal.orders[order_num] = order
                             # Update the order in both the current signal and open_signals list
-                            # This ensures the updated status persists across iterations
-                            for i, existing_order in enumerate(signal.orders):
-                                if existing_order.order_id == order.order_id:
-                                    signal.orders[i] = order
-                                    break
-                            
-                            self.logger.info(f"""
-                                                ORDER STATUS CHANGE:
-                                                - Signal ID: {signal.signal_id}
-                                                - Strategy: {signal.strategy_name}
-                                                - Order Type: {order.order_type}
-                                                - Symbol: {order.symbol}
-                                                - Direction: {order.orderDirection}
-                                                - Quantity: {order.orderQuantity}
-                                                - Status Change: {prev_status} -> {new_status}
-                                                - Filled Price: ${getattr(order, 'filled_price', 'N/A')},
-                                                - PnL: ${order.pnl if getattr(order, 'pnl', None) else 'N/A'}
-                                                - Brokerage Fee: ${order.brokerage_fee_abs if getattr(order, 'brokerage_fee_abs', None) else 'N/A'}
-                                                - Slippage: ${order.slippage_abs if getattr(order, 'slippage_abs', None) else 'N/A'}
-                                                - PnL with Fee and Slippage: ${order.pnl_with_fee_and_slippage if getattr(order, 'pnl_with_fee_and_slippage', None) else 'N/A'}
-                                                - Order Value: ${order.orderQuantity * order.filled_price if getattr(order, 'filled_price', None) else 'N/A'}
-                                                """)
-                            
-                            # input("Press Enter to continue...")
+                            self.logger.info(self._format_order_status_message(signal, order, prev_status, new_status))
+
                             if new_status == 'closed':
                                 # 3. Update portfolio based on executed orders
                                 self.update_portfolio(order, signal)
@@ -391,5 +404,5 @@ class OMS:
                                 self.update_margin_on_fill(order, signal)
                                 # input("Press Enter to continue...")
                             
-                                # 5. Move closed signals to closed_signals list if all orders are closed
-                                self.check_if_signal_closed(signal)
+                            # 5. Move closed signals to closed_signals list if all orders are closed
+                            self.close_completed_signals(signal)

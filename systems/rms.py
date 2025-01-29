@@ -1,7 +1,7 @@
 from copy import deepcopy
 import json
 import uuid
-from systems.utils import create_logger
+from systems.utils import create_logger, sleeper
 from vault.base_strategy import Signal, Order
 from typing import List, Dict
 
@@ -75,7 +75,8 @@ class RMS:
         if total_risk > max_risk_amount:
             signal.status = 'rejected'
             signal.rejection_reason = f'Total risk ({total_risk}) exceeds max allowed ({max_risk_amount})'
-            raise AssertionError(f"Total risk ({total_risk}) exceeds max allowed ({max_risk_amount})")
+            self.logger.warning(f"Total risk ({total_risk}) exceeds max allowed ({max_risk_amount})")
+            sleeper(1, 'Sleeping for 1 second for the warning...')
 
         return signal
 
