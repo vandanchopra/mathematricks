@@ -22,7 +22,11 @@ class Order(BaseModel):
     broker_order_id: Optional[str] = None
     history: List[Dict[str, Any]] = []
     message: Optional[str] = None
+    brokerage_fee_abs: Optional[float] = None
+    slippage_abs: Optional[float] = None
     fresh_update: Optional[bool] = False
+    pnl: Optional[float] = None
+    pnl_with_fee_and_slippage: Optional[float] = None
     model_config = {
         "arbitrary_types_allowed": True
     }
@@ -42,6 +46,8 @@ class Signal(BaseModel):
     strategy_inputs: Optional[Dict[str, Any]] = None
     status: str = "pending"
     rejection_reason: Optional[str] = None
+    pnl: Optional[float] = None
+    pnl_with_fee_and_slippage: Optional[float] = None
     model_config = {
         "arbitrary_types_allowed": True
     }

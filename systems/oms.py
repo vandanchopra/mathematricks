@@ -147,8 +147,6 @@ class OMS:
         for portfolio_type in [signal.strategy_name, 'all']:
             current_pos = self.portfolio[portfolio_type][symbol]['position']
             new_pos = current_pos + position_change
-            self.logger.info({'position_change':position_change, 'current_pos':current_pos, 'new_pos':new_pos})
-            input('Press Enter to continue...')
             # Update position and recalculate value
             self.portfolio[portfolio_type][symbol]['position'] = new_pos
             if new_pos == 0:
@@ -160,33 +158,42 @@ class OMS:
             
     def calculate_position_pnl(self, order: Order, signal: Signal) -> float:
         """Calculate PnL for a position"""
-        if order.status != 'closed':
-            return 0
+        if order.status != 'closed' or order.entryOrderBool:
+            return 0, 0
         
         symbol = order.symbol
         order_direction = order.orderDirection
+        exit_order_multiplier = 1 if order_direction == 'SELL' else -1
         exit_position_size = order.orderQuantity
         exit_position_value = exit_position_size * order.filled_price
+        exit_brokerage_fee = order.brokerage_fee_abs
+        exit_slippage = order.slippage_abs
         
         # Find the entry order for the symbol and calculate the average entry price
-        entry_position = 0
+        entry_position_size = 0
         entry_position_value = 0
+        entry_brokerage_fee_abs = 0
+        entry_slippage_abs = 0
         for entry_order in signal.orders:
-            if entry_order.symbol == symbol and entry_order.entryOrderBool:
-                entry_position += entry_order.orderQuantity
-                entry_position_value += entry_position * entry_order.filled_price
-                if entry_position == exit_position_size:
+            if entry_order.symbol == symbol and entry_order.entryOrderBool and entry_order.status == 'closed':
+                if entry_position_size + entry_order.orderQuantity <= exit_position_size:
+                    entry_position_size += entry_order.orderQuantity
+                    entry_position_value += entry_order.orderQuantity * entry_order.filled_price
+                    entry_brokerage_fee_abs += entry_order.brokerage_fee_abs
+                    entry_slippage_abs += entry_order.slippage_abs
                     break
+                else:
+                    entry_position_size = exit_position_size
+                    entry_position_value += (exit_position_size - entry_position_size) * entry_order.filled_price
+                    entry_brokerage_fee_abs += entry_order.brokerage_fee_abs
+                    entry_slippage_abs += entry_order.slippage_abs
             
         # Calculate PnL
-        pnl = 0
-        if entry_position > 0:
-            pnl = exit_position_value - entry_position_value
-            self.logger.info(f"PnL for {symbol} - Entry Position: {entry_position}, Entry Value: {entry_position_value}, Exit Value: {exit_position_value}, PnL: {pnl}")
-            
-        return pnl
+        pnl = (exit_position_value - entry_position_value) * exit_order_multiplier
+        self.logger.info(f"PnL for {symbol} - Entry Position: {entry_position_size}, Entry Value: {entry_position_value}, Exit Value: {exit_position_value}, PnL: {pnl}")
+        pnl_with_fee_and_slippage = pnl - (exit_brokerage_fee + exit_slippage + entry_brokerage_fee_abs + entry_slippage_abs)
         
-        
+        return pnl, pnl_with_fee_and_slippage
     
     def update_margin_on_fill(self, order: Order, signal: Signal):
         if order.status != 'closed' or not signal.strategy_name:
@@ -198,12 +205,11 @@ class OMS:
         trading_currency = self.config_dict['trading_currency']
         
         # Calculate transaction cost
-        transaction_value = order.orderQuantity * order.filled_price
-        transaction_cost = transaction_value * (self.brokerage_fee + self.slippage)
+        transaction_cost = order.brokerage_fee_abs + order.slippage_abs
         
         # Reduce total_buying_power by transaction cost
-        self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power'] -= transaction_cost
-        self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power'] -= transaction_cost
+        self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= transaction_cost
+        self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] -= transaction_cost
         
         # Calculate position value
         position_value = order.orderQuantity * order.filled_price
@@ -213,23 +219,48 @@ class OMS:
             # Increase margin used
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] += abs(position_value)
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] += abs(position_value)
-        else:
-            # Exiting position - calculate PnL
-            pnl = self.calculate_position_pnl(order, signal)
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= abs(position_value)
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] -= abs(position_value)
             
+        else:
             # Decrease margin used and add PnL * -1
-            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= (position_value - pnl)
-            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= (position_value - pnl)
+            exit_order_direction = -1 if order.orderDirection == 'SELL' else 1
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= (position_value + (order.pnl * exit_order_direction))
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= (position_value + (order.pnl * exit_order_direction))
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] += (position_value + (order.pnl * exit_order_direction))
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] += (position_value + (order.pnl * exit_order_direction))
 
-        self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
-        input("Press Enter to continue...")
-
-    def check_if_signal_closed(self, signal: Signal, closed_signals: List[Signal]):
+        self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power'] = (
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] + 
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']
+        )
+        self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power'] = (
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] + 
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']
+        )
+        self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']}, Total Buying Power: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
+        
+    def calculate_signal_pnl(self, signal: Signal) -> float:
+        """Calculate PnL for a signal"""
+        pnl = 0
+        for order in signal.orders:
+            pnl += order.pnl or 0
+            
+        pnl_with_fee_and_slippage = 0
+        for order in signal.orders:
+            pnl_with_fee_and_slippage += order.pnl_with_fee_and_slippage or 0
+        return pnl, pnl_with_fee_and_slippage
+    
+    def check_if_signal_closed(self, signal: Signal):
         # Close the signal and move it to closed_signals and pop it from open_signals if all orders in the signal are closed
+        updated_signal = deepcopy(signal)
         if all([order.status == 'closed' for order in signal.orders]):
-            self.logger.info(f"Signal {signal.signal_id} closed. Moving to closed_signals...")
-            closed_signals.append(signal)
+            signal_pnl, signal_pnl_with_fee_and_slippage = self.calculate_signal_pnl(updated_signal)
+            updated_signal.pnl = signal_pnl
+            updated_signal.pnl_with_fee_and_slippage = signal_pnl_with_fee_and_slippage
+            self.closed_signals.append(updated_signal)
             self.open_signals.remove(signal)
+            self.logger.info(f"Signal {updated_signal.signal_id} closed. Moving to closed_signals...")
     
     def execute_signals(self, new_signals: List[Signal], system_timestamp: datetime, market_data_df: pd.DataFrame, live_bool: bool):
         """Process and execute trading signals"""
@@ -294,15 +325,23 @@ class OMS:
                         # 2. Update history - Log status change
                         if prev_status != new_status:
                             # Update the order with response data
+                            old_order = deepcopy(order)
                             order = response
                             # Update order with response data
-                            old_order = deepcopy(order)
                             old_order_history = getattr(old_order, 'history', [])
                             old_order.history = []
                             order.history = old_order_history + [old_order]
-                            # Preserve the history when updating order
-                            response.history = order.history + [old_order]
                             
+                            # Calculate transaction cost
+                            if order.status == 'closed':
+                                transaction_value = order.orderQuantity * order.filled_price
+                                order.brokerage_fee_abs = self.brokerage_fee * transaction_value
+                                order.slippage_abs = self.slippage * transaction_value
+                                # Exiting position - calculate PnL
+                                pnl, pnl_with_fee_and_slippage = self.calculate_position_pnl(order, signal)
+                                order.pnl = pnl
+                                order.pnl_with_fee_and_slippage = pnl_with_fee_and_slippage
+                        
                             # Update the order in both the current signal and open_signals list
                             # This ensures the updated status persists across iterations
                             for i, existing_order in enumerate(signal.orders):
@@ -319,21 +358,23 @@ class OMS:
                                                 - Direction: {order.orderDirection}
                                                 - Quantity: {order.orderQuantity}
                                                 - Status Change: {prev_status} -> {new_status}
-                                                - Filled Price: ${getattr(order, 'filled_price', 'N/A')}
+                                                - Filled Price: ${getattr(order, 'filled_price', 'N/A')},
+                                                - PnL: ${order.pnl if getattr(order, 'pnl', None) else 'N/A'}
+                                                - Brokerage Fee: ${order.brokerage_fee_abs if getattr(order, 'brokerage_fee_abs', None) else 'N/A'}
+                                                - Slippage: ${order.slippage_abs if getattr(order, 'slippage_abs', None) else 'N/A'}
+                                                - PnL with Fee and Slippage: ${order.pnl_with_fee_and_slippage if getattr(order, 'pnl_with_fee_and_slippage', None) else 'N/A'}
                                                 - Order Value: ${order.orderQuantity * order.filled_price if getattr(order, 'filled_price', None) else 'N/A'}
                                                 """)
                             
-                            
                             # input("Press Enter to continue...")
-                            # 3. Update portfolio based on executed orders
                             if new_status == 'closed':
+                                # 3. Update portfolio based on executed orders
                                 self.update_portfolio(order, signal)
+                                self.logger.info({"portfolio":self.portfolio})
                             
-                            # 4. Update margin based on new portfolio state
-                            self.update_margin_on_fill(order, signal)
-                            self.logger.info({"portfolio":self.portfolio})
-                            input("Press Enter to continue...")
+                                # 4. Update margin based on new portfolio state
+                                self.update_margin_on_fill(order, signal)
+                                # input("Press Enter to continue...")
                             
-                            # 5. Move closed signals to closed_signals list if all orders are closed
-                            if new_status == 'closed':
-                                self.check_if_signal_closed(signal, closed_signals)
+                                # 5. Move closed signals to closed_signals list if all orders are closed
+                                self.check_if_signal_closed(signal)

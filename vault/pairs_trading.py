@@ -525,7 +525,7 @@ class Strategy(BaseStrategy):
                                         - Z-Score: {current_z:.2f}
                                         - Status: {signal.status}
                                         """)
-                    # input("Press Enter to continue...")
+                    input("Press Enter to continue...")
                     return_type = 'signals'
 
                 except (ValueError, TypeError) as e:

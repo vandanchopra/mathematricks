@@ -30,8 +30,6 @@ class SIM_Execute():
         granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
         current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
         current_system_timestamp = market_data_df.index.get_level_values(1)[-1]
-        slippage = getattr(order, 'slippage', 0.001)  # Default 0.1%
-        brokerage_fee = getattr(order, 'brokerage_fee', 0.0035)  # Default 0.35%
         if order.order_type == 'MARKET':
             response_order = deepcopy(order)
             response_order.status = 'closed'
@@ -39,8 +37,6 @@ class SIM_Execute():
             # Apply slippage and fees to fill price
             fill_price = current_price
             direction = 1 if order.orderDirection == 'BUY' else -1
-            fill_price *= (1 + direction * slippage)  # Apply slippage
-            fill_price *= (1 + direction * brokerage_fee)  # Apply brokerage fee
             response_order.filled_price = fill_price
             
             response_order.filled_timestamp = system_timestamp
