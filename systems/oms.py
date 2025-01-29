@@ -281,7 +281,7 @@ class OMS:
         # Process all open signals
         closed_signals = []
             
-        self.logger.info(f"Processing {len(self.open_signals)} open signals... Signal IDs: {[signal.signal_id for signal in self.open_signals]}")
+        self.logger.info(f"Processing {len(self.open_signals)} open signals.")
         for sig_i, signal in enumerate(self.open_signals):
             active_orders = []
             positions_by_symbol = {}  # Track positions from closed orders

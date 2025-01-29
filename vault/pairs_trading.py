@@ -29,14 +29,16 @@ class Strategy(BaseStrategy):
         self.entry_z = 1.5  # More aggressive entry for more trades
         self.exit_z = 0.75  # Allow more room for mean reversion
         self.profit_target_z = 1.25  # Faster profit taking
-        self.stop_loss_pct = 0.03  # Wider stop loss for more room    
-        self.max_position_pct = 0.1  # Higher position sizing for more opportunities    
+        self.stop_loss_pct = 0.03  # Wider stop loss for more room
+        self.max_position_pct = 0.25  # Larger position size for strong signals
+        
         self.debug_mode = True  # Enable detailed validation logging
         
         # Risk Management - Enhanced
         self.orderType = "MARKET"
+        self.exit_order_type = "stoploss_pct"
         self.timeInForce = "DAY"
-        self.orderQuantity = 30  # Higher base quantity for 2011 volatility
+        self.orderQuantity = 1500  # Higher base quantity for 2011 volatility
         
         # Market Regime Parameters - More adaptive
         self.volatility_window = 20  # Shorter window for faster reaction
@@ -47,13 +49,13 @@ class Strategy(BaseStrategy):
         # Historically reliable pairs for 2011 environment
         self.potential_pairs = [
             ('XOM', 'CVX'),     # Energy - strong historical relationship
-            # ('JPM', 'GS'),      # Financials - similar business models
-            # ('MS', 'GS'),       # Investment banking focus
-            # ('BAC', 'JPM'),     # Large bank correlation
-            # ('COP', 'CVX'),     # Oil & gas integration
-            # ('HD', 'LOW'),      # Home improvement retail
-            # ('USB', 'WFC'),     # Regional banking focus
-            # ('MRK', 'JNJ'),     # Healthcare/pharma
+            ('JPM', 'GS'),      # Financials - similar business models
+            ('MS', 'GS'),       # Investment banking focus
+            ('BAC', 'JPM'),     # Large bank correlation
+            ('COP', 'CVX'),     # Oil & gas integration
+            ('HD', 'LOW'),      # Home improvement retail
+            ('USB', 'WFC'),     # Regional banking focus
+            ('MRK', 'JNJ'),     # Healthcare/pharma
         ]
         
         # Load required data
@@ -385,28 +387,22 @@ class Strategy(BaseStrategy):
         zscore = (spread - rolling_mean) / rolling_std
         return zscore.iloc[-1]
 
-    def generate_signals(self, next_rows, market_data_df, system_timestamp, total_buying_power=0.0, buying_power_used=0.0, open_signals=None):
+    def generate_signals(
+        self,
+        next_rows,
+        market_data_df,
+        system_timestamp,
+        total_buying_power: float = 0.0,
+        buying_power_used: float = 0.0,
+        open_signals: Optional[List[Signal]] = None
+    ) -> Tuple[Optional[str], List[Signal], List[str]]:
         """Generate trading signals with dynamic pair selection and risk management"""
-        if open_signals is None:
-            open_signals = []
-            
-        signals = []
-        return_type = None
-
+        signal_response = SignalResponse(return_type=None, signals=[], tickers=self.tickers)
         if self.granularity not in market_data_df.index.levels[0]:
-            return None, signals, self.tickers
+            return None, signal_response.signals, self.tickers
 
-        
-        # Track active pairs to avoid duplicate trades
-        active_pairs = set()
-        for signal in open_signals:
-            # Get the strategy_order_id from signal inputs
-            open_pair = set([order.symbol for order in signal.orders])
-            active_pairs.update(open_pair)
-        
         # Validate and update pairs
         self.validated_pairs = []
-        
         for pair in self.potential_pairs:
             spread, hedge_ratio = self.calculate_spread(market_data_df, pair, system_timestamp)
             if spread is not None and hedge_ratio is not None:
@@ -414,19 +410,10 @@ class Strategy(BaseStrategy):
 
         # Generate signals for validated pairs
         for (pair, hedge_ratio) in self.validated_pairs:
-            stock1, stock2 = pair
-            
-            # Skip pairs with active positions            
-            # self.logger.info({'pair': pair, 'active_pairs': active_pairs})
-            # check if the two symbols in the pair are in any of the active pairs
-            if any(symbol in active_pairs for symbol in pair):
-                self.logger.info(f"Skipping pair {pair} due to active positions")
-                continue
-                
             spread, _ = self.calculate_spread(market_data_df, pair, system_timestamp)
             if spread is None:
                 continue
-            
+
             # Market regime detection
             high_vol, strong_trend = self.detect_market_regime(spread)
             
@@ -450,6 +437,7 @@ class Strategy(BaseStrategy):
             if abs(current_z) > entry_threshold:
                 # self.logger.info(f"Generating signal for pair {pair} with z-score {current_z:.2f}")
                 is_long = current_z < -entry_threshold
+                stock1, stock2 = pair
                 
                 try:
                     price1 = float(market_data_df.loc[self.granularity].xs(stock1, axis=1, level='symbol')['close'].iloc[-1])
@@ -467,68 +455,98 @@ class Strategy(BaseStrategy):
                     z_factor = min(abs(current_z) / self.entry_z, 2.0)
                     stop_loss = base_stop * (2.0 - z_factor)  # Tighter stops for extreme z-scores
                     strategy_order_id = f"{stock1}_{stock2}_{uuid.uuid4().hex}"
-                    
-                    # Create a single signal for the pair
-                    signal = Signal(
-                        strategy_name=self.strategy_name,
-                        timestamp=system_timestamp,
-                        signal_strength=int(min(round(abs(current_z)), 10)),
-                        granularity=self.granularity,
-                        signal_type='BUY_SELL',
-                        market_neutral=True,
-                        total_buying_power=total_buying_power,
-                        buying_power_used=buying_power_used
-                    )
-                    
-                    # Add orders for both legs of the pair
-                    orders = []
-                    for stock, size, price, is_first_leg in [(stock1, size1, price1, True), (stock2, size2, price2, False)]:
-                        # Main order
+                    # Generate signals for pair
+                    pair_orders = []
+                    for stock, size, price, is_first_leg in [
+                        (stock1, size1, price1, True),
+                        (stock2, size2, price2, False)
+                    ]:
                         order = Order(
                             symbol=stock,
                             orderQuantity=abs(size),
                             orderDirection="BUY" if (is_long == is_first_leg) else "SELL",
                             order_type=self.orderType,
-                            entryOrderBool=True,
                             symbol_ltp={system_timestamp: price},
-                            status="pending",
-                            timeInForce=self.timeInForce
+                            timeInForce=self.timeInForce,
+                            entryOrderBool=True
                         )
-                        orders.append(order)
+                        pair_orders.append(order)
                         
-                        # Stoploss order (5% away from entry)
-                        is_buy = order.orderDirection == "BUY"
-                        stoploss_price = price * (0.95 if is_buy else 1.05)  # 5% below for buys, 5% above for sells
-                        stoploss_order = Order(
+                        # Add exit orders
+                        # Calculate stop loss price
+                        stop_loss_price = None
+                        if self.exit_order_type == "stoploss_pct":
+                            stop_loss_price = price * (1 - stop_loss) if order.orderDirection == "BUY" else price * (1 + stop_loss)
+                        
+                        # Calculate profit target based on z-score
+                        profit_target_price = None
+                        if is_first_leg:
+                            # For first leg, exit when spread moves toward mean
+                            profit_target_pct = stop_loss * (self.profit_target_z / self.entry_z)
+                            profit_target_price = price * (1 + profit_target_pct) if order.orderDirection == "BUY" else price * (1 - profit_target_pct)
+                        else:
+                            # For second leg, mirror the first leg's exit
+                            profit_target_pct = stop_loss * (self.profit_target_z / self.entry_z)
+                            profit_target_price = price * (1 - profit_target_pct) if order.orderDirection == "BUY" else price * (1 + profit_target_pct)
+                        
+                        # Add both stop loss and profit target orders
+                        # 1. Stop Loss Order
+                        # Use stop loss for risk management
+                        stop_loss_order = Order(
                             symbol=stock,
                             orderQuantity=abs(size),
-                            orderDirection="SELL" if is_buy else "BUY",  # Opposite of main order
+                            orderDirection="SELL" if order.orderDirection == "BUY" else "BUY",
                             order_type="STOPLOSS",
-                            price=stoploss_price,
-                            entryOrderBool=False,
+                            price=stop_loss_price,
                             symbol_ltp={system_timestamp: price},
-                            status="pending",
-                            timeInForce=self.timeInForce
+                            timeInForce=self.timeInForce,
+                            entryOrderBool=False
                         )
-                        orders.append(stoploss_order)
+                        pair_orders.append(stop_loss_order)
                         
-                    signal.orders = orders
-                    signal.strategy_inputs = {'strategy_order_id': strategy_order_id}
-                    signals.append(signal)
-                    self.logger.info(f"""
-                                        SIGNAL GENERATED:
-                                        - Strategy: {signal.strategy_name}
-                                        - Strength: {signal.signal_strength}
-                                        - Orders:
-                                        - {stock1}: Direction={orders[0].orderDirection}, Qty={orders[0].orderQuantity}, Price=${price1:.2f}, Value=${(orders[0].orderQuantity * price1):.2f}
-                                        - {stock2}: Direction={orders[1].orderDirection}, Qty={orders[1].orderQuantity}, Price=${price2:.2f}, Value=${(orders[1].orderQuantity * price2):.2f}
-                                        - Z-Score: {current_z:.2f}
-                                        - Status: {signal.status}
-                                        """)
-                    # input("Press Enter to continue...")
-                    return_type = 'signals'
-
+                        # 2. Profit Target Order
+                        # Use limit order for profit taking
+                        profit_target_order = Order(
+                            symbol=stock,
+                            orderQuantity=abs(size),
+                            orderDirection="SELL" if order.orderDirection == "BUY" else "BUY",
+                            order_type="LIMIT",
+                            price=profit_target_price,
+                            symbol_ltp={system_timestamp: price},
+                            timeInForce=self.timeInForce,
+                            entryOrderBool=False
+                        )
+                        pair_orders.append(profit_target_order)
+                    
+                    # Create Signal object containing both orders
+                    signal = Signal(
+                        strategy_name=self.strategy_name,
+                        timestamp=system_timestamp,
+                        orders=pair_orders,
+                        signal_strength=float(min(abs(current_z), 10.0)),
+                        signal_correlation=None,
+                        granularity=self.granularity,
+                        signal_type="BUY_SELL",
+                        market_neutral=True,
+                        strategy_inputs={
+                            'strategy_order_id': strategy_order_id,
+                            'stoploss_pct': stop_loss,
+                            'exit_order_type': self.exit_order_type
+                        }
+                    )
+                    
+                    signal_response.signals.append(signal)
+                    if not signal_response.return_type:
+                        signal_response.return_type = "signals"
+                        
                 except (ValueError, TypeError) as e:
                     self.logger.error(f"Error processing prices for pair {pair}: {e}")
                     continue
-        return return_type, signals, self.tickers
+
+        # if len(signal_response.signals) > 0:
+        
+        # if len(signals) > 0:
+        #     self.logger.info(signals)
+        #     input("Press Enter to continue...")
+        
+        return signal_response.return_type, signal_response.signals, signal_response.tickers
