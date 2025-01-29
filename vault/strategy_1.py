@@ -12,6 +12,7 @@ class Strategy(BaseStrategy):
         self.strategy_name = 'strategy_1'
         self.granularity = "1d"
         self.orderType = "MARKET"
+        self.stoploss_pct = 0.05  # 5% stoploss
         self.exit_order_type = "stoploss_pct" #sl_pct , sl_abs
         self.timeInForce = "DAY"    #DAY, Expiry, IoC (immediate or cancel) , TTL (Order validity in minutes) 
         self.orderQuantity = 10
@@ -22,7 +23,7 @@ class Strategy(BaseStrategy):
         
     def datafeeder_inputs(self):
         tickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'HBNC', 'NFLX', 'GS', 'AMD', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'UNH', 'DIS', 'HD', 'CRM', 'NKE']
-        data_inputs = {'1d': {'columns': ['open', 'high', 'close', 'volume'] , 'lookback':52}}
+        data_inputs = {'1d': {'columns': ['open', 'high', 'close', 'low', 'volume'] , 'lookback':52}}
         return data_inputs, tickers
         
     def generate_signals(self, next_rows, market_data_df, system_timestamp, open_signals=None):
@@ -31,6 +32,7 @@ class Strategy(BaseStrategy):
         """
         signals = []
         return_type = None
+        open_signals = open_signals or []
 
         for symbol in set(market_data_df["open"].columns):
             # If 
@@ -57,27 +59,88 @@ class Strategy(BaseStrategy):
                 signal_strength = 0
                 
             if signal_strength != 0:
-                # Create Order object
-                order = Order(
-                    symbol=symbol,
-                    orderQuantity=self.orderQuantity,
-                    orderDirection=orderDirection,
-                    order_type=self.orderType,
-                    symbol_ltp={system_timestamp: current_price},
-                    timeInForce=self.timeInForce,
-                    entryOrderBool=True
-                )
+                # Check if we have an open signal for this symbol
+                existing_signal = None
+                for signal in open_signals:
+                    if signal.status not in ['closed', 'rejected']:
+                        for order in signal.orders:
+                            if order.symbol == symbol and order.status == 'closed' and order.entryOrderBool:
+                                existing_signal = signal
+                                break
+                        if existing_signal:
+                            break
                 
-                # Create Signal object
-                signal = Signal(
-                    strategy_name=self.strategy_name,
-                    timestamp=system_timestamp,
-                    orders=[order],
-                    signal_strength=signal_strength,
-                    granularity=self.granularity,
-                    signal_type="BUY_SELL",
-                    market_neutral=False
-                )
-                signals.append(signal)
-                return_type = 'signals'
+                # If we have an existing position and get a reverse signal, add exit order
+                if existing_signal:
+                    existing_entry = None
+                    for order in existing_signal.orders:
+                        if order.symbol == symbol and order.entryOrderBool and order.status == 'closed':
+                            existing_entry = order
+                            break
+                    
+                    if existing_entry and existing_entry.orderDirection != orderDirection:
+                        # Cancel any existing stoploss orders
+                        for order in existing_signal.orders:
+                            if order.order_type == "STOPLOSS" and order.status == "open":
+                                order.status = "cancel"
+                                order.message = "Cancelled due to exit signal"
+                                order.fresh_update = True
+                        
+                        # Add market exit order
+                        exit_direction = "SELL" if existing_entry.orderDirection == "BUY" else "BUY"
+                        exit_order = Order(
+                            symbol=symbol,
+                            orderQuantity=self.orderQuantity,
+                            orderDirection=orderDirection,
+                            order_type=self.orderType,
+                            symbol_ltp={system_timestamp: current_price},
+                            timeInForce=self.timeInForce,
+                            entryOrderBool=False,
+                            status="pending"
+                        )
+                        existing_signal.orders.append(exit_order)
+                        existing_signal.signal_update = True
+                        signals.append(existing_signal)
+                        return_type = 'signals'
+                
+                # If no existing position and we get a signal, create new entry
+                elif not existing_signal:
+                    # Create Order object
+                    order = Order(
+                        symbol=symbol,
+                        orderQuantity=self.orderQuantity,
+                        orderDirection=orderDirection,
+                        order_type=self.orderType,
+                        symbol_ltp={system_timestamp: current_price},
+                        timeInForce=self.timeInForce,
+                        entryOrderBool=True,
+                        status="pending"
+                    )
+
+                    # Create stoploss order
+                    stoploss_price = current_price * (1 - self.stoploss_pct) if orderDirection == "BUY" else current_price * (1 + self.stoploss_pct)
+                    stoploss_order = Order(
+                        symbol=symbol,
+                        orderQuantity=self.orderQuantity,
+                        orderDirection="SELL" if orderDirection == "BUY" else "BUY",
+                        order_type="STOPLOSS",
+                        price=stoploss_price,
+                        symbol_ltp={system_timestamp: current_price},
+                        timeInForce=self.timeInForce,
+                        entryOrderBool=False,
+                        status="pending"
+                    )
+                    
+                    # Create Signal object
+                    signal = Signal(
+                        strategy_name=self.strategy_name,
+                        timestamp=system_timestamp,
+                        orders=[order, stoploss_order],
+                        signal_strength=signal_strength,
+                        granularity=self.granularity,
+                        signal_type="BUY_SELL",
+                        market_neutral=False
+                    )
+                    signals.append(signal)
+                    return_type = 'signals'
         return return_type, signals, self.tickers

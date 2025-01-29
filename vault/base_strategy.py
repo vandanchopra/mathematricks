@@ -14,7 +14,7 @@ class Order(BaseModel):
     price: Optional[float] = None  # For LIMIT and STOPLOSS orders, None for MARKET
     symbol_ltp: Dict[datetime, float]
     timeInForce: Literal["DAY", "Expiry", "IoC", "TTL", "GTC"]
-    status: str = "pending"
+    status: Literal["pending", "open", "closed", 'cancel', 'cancelled', 'modify']
     filled_price: Optional[float] = None
     filled_timestamp: Optional[datetime] = None
     order_id: Optional[str] = None
@@ -48,6 +48,7 @@ class Signal(BaseModel):
     rejection_reason: Optional[str] = None
     pnl: Optional[float] = None
     pnl_with_fee_and_slippage: Optional[float] = None
+    signal_update: Optional[bool] = False
     model_config = {
         "arbitrary_types_allowed": True
     }

@@ -120,7 +120,15 @@ class SIM_Execute():
         return response_order
     
     def cancel_order(self, order, system_timestamp):
-        pass
+        if order.status.lower() in  ['open','pending', 'cancel', 'cancelled']:
+            response_order = deepcopy(order)
+            response_order.status = 'cancelled'
+            setattr(response_order, 'fresh_update', True)
+            setattr(response_order, 'message', 'Order cancelled.')
+            return response_order
+        else:
+            raise ValueError(f"Order status '{order.status}' cannot be cancelled.")
+            return None           
            
     def execute_order(self, order, market_data_df, system_timestamp):
         if order.status == 'pending':
@@ -131,6 +139,8 @@ class SIM_Execute():
             response_order = self.update_order_status(order, market_data_df=market_data_df)
         elif order.status == 'modify':
             response_order = self.modify_order(order, system_timestamp=system_timestamp)
+        elif order.status == 'cancel':
+            response_order = self.cancel_order(order, system_timestamp=system_timestamp)
         else:
             self.logger.debug({'order':order})
             raise ValueError(f"Order status '{order.status}' not supported.")

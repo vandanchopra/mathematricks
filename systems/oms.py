@@ -256,9 +256,15 @@ class OMS:
         for order in signal.orders:
             pnl_with_fee_and_slippage += order.pnl_with_fee_and_slippage or 0
             
-        self.logger.info(f"Signal PnL: {pnl}, Signal PnL with Fee and Slippage: {pnl_with_fee_and_slippage}")
+        # self.logger.info(f"Signal PnL: {pnl}, Signal PnL with Fee and Slippage: {pnl_with_fee_and_slippage}")
         
         return pnl, pnl_with_fee_and_slippage
+    
+    def update_signal(self, signal):
+        for i, open_signal in enumerate(self.open_signals):
+            if open_signal.signal_id == signal.signal_id:
+                self.open_signals[i] = signal
+                break
     
     def check_if_signal_closed(self, signal: Signal):
         # Close the signal and move it to closed_signals and pop it from open_signals if all orders in the signal are closed

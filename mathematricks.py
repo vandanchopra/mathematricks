@@ -295,6 +295,13 @@ class Mathematricks:
                             new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp, self.oms.open_signals)
                             self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
                             
+                            # Send updated signals to OMS
+                            for signal in new_signals['signals']:
+                                # self.logger.info({'signal':signal})
+                                if signal.signal_update:
+                                    self.oms.update_signal(signal)
+                                    new_signals['signals'].remove(signal)
+                            
                             # Check if we're going live
                             time_start = time.time()
                             prev_live_bool = self.live_bool
