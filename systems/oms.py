@@ -37,6 +37,7 @@ class OMS:
 
         values = {
             'status': f"{prev_status}->{new_status}",
+            'price': format_dollar_value(order.price),
             'signal_id': signal.signal_id[-5:],
             'strategy': signal.strategy_name,
             'type': order.order_type,
@@ -52,7 +53,7 @@ class OMS:
         }
 
         return (f"Order Status:{values['status']} | SignalID:{values['signal_id']} | "
-                f"Strategy:{values['strategy']} | Type:{values['type']} | Symbol:{values['symbol']} | "
+                f"Strategy:{values['strategy']} | Type:{values['type']} | Price: {values['price']} | Symbol:{values['symbol']} | "
                 f"Dir:{values['direction']} | Qty:{values['quantity']} | Fill:{values['fill']} | "
                 f"PnL:{values['pnl']} | Fee:{values['fee']} | Slip:{values['slip']} | "
                 f"NetPnL:{values['net_pnl']} | Value:{values['value']}")
@@ -236,6 +237,7 @@ class OMS:
         # Calculate transaction cost
         transaction_cost = order.brokerage_fee_abs + order.slippage_abs
         # self.logger.info(f"Transaction Cost: {transaction_cost}, Brokerage Fee: {order.brokerage_fee_abs}, Slippage: {order.slippage_abs}")
+        # self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']}, Total Buying Power: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
         
         # Reduce total_buying_power by transaction cost
         self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= transaction_cost
@@ -251,15 +253,13 @@ class OMS:
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] += abs(position_value)
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= abs(position_value)
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] -= abs(position_value)
-            
         else:
             # Decrease margin used and add PnL * -1
             exit_order_direction = order.orderDirection
             exit_order_multiplier = -1 if exit_order_direction == 'SELL' else 1
-            
             entry_order_margin_used = position_value + (order.pnl * exit_order_multiplier)
             exit_order_value_returned = entry_order_margin_used + order.pnl
-            
+            # self.logger.info({'position_value':position_value, 'entry_order_margin_used':entry_order_margin_used, 'exit_order_value_returned':exit_order_value_returned, 'pnl':order.pnl, 'exit_order_multiplier':exit_order_multiplier})
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= entry_order_margin_used
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= entry_order_margin_used
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] += exit_order_value_returned
@@ -274,6 +274,7 @@ class OMS:
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']
         )
         # self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']}, Total Buying Power: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
+        # input("Press Enter to continue...")
         
     def calculate_signal_pnl(self, signal: Signal) -> float:
         """Calculate PnL for a signal"""
@@ -305,13 +306,48 @@ class OMS:
         # Update the signal in open_signals
         self.update_signal(signal)
     
-    def close_completed_signals(self, signal: Signal):
+    def close_completed_signals_old(self, signal: Signal):
         # Close the signal and move it to closed_signals and pop it from open_signals if all orders in the signal are closed
         updated_signal = deepcopy(signal)
         if all([order.status in ['closed', 'cancelled', 'cancel'] for order in signal.orders]):
             signal_pnl, signal_pnl_with_fee_and_slippage = self.calculate_signal_pnl(updated_signal)
             updated_signal.pnl = signal_pnl
             updated_signal.pnl_with_fee_and_slippage = signal_pnl_with_fee_and_slippage
+            self.closed_signals.append(updated_signal)
+            self.open_signals = [open_signal for open_signal in self.open_signals if open_signal.signal_id != updated_signal.signal_id]
+    
+    def close_completed_signals(self, signal: Signal):
+        """Close signals based on position tracking rather than order status"""
+        updated_signal = deepcopy(signal)
+        
+        # Create positions dictionary to track net position per symbol
+        open_positions_dict = {}
+        
+        # Calculate net positions from closed orders
+        for order in updated_signal.orders:
+            if order.status == 'closed':
+                symbol = order.symbol
+                if symbol not in open_positions_dict:
+                    open_positions_dict[symbol] = 0
+                # Add or subtract quantity based on direction
+                position_change = order.orderQuantity if order.orderDirection == 'BUY' else -order.orderQuantity
+                open_positions_dict[symbol] += position_change
+        
+        # Check if all positions are flat (0)
+        all_positions_flat = all(position == 0 for position in open_positions_dict.values())
+        
+        if all_positions_flat:
+            # Cancel any remaining open orders since positions are flat
+            for order in updated_signal.orders:
+                if order.status == 'open':
+                    order.status = 'cancelled'
+                    
+            # Calculate final PnL and close the signal
+            signal_pnl, signal_pnl_with_fee_and_slippage = self.calculate_signal_pnl(updated_signal)
+            updated_signal.pnl = signal_pnl
+            updated_signal.pnl_with_fee_and_slippage = signal_pnl_with_fee_and_slippage
+            
+            # Move signal to closed signals
             self.closed_signals.append(updated_signal)
             self.open_signals = [open_signal for open_signal in self.open_signals if open_signal.signal_id != updated_signal.signal_id]
     

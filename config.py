@@ -25,7 +25,7 @@ config_dict = {
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
     # 'live_start_date': datetime(year=2024, month=11, day=28, hour=9, minute=31, second=0).astimezone(pytz.timezone('US/Eastern')),
-    'strategies':['strategy_1'], # 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set. strategy_3_1_take_profit_pct
+    'strategies':['pairs_trading'], # 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set. strategy_3_1_take_profit_pct
     'data_update_inputs': {'data_sources':{'sim':'ibkr', 'live':'ibkr'}}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'account_info':{

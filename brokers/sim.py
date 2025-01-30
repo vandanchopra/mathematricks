@@ -29,11 +29,10 @@ class SIM_Execute():
         symbol = order.symbol
         granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
         current_price = market_data_df.loc[granularity].xs(symbol, axis=1, level='symbol')['close'].iloc[-1]
-        current_system_timestamp = market_data_df.index.get_level_values(1)[-1]
+        
         if order.order_type == 'MARKET':
             response_order = deepcopy(order)
             response_order.status = 'closed'
-            
             # Apply slippage and fees to fill price
             fill_price = current_price
             direction = 1 if order.orderDirection == 'BUY' else -1
@@ -42,14 +41,17 @@ class SIM_Execute():
             # input(f"Market order filled for {symbol} at {fill_price}")
             if not hasattr(order, 'order_id') or order.order_id is None:
                 order_ = deepcopy(order)
-            
         elif order.order_type == 'STOPLOSS':
             response_order = deepcopy(order)
             response_order.status = 'open'
             response_order.broker_order_id = generate_hash_id(order.dict(), system_timestamp)
             setattr(response_order, 'message', 'Stop-loss order placed.')
             setattr(response_order, 'fresh_update', True)
-            
+        elif order.order_type == 'LIMIT':
+            response_order = deepcopy(order)
+            response_order.status = 'open'
+            setattr(response_order, 'fresh_update', True)
+            setattr(response_order, 'message', 'Limit order placed.')
         else:
             response_order = deepcopy(order)
         
@@ -83,16 +85,11 @@ class SIM_Execute():
                 response_order = deepcopy(order)
                 response_order.status = 'closed'
                 self.available_granularities = market_data_df.index.get_level_values(0).unique()
-                self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
-                self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
+                # self.min_granularity_val = min([self.granularity_lookup_dict[granularity] for granularity in self.available_granularities])
+                # self.min_granularity = list(self.granularity_lookup_dict.keys())[list(self.granularity_lookup_dict.values()).index(self.min_granularity_val)]
+                self.min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
                 fill_price = order.price if self.min_granularity == '1d' else current_close_price
                 # input(f"Stoploss order filled for {symbol} at {fill_price}")
-                
-                # Apply slippage and fees
-                direction = 1 if order.orderDirection == 'BUY' else -1
-                fill_price *= (1 + direction * slippage)  # Apply slippage
-                fill_price *= (1 + direction * brokerage_fee)  # Apply brokerage fee
-                
                 response_order.filled_price = fill_price
                 response_order.filled_timestamp = system_timestamp
                 setattr(response_order, 'fresh_update', True)
@@ -101,6 +98,22 @@ class SIM_Execute():
                 response_order = deepcopy(order)
                 response_order.status = 'open'
                 setattr(response_order, 'fresh_update', False)
+        
+        elif order.order_type == 'LIMIT':
+            if (order.orderDirection == 'BUY' and current_low_price <= order.price) or (order.orderDirection == 'SELL' and current_high_price >= order.price):
+                response_order = deepcopy(order)
+                self.min_granularity = self.market_data_extractor.get_market_data_df_minimum_granularity(market_data_df)
+                fill_price = order.price if self.min_granularity == '1d' else current_close_price
+                response_order.status = 'closed'
+                response_order.filled_price = fill_price
+                response_order.filled_timestamp = system_timestamp
+                setattr(response_order, 'fresh_update', True)
+                setattr(response_order, 'message', 'Limit order filled.')
+            else:
+                response_order = deepcopy(order)
+                response_order.status = 'open'
+                setattr(response_order, 'fresh_update', False)
+                
         else:
             response_order = deepcopy(order)
             response_order.status = 'rejected'
@@ -143,7 +156,6 @@ class SIM_Execute():
         elif order.status == 'cancel':
             response_order = self.cancel_order(order, system_timestamp=system_timestamp)
         else:
-            self.logger.debug({'order':order})
             raise ValueError(f"Order status '{order.status}' not supported.")
         
         return response_order
