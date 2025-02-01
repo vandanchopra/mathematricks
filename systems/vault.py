@@ -18,6 +18,7 @@ class Vault:
         return strategies_dict
     
     def create_datafeeder_config(self, config_dict, strategies):
+        
         def to_lowercase(d):
             if isinstance(d, dict):
                 return {k.lower(): to_lowercase(v) for k, v in d.items()}
