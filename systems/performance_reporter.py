@@ -419,27 +419,37 @@ class PerformanceReporter(Metrics):
             self.backtest_report = {'metrics': self.backtest_performance_metrics}
             self.logger.info("Performance report generated successfully")
             # create a nicely formatted and printed report using logger from backtest_report
+            self.logger.info('        ===== CALCULATIONS VERIFIED =====')
             self.logger.info(f"{Fore.BLUE}Total Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['total_signals']}")
             self.logger.info(f"{Fore.BLUE}Open Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['open_signals']}")
             self.logger.info(f"{Fore.BLUE}Closed Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['closed_signals']}")
             self.logger.info(f"{Fore.BLUE}Winning Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['winning_signals']}")
             self.logger.info(f"{Fore.BLUE}Losing Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['losing_signals']}")
-            self.logger.info(f"{Fore.BLUE}Win Loss Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['win_loss_ratio']:0.2f}")
+            
+            self.logger.info(f"{Fore.BLUE}Win/Loss Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['win_loss_ratio']:0.2f}")
+            self.logger.info('-*'*30)
+            self.logger.info('        ===== CALCULATIONS NOT VERIFIED =====')
             self.logger.info(f"{Fore.BLUE}Average Signal Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration']:0.2f} hours")
-            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Profitable){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_profitable']:0.2f} hours")
-            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Loss){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_loss']:0.2f} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Wining){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_profitable']:0.2f} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Losing){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_loss']:0.2f} hours")
+            
             self.logger.info(f"{Fore.BLUE}Average Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Average Win Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Average Loss Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return']:0.2f}")
+            
             self.logger.info(f"{Fore.BLUE}Average Signal Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct']:0.2f}%")
-            self.logger.info(f"{Fore.BLUE}Average Signal Return (%/day){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct_per_day']:0.2f}%")
-            self.logger.info(f"{Fore.BLUE}Average Win Signals Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return']:0.2f}")
-            self.logger.info(f"{Fore.BLUE}Average Loss Signals Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return']:0.2f}")
             self.logger.info(f"{Fore.BLUE}Average Win Signals Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return_pct']:0.2f}%")
-            self.logger.info(f"{Fore.BLUE}Average Loss Signals Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return_pct']:0.2f}%")
+            self.logger.info(f"{Fore.BLUE}Average Losing Signals Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return_pct']:0.2f}%")
+
+            self.logger.info(f"{Fore.BLUE}Average Signal Return (%/day){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct_per_day']:0.2f}%")
+            
             self.logger.info(f"{Fore.BLUE}Sharpe Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sharpe_ratio']:0.2f}")
             self.logger.info(f"{Fore.BLUE}Sortino Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sortino_ratio']:0.2f}")
             self.logger.info(f"{Fore.BLUE}Calmar Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['calmar_ratio']:0.2f}")
+            
             self.logger.info(f"{Fore.BLUE}Max Drawdown{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown']:0.2f}%")
             self.logger.info(f"{Fore.BLUE}Max Drawdown Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown_duration']:0.2f} days")
+            
             self.logger.info(f"{Fore.BLUE}Profit Factor{Style.RESET_ALL}: {self.backtest_performance_metrics['profit_factor']:0.2f}")
             
         except Exception as e:

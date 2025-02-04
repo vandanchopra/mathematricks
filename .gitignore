@@ -29,6 +29,7 @@ db/data/kraken/**
 
 # ignore all files in the backtests directory except the __init__.py file
 db/vault/backtest_reports/**
+*.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

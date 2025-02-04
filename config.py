@@ -4,8 +4,8 @@ import pandas as pd
 from datetime import datetime
 import pytz
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
-start_date = datetime(2022, 3, 1).astimezone(pytz.timezone('US/Eastern'))
-end_date = start_date + pd.Timedelta(days=int(2))
+start_date = datetime(2023, 3, 1).astimezone(pytz.timezone('US/Eastern'))
+end_date = start_date + pd.Timedelta(days=int(10))
 sim_account_margin_multiplier = 1
 sim_account_starting_value_base = 100000
 base_currency = 'CAD'
@@ -44,7 +44,7 @@ config_dict = {
                     },
     'base_account_numbers':{'sim':'sim_1', 'ibkr':IBKR_base_account_number},
     'risk_management': {'max_risk_per_bet':0.15, 'maximum_margin_used_pct':0.65},
-    'brokerage_fee': 0.0035, # 35 basis points per order
+    'brokerage_fee': 0.0025, # 35 basis points per order
     'slippage': 0.001, # 10 basis points slippage
     'update_telegram': False,
     }
