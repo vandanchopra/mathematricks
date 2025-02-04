@@ -180,7 +180,52 @@ class SIM_Execute():
 class Yahoo():
     def __init__(self):
         self.logger = create_logger(log_level=logging.DEBUG, logger_name='datafetcher', print_to_console=True)
-        self.asset_data_df_dict = {}
+
+    def fetch_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'db/data/yahoo',
+                         throttle_secs=1, start_date=None, end_date=None, lookback=None, update_data=True,
+                         run_mode=4, forward_update=True, backward_update=False):
+        try:
+            data_frames = []
+            for interval in interval_inputs:
+                for symbol in tqdm(stock_symbols, desc=f'Yahoo - Updating {interval} data'):
+                    csv_path = os.path.join(data_folder, interval, f"{symbol}.csv")
+                    os.makedirs(os.path.join(data_folder, interval), exist_ok=True)
+
+                    if os.path.exists(csv_path):
+                        existing_data = pd.read_csv(csv_path, parse_dates=['datetime'])
+                        existing_data.set_index('datetime', inplace=True)
+                        if backward_update:
+                            earliest_date = existing_data.index.min()
+                            chunk_start = earliest_date - pd.Timedelta(days=30)
+                            chunk_end = earliest_date
+                            
+                            while chunk_start > pd.Timestamp('2010-01-01', tz='UTC'):
+                                self.logger.info(f'Downloading historical data for {symbol} from {chunk_start} to {chunk_end}')
+                                ticker = yf.Ticker(symbol)
+                                hist_data = ticker.history(
+                                    start=chunk_start,
+                                    end=chunk_end,
+                                    interval=interval
+                                )
+                                if not hist_data.empty:
+                                    hist_data.index = hist_data.index.tz_localize('UTC')
+                                    existing_data = pd.concat([hist_data, existing_data])
+                                    existing_data.to_csv(csv_path)
+                                
+                                chunk_end = chunk_start
+                                chunk_start = chunk_start - pd.Timedelta(days=30)
+                                time.sleep(throttle_secs)
+                    
+                    if forward_update:
+                        ticker = yf.Ticker(symbol)
+                        data = ticker.history(period="max", interval=interval)
+                        if not data.empty:
+                            data.to_csv(csv_path)
+                            data_frames.append(data)
+            return pd.concat(data_frames) if data_frames else pd.DataFrame()
+        except Exception as e:
+            self.logger.error(f"Error in update_price_data: {e}")
+            return pd.DataFrame()
     
     def get_nasdaq_stock_symbols(self, nasdaq_csv_filepath, min_market_cap=10 * 1 * 1000 * 1000 * 1000):
         # load the CSV file into a DataFrame

@@ -1,10 +1,10 @@
 # Project Customizations
 ##### ignore all files in the vault directory except base_strategy.py
-vault/*
-!vault/base_strategy.py
-!vault/strategy_1.py
-!vault/strategy_2.py
-!vault/pairs_trading.py
+# vault/*
+# !vault/base_strategy.py
+# !vault/strategy_1.py
+# !vault/strategy_2.py
+# !vault/pairs_trading.py
 spectre/*
 /junk
 
@@ -13,6 +13,7 @@ db/data/ibkr/1d/**
 db/data/ibkr/1m/**
 db/data/yahoo/1d/**
 db/data/yahoo/1m/**
+db/data/kraken/**
 !db/data/ibkr/1d/AAPL.csv
 !db/data/yahoo/1d/AAPL.csv
 !db/data/ibkr/1d/MSFT.csv

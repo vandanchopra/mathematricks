@@ -292,7 +292,7 @@ class Mathematricks:
                             
                             # Generate Signals with margin information
                             time_start = time.time()
-                            new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp, self.oms.open_signals)
+                            new_signals, self.config_dict = self.vault.generate_signals(next_rows, self.current_market_data_df, self.system_timestamp, self.oms.open_signals, self.oms.margin_available)
                             self.datafeeder.config_dict = self.rms.config_dict = self.vault.config_dict
                             
                             # Send updated signals to OMS
@@ -311,7 +311,6 @@ class Mathematricks:
                             # Convert signals to orders
                             time_start = time.time()
                             new_signals = self.rms.run_rms(new_signals, self.oms.margin_available, self.oms.open_signals, self.system_timestamp, self.live_bool)
-                            
                             # If the system is going live, sync the orders with the broker # Get a list of orders that'll be sent to the LIVE broker, based on current open orders
                             if prev_live_bool == False and self.live_bool == True:
                                 time_start = time.time()
@@ -345,7 +344,6 @@ class Mathematricks:
                             self.oms.get_open_signals(),
                             self.oms.closed_signals,
                             self.current_market_data_df,
-                            self.oms.get_unfilled_orders()
                         )
                         
                         if self.config_dict['backtest_inputs']['save_backtest_results']:

@@ -12,7 +12,7 @@ from typing import List, Dict
 class OMS:
     def __init__(self, config):
         self.config_dict = config
-        self.logger = create_logger(log_level='DEBUG', logger_name='OMS', print_to_console=True)
+        self.logger = create_logger(log_level='DEBUG', logger_name='trader', print_to_console=True)
         self.market_data_extractor = MarketDataExtractor()
         self.brokers = Brokers()
         self.profit = 0
@@ -110,7 +110,7 @@ class OMS:
                             trading_currency, base_currency, account_number
                         )
                     )
-                elif broker == 'ibkr' and self.config_dict['run_mode'] == 3:
+                elif broker in ['ibkr', 'kraken'] and self.config_dict['run_mode'] == 3:
                             margin_dict[broker][account_number]['combined'] = self.brokers.sim.execute.create_account_summary(
                         trading_currency, base_currency, base_currency_to_trading_currency_exchange_rate,
                         account_number
@@ -306,16 +306,6 @@ class OMS:
         # Update the signal in open_signals
         self.update_signal(signal)
     
-    def close_completed_signals_old(self, signal: Signal):
-        # Close the signal and move it to closed_signals and pop it from open_signals if all orders in the signal are closed
-        updated_signal = deepcopy(signal)
-        if all([order.status in ['closed', 'cancelled', 'cancel'] for order in signal.orders]):
-            signal_pnl, signal_pnl_with_fee_and_slippage = self.calculate_signal_pnl(updated_signal)
-            updated_signal.pnl = signal_pnl
-            updated_signal.pnl_with_fee_and_slippage = signal_pnl_with_fee_and_slippage
-            self.closed_signals.append(updated_signal)
-            self.open_signals = [open_signal for open_signal in self.open_signals if open_signal.signal_id != updated_signal.signal_id]
-    
     def close_completed_signals(self, signal: Signal):
         """Close signals based on position tracking rather than order status"""
         updated_signal = deepcopy(signal)
@@ -346,6 +336,7 @@ class OMS:
             signal_pnl, signal_pnl_with_fee_and_slippage = self.calculate_signal_pnl(updated_signal)
             updated_signal.pnl = signal_pnl
             updated_signal.pnl_with_fee_and_slippage = signal_pnl_with_fee_and_slippage
+            updated_signal.status = 'closed'
             
             # Move signal to closed signals
             self.closed_signals.append(updated_signal)
@@ -360,7 +351,7 @@ class OMS:
             self.open_signals.extend(new_signals)
         
         # Process all open signals
-        self.logger.info(f"Processing {len(self.open_signals)} open signals.")
+        # self.logger.info(f"Processing {len(self.open_signals)} open signals.")
         for signal in self.open_signals:
             for order_num, order in enumerate(signal.orders):
                 # self.logger.info({'order':order})
@@ -415,7 +406,8 @@ class OMS:
                             # Update order with response data
                             old_order_history = getattr(old_order, 'history', [])
                             old_order.history = []
-                            order.history = old_order_history + [old_order]
+                            old_order_history.append(old_order)
+                            order.history = old_order_history
                             
                             # Calculate transaction cost
                             if order.status == 'closed':

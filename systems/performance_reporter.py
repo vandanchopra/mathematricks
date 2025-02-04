@@ -67,11 +67,11 @@ class Metrics:
         Returns:
             int: Number of winning signals
         """
-        return sum(1 for signal in closed_signals if signal.pnl and signal.pnl > 0)
+        return sum(1 for signal in closed_signals if signal.pnl_with_fee_and_slippage and signal.pnl_with_fee_and_slippage > 0)
     
     def calculate_backtest_losing_signals_count(self, closed_signals):
         """Count number of losing signals (negative PnL) from backtest"""
-        return sum(1 for signal in closed_signals if signal.pnl and signal.pnl < 0)
+        return sum(1 for signal in closed_signals if signal.pnl_with_fee_and_slippage and signal.pnl_with_fee_and_slippage < 0)
     
     def calculate_backtest_average_signal_duration(self, closed_signals):
         """Calculate average duration of signals in days"""
@@ -96,7 +96,7 @@ class Metrics:
     
     def calculate_backtest_average_signal_return(self, closed_signals):
         """Calculate average absolute return across all signals"""
-        returns = [signal.pnl for signal in closed_signals if signal.pnl is not None]
+        returns = [signal.pnl_with_fee_and_slippage for signal in closed_signals if signal.pnl_with_fee_and_slippage is not None]
         return np.mean(returns) if returns else 0
     
     def calculate_backtest_average_signal_return_pct(self, closed_signals):
@@ -105,9 +105,9 @@ class Metrics:
         for signal in closed_signals:
             total_investment = sum(abs(order.orderQuantity * order.filled_price) 
                                  for order in signal.orders 
-                                 if order.filled_price)
-            if total_investment > 0 and signal.pnl is not None:
-                pct_return = (signal.pnl / total_investment) * 100
+                                 if order.filled_price and order.entryOrderBool)
+            if total_investment > 0 and signal.pnl_with_fee_and_slippage is not None:
+                pct_return = (signal.pnl_with_fee_and_slippage / total_investment) * 100
                 pct_returns.append(pct_return)
         return np.mean(pct_returns) if pct_returns else 0
     
@@ -132,19 +132,38 @@ class Metrics:
     
     def calculate_backtest_average_win_signals_return(self, closed_signals):
         """Calculate average return of winning signals"""
-        win_returns = [signal.pnl for signal in closed_signals if signal.pnl and signal.pnl > 0]
+        win_returns = [signal.pnl_with_fee_and_slippage for signal in closed_signals if signal.pnl_with_fee_and_slippage and signal.pnl_with_fee_and_slippage > 0]
         return np.mean(win_returns) if win_returns else 0
+    
+    def calculate_backtest_average_loss_signals_return(self, closed_signals):
+        """Calculate average return of winning signals"""
+        win_returns = [signal.pnl_with_fee_and_slippage for signal in closed_signals if signal.pnl_with_fee_and_slippage and signal.pnl_with_fee_and_slippage < 0]
+        return np.mean(win_returns) if win_returns else 0
+    
+    def calculate_backtest_average_win_signals_return_pct(self, closed_signals):
+        """Calculate average percentage return of losing signals"""
+        loss_pct_returns = []
+        for signal in closed_signals:
+            if signal.pnl_with_fee_and_slippage and signal.pnl_with_fee_and_slippage > 0:
+                total_investment = sum(abs(order.orderQuantity * order.filled_price) 
+                                     for order in signal.orders 
+                                     if order.filled_price)
+                if total_investment > 0:
+                    pct_return = (signal.pnl_with_fee_and_slippage / total_investment) * 100
+                    loss_pct_returns.append(pct_return)
+        return np.mean(loss_pct_returns) if loss_pct_returns else 0
+    
     
     def calculate_backtest_average_loss_signals_return_pct(self, closed_signals):
         """Calculate average percentage return of losing signals"""
         loss_pct_returns = []
         for signal in closed_signals:
-            if signal.pnl and signal.pnl < 0:
+            if signal.pnl_with_fee_and_slippage and signal.pnl_with_fee_and_slippage < 0:
                 total_investment = sum(abs(order.orderQuantity * order.filled_price) 
                                      for order in signal.orders 
                                      if order.filled_price)
                 if total_investment > 0:
-                    pct_return = (signal.pnl / total_investment) * 100
+                    pct_return = (signal.pnl_with_fee_and_slippage / total_investment) * 100
                     loss_pct_returns.append(pct_return)
         return np.mean(loss_pct_returns) if loss_pct_returns else 0
     
@@ -262,7 +281,7 @@ class Metrics:
         """Calculate ratio of winning trades to losing trades"""
         winning_count = self.calculate_backtest_winning_signals_count(closed_signals)
         losing_count = self.calculate_backtest_losing_signals_count(closed_signals)
-        return winning_count / losing_count if losing_count > 0 else float('inf')
+        return winning_count / (losing_count+winning_count) if winning_count+losing_count > 0 else float('inf')
     
 class PerformanceReporter(Metrics):
     def __init__(self, market_data_extractor):
@@ -272,7 +291,7 @@ class PerformanceReporter(Metrics):
         self.backtest_report = None
         self.logger = create_logger(log_level='DEBUG', logger_name='REPORTER', print_to_console=True)
     
-    def calculate_backtest_performance_metrics(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal], market_data_df: pd.DataFrame, unfilled_orders: List[Order]) -> Dict:
+    def calculate_backtest_performance_metrics(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal]) -> Dict:
         """Calculate various performance metrics for the backtest"""
         try:
             # Calculate performance metrics
@@ -289,6 +308,8 @@ class PerformanceReporter(Metrics):
             metrics['average_signal_return_pct'] = self.calculate_backtest_average_signal_return_pct(closed_signals)
             metrics['average_signal_return_pct_per_day'] = self.calculate_backtest_average_signal_return_pct_per_day(closed_signals)
             metrics['average_win_signals_return'] = self.calculate_backtest_average_win_signals_return(closed_signals)
+            metrics['average_loss_signals_return'] = self.calculate_backtest_average_loss_signals_return(closed_signals)
+            metrics['average_win_signals_return_pct'] = self.calculate_backtest_average_win_signals_return_pct(closed_signals)
             metrics['average_loss_signals_return_pct'] = self.calculate_backtest_average_loss_signals_return_pct(closed_signals)
             metrics['sharpe_ratio'] = self.calculate_backtest_sharpe_ratio(closed_signals)
             metrics['sortino_ratio'] = self.calculate_backtest_sortino_ratio(closed_signals)
@@ -391,10 +412,10 @@ class PerformanceReporter(Metrics):
             self.logger.error(f"Error saving backtest results: {e}")
             raise
     
-    def generate_report(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal], market_data_df: pd.DataFrame, unfilled_orders: List[Order]):
+    def generate_report(self, config_dict: Dict, open_signals: List[Signal], closed_signals: List[Signal], market_data_df: pd.DataFrame):
         """Generate a performance report for the trading system"""
         try:
-            self.backtest_performance_metrics = self.calculate_backtest_performance_metrics(config_dict, open_signals, closed_signals, market_data_df, unfilled_orders)
+            self.backtest_performance_metrics = self.calculate_backtest_performance_metrics(config_dict, open_signals, closed_signals)
             self.backtest_report = {'metrics': self.backtest_performance_metrics}
             self.logger.info("Performance report generated successfully")
             # create a nicely formatted and printed report using logger from backtest_report
@@ -403,22 +424,23 @@ class PerformanceReporter(Metrics):
             self.logger.info(f"{Fore.BLUE}Closed Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['closed_signals']}")
             self.logger.info(f"{Fore.BLUE}Winning Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['winning_signals']}")
             self.logger.info(f"{Fore.BLUE}Losing Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['losing_signals']}")
-            self.logger.info(f"{Fore.BLUE}Win Loss Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['win_loss_ratio']}")
-            self.logger.info(f"{Fore.BLUE}Average Signal Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration']} hours")
-            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Profitable){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_profitable']} hours")
-            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Loss){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_loss']} hours")
-            self.logger.info(f"{Fore.BLUE}Average Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return']}")
-            self.logger.info(f"{Fore.BLUE}Average Signal Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct']}%")
-            self.logger.info(f"{Fore.BLUE}Average Signal Return (%/day){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct_per_day']}%")
-            self.logger.info(f"{Fore.BLUE}Average Win Signals Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return']}")
-            self.logger.info(f"{Fore.BLUE}Average Loss Signals Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return_pct']}%")
-            self.logger.info(f"{Fore.BLUE}Sharpe Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sharpe_ratio']}")
-            self.logger.info(f"{Fore.BLUE}Sortino Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sortino_ratio']}")
-            self.logger.info(f"{Fore.BLUE}Calmar Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['calmar_ratio']}")
-            self.logger.info(f"{Fore.BLUE}Max Drawdown{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown']}%")
-            self.logger.info(f"{Fore.BLUE}Max Drawdown Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown_duration']} days")
-            self.logger.info(f"{Fore.BLUE}Profit Factor{Style.RESET_ALL}: {self.backtest_performance_metrics['profit_factor']}")
-            
+            self.logger.info(f"{Fore.BLUE}Win Loss Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['win_loss_ratio']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration']:0.2f} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Profitable){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_profitable']:0.2f} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Duration (Loss){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_loss']:0.2f} hours")
+            self.logger.info(f"{Fore.BLUE}Average Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Average Signal Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct']:0.2f}%")
+            self.logger.info(f"{Fore.BLUE}Average Signal Return (%/day){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return_pct_per_day']:0.2f}%")
+            self.logger.info(f"{Fore.BLUE}Average Win Signals Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Average Loss Signals Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Average Win Signals Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return_pct']:0.2f}%")
+            self.logger.info(f"{Fore.BLUE}Average Loss Signals Return (%) {Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return_pct']:0.2f}%")
+            self.logger.info(f"{Fore.BLUE}Sharpe Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sharpe_ratio']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Sortino Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['sortino_ratio']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Calmar Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['calmar_ratio']:0.2f}")
+            self.logger.info(f"{Fore.BLUE}Max Drawdown{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown']:0.2f}%")
+            self.logger.info(f"{Fore.BLUE}Max Drawdown Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown_duration']:0.2f} days")
+            self.logger.info(f"{Fore.BLUE}Profit Factor{Style.RESET_ALL}: {self.backtest_performance_metrics['profit_factor']:0.2f}")
             
         except Exception as e:
             self.logger.error(f"Error generating performance report: {e}")

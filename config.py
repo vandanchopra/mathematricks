@@ -4,8 +4,8 @@ import pandas as pd
 from datetime import datetime
 import pytz
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
-start_date = datetime(2010, 3, 1).astimezone(pytz.timezone('US/Eastern'))
-end_date = start_date + pd.Timedelta(days=int(365*1))
+start_date = datetime(2022, 3, 1).astimezone(pytz.timezone('US/Eastern'))
+end_date = start_date + pd.Timedelta(days=int(2))
 sim_account_margin_multiplier = 1
 sim_account_starting_value_base = 100000
 base_currency = 'CAD'
@@ -25,8 +25,8 @@ config_dict = {
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
     # 'live_start_date': datetime(year=2024, month=11, day=28, hour=9, minute=31, second=0).astimezone(pytz.timezone('US/Eastern')),
-    'strategies':['pairs_trading'], # 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set. strategy_3_1_take_profit_pct
-    'data_update_inputs': {'data_sources':{'sim':'ibkr', 'live':'ibkr'}}, # 'yahoo', 'ibkr'
+    'strategies':['strategy_dev.crypto.crypto_relative_value'], # 'pairs_trading', 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set. strategy_3_1_take_profit_pct
+    'data_update_inputs': {'data_sources':{'sim':'kraken', 'live':'kraken'}}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'account_info':{
                     'ibkr':{IBKR_base_account_number:{base_currency:{}
@@ -37,7 +37,10 @@ config_dict = {
                                                     'buying_power_used':0, 'cushion':0, 
                                                     }
                                      }
-                           }
+                           },
+                    'kraken':{'kraken_1': {base_currency:{'total_account_value': sim_account_starting_value_base, 
+                                                          'buying_power_available':sim_account_starting_value_base * sim_account_margin_multiplier, 
+                                                          'buying_power_used':0, 'cushion':0}}},
                     },
     'base_account_numbers':{'sim':'sim_1', 'ibkr':IBKR_base_account_number},
     'risk_management': {'max_risk_per_bet':0.15, 'maximum_margin_used_pct':0.65},

@@ -23,7 +23,7 @@ class DataFeeder:
         self.market_data_extractor = MarketDataExtractor()
         self.datafetcher = DataFetcher(self.config_dict, self.market_data_extractor)
         self.logger = create_logger(log_level='DEBUG', logger_name='datafeeder')
-        self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"1d":86400}
+        self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"1h":3600, "1d":86400}
         self.market_data_df = None
         self.datafeeder_system_timestamp = None
         self.indicators = Indicators()
@@ -210,7 +210,7 @@ class DataFeeder:
             # self.logger.debug({'next_open':next_open, 'sleep_time':sleep_time})
         return sleep_time
     
-    def update_all_historical_price_data(self, live_bool=False):
+    def update_all_historical_price_data(self, live_bool=False, forward_update=True, backward_update=False):
         symbols_universe_df = load_symbols_universe_df()
         list_of_symbols = symbols_universe_df['Symbol'].tolist()
         list_of_symbols = list(set(list_of_symbols))
@@ -271,20 +271,9 @@ class DataFeeder:
             start_date = system_timestamp if self.previous_config_dict else start_date
             end_date = start_date + pd.Timedelta(days=10) if not end_date else end_date
             # self.logger.debug(f'Config Dict Updated: Fetching data for {start_date} to {end_date} | System Timestamp: {system_timestamp}, Lookback Dict: {self.lookback_dict}')
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=throttle_secs, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
+            self.market_data_df = self.datafetcher.fetch_price_data(start_date=start_date, end_date=end_date, throttle_secs=throttle_secs, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
             self.previous_config_dict = deepcopy(self.config_dict)
-            # self.logger.info({'start_date':start_date, 'end_date':end_date})
-            # msg = 'market_data_df Shape: '
-            # for interval in self.market_data_df.index.get_level_values(0).unique():
-            #     if interval in self.market_data_df.index.get_level_values(0).unique():
-            #         msg +=  f"{interval} : {self.market_data_df.loc[interval].shape} | "
-            # self.logger.info(msg)
-            
-            # first_timestamp_ = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
-            # last_timestamp_ = max([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[-1]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
-            # self.logger.info({'first_timestamp_':first_timestamp_, 'last_timestamp_':last_timestamp_})
-            # sleeper(20, 'Just taking a small break 1')
-        # elif
+
         while len(self.market_data_df) < 1 and run_mode in [1,2]:
             # self.logger.info({'Perpetual loop is running to fetch data...system_timestamp':system_timestamp})
             start_date = system_timestamp if system_timestamp else start_date
@@ -292,7 +281,7 @@ class DataFeeder:
             self.lookback_dict = self.reset_lookback_dict()
             # self.logger.info({'start_date':start_date.astimezone(pytz.timezone('US/Eastern')), 'end_date':end_date, 'self.lookback_dict':self.lookback_dict})
             # self.logger.debug(f'Market Data DF Empty: Fetching data for {start_date} to {end_date} | System Timestamp: {system_timestamp}, Lookback Dict: {self.lookback_dict}, Live Bool: {live_bool}')
-            self.market_data_df = self.datafetcher.fetch_updated_price_data(start_date=start_date, end_date=end_date, throttle_secs=throttle_secs, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
+            self.market_data_df = self.datafetcher.fetch_price_data(start_date=start_date, end_date=end_date, throttle_secs=throttle_secs, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
             # timestamps = self.market_data_extractor.get_market_data_df_timestamps(self.market_data_df)
             # self.logger.info({'timestamp_0':timestamps[0].astimezone(pytz.timezone('US/Eastern')), 'timestamp_-1':timestamps[-1].astimezone(pytz.timezone('US/Eastern'))})
             # self.logger.info({'self.market_data_df':self.market_data_df.head(5)})
@@ -344,8 +333,8 @@ class DataFeeder:
                         # remove the first row from the DataFrame
                         self.market_data_df = self.market_data_df.drop((interval, first_row.name))
                         # self.logger.debug({'market_data_df':len(self.market_data_df)})
-                        
-                    
+            
+            # Only proceed if the timestamp exists
             if len(first_rows) > 0:
                 first_rows = pd.concat(first_rows)
             else:

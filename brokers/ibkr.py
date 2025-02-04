@@ -264,9 +264,10 @@ class Data:
         
         return asset_data_df[to_use_cols]
     
-    def update_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'db/data/ibkr', throttle_secs=1, start_date=None, end_date=None, lookback=None, update_data=True, run_mode=4):
+    def fetch_price_data(self, stock_symbols, interval_inputs, data_folder=project_path+'db/data/ibkr', throttle_secs=1, start_date=None, end_date=None, lookback=None, update_data=True, 
+                         run_mode=4):
         data_frames = []
-        batch_size = 75
+        batch_size = 50  # Reduced batch size for more controlled updates
         
         '''STEP 1: Bifurcate the list of stock symbols into three lists: 1) ones that have data 2) ones that don't have data 3) Ones that have partial data'''
         # Break the list into two lists. ones that don't have data and ones that have data

@@ -1,4 +1,6 @@
 import json, os
+
+from matplotlib.pyplot import margins
 from systems.utils import create_logger, sleeper
 
 class Vault:
@@ -44,7 +46,7 @@ class Vault:
         
         return config_dict
         
-    def generate_signals(self, next_rows, market_data_df, system_timestamp, open_signals):
+    def generate_signals(self, next_rows, market_data_df, system_timestamp, open_signals, margins_dict):
         signals_output = {'signals':[], 'ideal_portfolios':[]}
         ''' 
         for each strategy in self.strategies, get the signals and ideal portfolio.
@@ -52,7 +54,10 @@ class Vault:
         '''
         for strategy in self.strategies.values():
             strategy_open_signals = [signal for signal in open_signals if signal.strategy_name == strategy.strategy_name]
-            return_type, return_item, list_of_symbols_temp = strategy.generate_signals(next_rows, market_data_df, system_timestamp, open_signals=strategy_open_signals)
+            return_type, return_item, list_of_symbols_temp = strategy.generate_signals(next_rows, market_data_df, system_timestamp, 
+                                                                                       strategy_margins=margins_dict['sim']['sim_1'][strategy.strategy_name],
+                                                                                       open_signals=strategy_open_signals)
+            
             self.tickers_dict[strategy.strategy_name] = list_of_symbols_temp
             if return_type == 'signals':
                 for signal in return_item:

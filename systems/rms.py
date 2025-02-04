@@ -92,15 +92,17 @@ class RMS:
         
         # Calculate margin for regular orders
         for order in signal.orders:
-            current_price = list(order.symbol_ltp.values())[-1]
-            margin_required = current_price * order.orderQuantity
-            total_margin_required += margin_required
+            if order.entryOrderBool:
+                current_price = list(order.symbol_ltp.values())[-1]
+                margin_required = current_price * order.orderQuantity
+                total_margin_required += margin_required
             
         # Check if sufficient margin is available
         if total_margin_required > margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available']:
             signal.status = 'rejected'
             signal.rejection_reason = 'Insufficient margin available'
-            # raise AssertionError('Insufficient margin available: Total margin required: {}, Buying power available: {}'.format(total_margin_required, margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available']))
+            self.logger.info('Insufficient margin available: Total margin required: {}, Buying power available: {}'.format(total_margin_required, margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available']))
+            sleeper(2, 'Sleeping for 2 seconds for the warning...')
         else:
             # Update available margin if signal is accepted
             margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] -= total_margin_required
@@ -158,7 +160,6 @@ class RMS:
                 # self.logger.info("Risk metrics valid, checking margin...")
                 signal = self.validate_margin(signal, margin_available_local, live_bool)
                 # self.logger.info("Margin requirements met")
-
             processed_signals.append(signal)
             # self.logger.info(f"Signal RMS Check complete - Final: Signal_id: {signal.signal_id} | status: {signal.status}")
             
