@@ -23,7 +23,7 @@ class DataFeeder:
         self.market_data_extractor = MarketDataExtractor()
         self.datafetcher = DataFetcher(self.config_dict, self.market_data_extractor)
         self.logger = create_logger(log_level='DEBUG', logger_name='datafeeder')
-        self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"1h":3600, "1d":86400}
+        self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"15m":900,"1h":3600, "1d":86400}
         self.market_data_df = None
         self.datafeeder_system_timestamp = None
         self.indicators = Indicators()

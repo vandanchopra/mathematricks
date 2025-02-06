@@ -47,16 +47,17 @@ class Mathematricks:
     
     def get_unrealized_pnl_dict(self):
         unrealized_pnl_dict = {}
+        distance_from_SL_dict = {}
         
         # Get open signals from OMS
-        for signal in self.oms.get_open_signals():
+        open_signals = self.oms.get_open_signals()
+        for signal in open_signals:
             if signal.status == 'closed':
                 continue
             
             # Process each order in the signal
             for order in signal.orders:
                 symbol = order.symbol
-                
                 # Find entry orders that have been filled
                 if order.entryOrderBool and order.status == 'closed' and order.filled_price:
                     # Check if we already processed this symbol for this signal
@@ -71,7 +72,7 @@ class Mathematricks:
                     exit_order = None
                     for o in signal.orders:
                         if (o.symbol == symbol and not o.entryOrderBool and 
-                            o.status == 'open'):
+                            o.status == 'open' and o.order_type == 'STOPLOSS'):
                             exit_order = o
                             break
                     
@@ -92,13 +93,16 @@ class Mathematricks:
                                     continue
                     
                     # Calculate unrealized PnL if we have all needed values
-                    if current_price is not None:
-                        if signal.signal_id not in unrealized_pnl_dict:
-                            unrealized_pnl_dict[signal.signal_id] = {}
-                        unrealized_pnl = (current_price - entry_price) * position_size
-                        unrealized_pnl_dict[signal.signal_id][symbol] = unrealized_pnl
-        
-        return unrealized_pnl_dict
+                    if current_price is not None and exit_order is not None:
+                        # self.logger.info(f"Exit Order: Symbol: {symbol}, Order Type: {exit_order.order_type}, Status: {exit_order.status}, LTP: {current_price}")
+                        unrealized_pnl = (current_price - entry_price) * abs(position_size)
+                        unrealized_pnl_dict[symbol] = unrealized_pnl
+                        if exit_order.orderDirection == 'SELL':
+                            distance_from_SL_dict[symbol] = ((current_price - exit_order.price) / current_price) * 100
+                        else:
+                            distance_from_SL_dict[symbol] = ((exit_order.price - current_price) / current_price) * 100
+                        
+        return unrealized_pnl_dict, distance_from_SL_dict
     
     def print_updates_to_console(self):
         # Print margins from all brokers (only non-empty combined accounts)
@@ -110,15 +114,27 @@ class Mathematricks:
                     pct_used = (combined_margin['buying_power_used'] / combined_margin['total_buying_power'] * 100) if combined_margin['total_buying_power'] else 0
                     self.logger.info(f"{Fore.CYAN}{broker.upper()} Account {account}: Used=${combined_margin['buying_power_used']:,.2f}, Available=${combined_margin['buying_power_available']:,.2f}, Total=${combined_margin['total_buying_power']:,.2f}, Used%={pct_used:.2f}%{Style.RESET_ALL}")
         
-        # Print unrealized PnL for open signals
-        unrealized_pnl_dict = self.get_unrealized_pnl_dict()
-        pair_totals = {}
-        for positions in unrealized_pnl_dict.values():
-            if len(positions) == 2:  # If it's a pair trade (2 symbols)
-                symbols = sorted(positions.keys())  # Sort to ensure consistent pair naming
-                pair_name = f"{symbols[0]}_{symbols[1]}"
-                pair_totals[pair_name] = sum(positions.values())
-        self.logger.info(f"Unrealized PnL: {pair_totals}")
+        # # Print unrealized PnL for open signals
+        unrealized_pnl_dict, distance_from_SL_dict = self.get_unrealized_pnl_dict()
+        # sort unrealized_pnl_dict by values
+        unrealized_pnl_dict = dict(sorted(unrealized_pnl_dict.items(), key=lambda item: item[1], reverse=True))
+        unrealized_msg = f"Unrealized PnL: Total: ${sum(unrealized_pnl_dict.values()):,.2f} |"
+        for symbol, pnl in unrealized_pnl_dict.items():
+            unrealized_msg += f" {symbol}: ${pnl:,.2f} |"
+        self.logger.info(unrealized_msg)
+        
+        distance_pct_from_SL_msg = f"Distance from Stop Loss (%): "
+        for symbol in unrealized_pnl_dict:
+            distance_pct_from_SL_msg += f" {symbol}: {distance_from_SL_dict[symbol]:.2f}% |"
+        self.logger.info(distance_pct_from_SL_msg)
+            
+        # pair_totals = {}
+        # for positions in unrealized_pnl_dict.values():
+        #     if len(positions) == 2:  # If it's a pair trade (2 symbols)
+        #         symbols = sorted(positions.keys())  # Sort to ensure consistent pair naming
+        #         pair_name = f"{symbols[0]}_{symbols[1]}"
+        #         pair_totals[pair_name] = sum(positions.values())
+        # self.logger.info(f"Unrealized PnL: {pair_totals}")
     
     def are_we_live(self, run_mode, system_timestamp, start_date):
         # convert system_timestamp and start_date to date only

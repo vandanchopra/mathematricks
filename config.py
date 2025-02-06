@@ -5,7 +5,7 @@ from datetime import datetime
 import pytz
 # read the json file '/Users/vandanchopra/Vandan_Personal_Folder/CODE_STUFF/Projects/mathematricks/db/stock_symbols.json'
 start_date = datetime(2023, 3, 1).astimezone(pytz.timezone('US/Eastern'))
-end_date = start_date + pd.Timedelta(days=int(10))
+end_date = start_date + pd.Timedelta(days=int(30))
 sim_account_margin_multiplier = 1
 sim_account_starting_value_base = 100000
 base_currency = 'CAD'
@@ -25,7 +25,7 @@ config_dict = {
         # 'Backtest Name':'alsdkjasldkqw923yasjdaskd23328y',
         },
     # 'live_start_date': datetime(year=2024, month=11, day=28, hour=9, minute=31, second=0).astimezone(pytz.timezone('US/Eastern')),
-    'strategies':['strategy_dev.crypto.crypto_relative_value'], # 'pairs_trading', 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set. strategy_3_1_take_profit_pct
+    'strategies':['strategy_dev.crypto.crypto_relative_value_new'], # 'pairs_trading', 'strategy_1', 'strategy_dev.strategy_3', 'strategy_3_small_set. strategy_3_1_take_profit_pct
     'data_update_inputs': {'data_sources':{'sim':'kraken', 'live':'kraken'}}, # 'yahoo', 'ibkr'
     'sleep_time':60,
     'account_info':{

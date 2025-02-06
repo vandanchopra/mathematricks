@@ -8,59 +8,45 @@ class Strategy(BaseStrategy):
     def __init__(self, config_dict):
         super().__init__()
         self.logger = create_logger(logger_name='trader', log_level='INFO')
-        self.strategy_name = 'crypto_relative_value'
+        self.strategy_name = 'crypto_relative_value_v1'
         
         # -----------------------------------------
         # Existing Core Parameters
         # -----------------------------------------
         self.granularity = "1m"
-        self.orderType = "MARKET"  # Changed from MARKET
+        self.orderType = "MARKET"
         self.timeInForce = "DAY"
-        self.risk_per_trade = 0.02     # Risk 1% of capital
-        self.base_z_score_threshold = 3.15   # Base threshold to be adjusted by volatility
-        self.exit_z_score = 2       # Exit threshold
-        self.lookback_window = 60     # Increased from 60
-        self.ma_window = 100           # For trend filter
+        self.stoploss_pct = 0.025      # % stop loss
+        self.risk_per_trade = 0.01     # Risk 5% of available funds per trade
+        self.z_score_threshold = 3   # Z-score threshold for trading signals
+        self.lookback_window = 60      # Window for calculating mean and std dev
         
-        # Volatility regime parameters
-        self.vol_window = 90           # Window for volatility calculation
-        self.vol_percentile = 50       # Baseline volatility percentile
-        self.max_vol_adjustment = 2.0   # Maximum volatility adjustment factor
-        self.min_vol_adjustment = 0.5   # Minimum volatility adjustment factor
-        
-        # Enhanced volume filter parameters
-        self.vol_short_window = 20     # Short-term volume MA
-        self.vol_medium_window = 50    # Medium-term volume MA
-        self.vol_long_window = 100     # Long-term volume MA
-        self.vol_threshold = 1.2       # Volume spike threshold
-        
-        # Equal dollar weighted index (1000 USD each)
+        # Weighted index assets & weights
         self.index_assets = ['BTCUSD', 'ETHUSD', 'XRPUSD']
-        self.index_base_amount = 1000  # USD amount per asset
+        self.index_weights = {'BTCUSD': 1000, 'ETHUSD': 1000, 'XRPUSD': 1000}
         
         # Capital (simulated)
         self.funds_available = 0
 
         # -----------------------------------------
-        # New Features
+        # New Features (Configurable)
         # -----------------------------------------
         # 1) Trailing Stop
-        # Trail stop settings
         self.trail_stop_activation = True
-        self.trail_stop_buffer = 0.01  # 1.5% buffer before trailing
+        self.trail_stop_buffer = self.stoploss_pct/3  # If price moves 5% from entry in our favor, shift SL
 
-        # Take profit settings
+        # 2) Take-Profit
         self.take_profit_activation = True
-        self.rr_ratio = 2  # Risk-reward ratio for full position
-        
-        # Cooldown settings
-        self.cooldown_bars = 30  # Increased from 5
-        self.last_close_bar = {}  # Track bar index for cooldown
+        self.take_profit_pct = 0.05   # 5% profit
 
-        # ATR settings
+        # 3) Cooldown (bars) after closing a position
+        self.cooldown_bars = 5
+        self.last_close_bar = {}  # track bar index (or time) when a symbol closed
+
+        # 4) ATR-based sizing
         self.use_atr_sizing = True
-        self.atr_window = 90
-        self.atr_multiplier = 50  # Much wider stops for crypto volatility
+        self.atr_window = 14
+        self.atr_multiplier = 1.0
 
         # Data input dictionary (must use existing structure)
         self.data_inputs, self.tickers = self.datafeeder_inputs()
@@ -73,9 +59,8 @@ class Strategy(BaseStrategy):
         """Adjust columns/lookback to cover both z-score and ATR if needed."""
         tickers = [
             'BTCUSD', 'ETHUSD', 'XRPUSD', 
-            'SOLUSD', 
-            # 'ADAUSD'
-            'DOGEUSD', 'TRXUSD', 'SHIBUSD', 'LTCUSD', 'DOTUSD', 'UNIUSD',
+            'SOLUSD', 'ADAUSD'
+            # 'DOGEUSD', 'TRXUSD', 'SHIBUSD', 'LTCUSD', 'DOTUSD', 'UNIUSD',
             # 'LINKUSD', 'AVAXUSD', 'WBTCUSD', 'XLMUSD', 'SUIUSD'
         ]
         # Make the lookback big enough for both z-score and ATR
@@ -83,8 +68,8 @@ class Strategy(BaseStrategy):
 
         data_inputs = {
             self.granularity: {
-                'columns': ['close', 'high', 'low', 'volume'],  # Added volume
-                'lookback': max(needed_lookback, self.ma_window)  # Account for 200MA
+                'columns': ['close', 'high', 'low'], 
+                'lookback': needed_lookback
             }
         }
         return data_inputs, tickers
@@ -92,7 +77,7 @@ class Strategy(BaseStrategy):
     # ----------------------------------------------------------------------
     # Helper Methods (called inside generate_signals, no signature changes)
     # ----------------------------------------------------------------------
-    def _update_trailing_stops_internally(self, market_df, open_signals):
+    def _update_trailing_stops_internally(self, market_df, open_signals, current_bar):
         """
         Handle trailing stop logic inside `generate_signals` 
         without changing function signature or return type.
@@ -185,19 +170,26 @@ class Strategy(BaseStrategy):
         position_size = 0
         # If ATR is missing, do the fallback
         if not self.use_atr_sizing or latest_atr is None or np.isnan(latest_atr):
-            # Fallback to 2% stop distance if ATR is invalid
-            stop_distance = current_price * 0.02
-            position_size = risk_amount / stop_distance
+            position_size = risk_amount / (current_price * self.stoploss_pct)
+            self.logger.info({'position_size':position_size, 'current_price':current_price, 'stoploss_pct':self.stoploss_pct, 'risk_amount':risk_amount, 'risk_math':abs(current_price - (current_price * self.stoploss_pct))})
             position_size = max(1, round(position_size))
+            # Ensure position value doesn't exceed max allowed
             position_size = min(position_size, max_position_value / current_price)
+            position_size = max(1, round(position_size))
 
-        # ATR-based position sizing
+        # ATR-based logic:
+        # e.g. set a "stop distance" to the smaller of (stoploss_pct * price) or (atr * multiplier).
         atr_stop_distance = latest_atr * self.atr_multiplier
-        if atr_stop_distance <= 0 or np.isnan(atr_stop_distance):
-            # Fallback to 2% of price if ATR is invalid
-            atr_stop_distance = current_price * 0.02
-            
-        position_size = risk_amount / atr_stop_distance
+        sl_stop_distance  = self.stoploss_pct * current_price
+        if direction == "BUY":
+            actual_stop_dist  = min(atr_stop_distance, sl_stop_distance)
+        else:
+            actual_stop_dist  = max(atr_stop_distance, sl_stop_distance)
+
+        if actual_stop_dist <= 0:
+            position_size = risk_amount / (current_price * self.stoploss_pct)
+        else:
+            position_size = risk_amount / actual_stop_dist
 
         position_size = max(1, round(position_size))
         # Ensure position value doesn't exceed max allowed
@@ -246,6 +238,8 @@ class Strategy(BaseStrategy):
             # Some systems pass an integer bar count or time. Adjust to your system.
             # If your "next_rows" or "system_timestamp" is your bar index, you can store that below.
             # We'll pretend 'system_timestamp' increments by 1 each bar for demonstration.
+            current_bar = system_timestamp if isinstance(system_timestamp, int) else 0
+            # self.logger.info({f"{self.strategy_name} - strategy_margins": strategy_margins})
             
             # ========== Ensure we have data ==========  
             if self.granularity not in market_data_df.index.levels[0]:
@@ -259,7 +253,7 @@ class Strategy(BaseStrategy):
             #    (We do it inside generate_signals for "single function" constraint)
             # ------------------------------------------------------------------
             if self.trail_stop_activation:
-                self._update_trailing_stops_internally(market_df, open_signals)
+                self._update_trailing_stops_internally(market_df, open_signals, current_bar)
 
             # ------------------------------------------------------------------
             # 2) Construct Weighted "Market Index"
@@ -270,12 +264,7 @@ class Strategy(BaseStrategy):
                     continue
                 df_symbol = market_df.xs(symbol, level=1, axis=1)
                 closes_symbol = df_symbol['close'].ffill().dropna()
-                # Calculate initial position size for $1000 worth
-                initial_price = closes_symbol.iloc[0]
-                initial_units = self.index_base_amount / initial_price
-                
-                # Calculate returns weighted by position size
-                symbol_returns = closes_symbol.pct_change().fillna(0) * initial_units
+                symbol_returns = closes_symbol.pct_change().fillna(0) * self.index_weights[symbol]
                 index_returns_list.append(symbol_returns)
 
             if not index_returns_list:
@@ -301,7 +290,7 @@ class Strategy(BaseStrategy):
 
                 # Check cooldown: if we closed a position recently, skip if not enough bars have passed
                 if symbol in self.last_close_bar:
-                    if (system_timestamp - self.last_close_bar[symbol]) < pd.Timedelta(self.cooldown_bars, unit='m'):
+                    if (current_bar - self.last_close_bar[symbol]) < self.cooldown_bars:
                         # Skip opening a new trade in cooldown
                         continue
 
@@ -336,72 +325,11 @@ class Strategy(BaseStrategy):
                 z_score = (rel_perf.iloc[-1] - rolling_mean.iloc[-1]) / rolling_std.iloc[-1]
                 current_price = close_series.iloc[-1]
 
-                # Calculate trend and volume filters
-                ma_200 = close_series.rolling(self.ma_window).mean()
-                is_above_ma = close_series.iloc[-1] > ma_200.iloc[-1]
-                
-                # Enhanced volume filter with multi-timeframe confirmation
-                volume_series = df_symbol['volume'].ffill()
-                current_volume = volume_series.iloc[-1]
-                vol_short_ma = volume_series.rolling(self.vol_short_window).mean().iloc[-1]
-                vol_medium_ma = volume_series.rolling(self.vol_medium_window).mean().iloc[-1]
-                vol_long_ma = volume_series.rolling(self.vol_long_window).mean().iloc[-1]
-                
-                # Volume confirmation requires:
-                # 1. Current volume above short MA by threshold
-                # 2. Short MA above medium MA (increasing volume)
-                # 3. Medium MA above long MA (sustained volume trend)
-                volume_confirmed = (
-                    current_volume > vol_short_ma * self.vol_threshold and
-                    vol_short_ma > vol_medium_ma and
-                    vol_medium_ma > vol_long_ma
-                )
-
-                # Position management
+                # 3c) See if we already have an open position for this symbol
                 has_open_position = False
-                new_direction = None
-                
-                # Calculate volatility regime adjustment
-                returns = close_series.pct_change()
-                current_vol = returns[-self.vol_window:].std() * np.sqrt(252)
-                historical_vol = returns.std() * np.sqrt(252)
-                vol_ratio = current_vol / historical_vol
-                
-                # Adjust threshold based on volatility regime
-                vol_adjustment = np.clip(
-                    vol_ratio,
-                    self.min_vol_adjustment,
-                    self.max_vol_adjustment
-                )
-                dynamic_threshold = self.base_z_score_threshold * vol_adjustment
-                
-                self.logger.info({'symbol':symbol, 'z_score': z_score, 'self.exit_z_score': self.exit_z_score, 'dynamic_threshold':dynamic_threshold, 'volume_confirmed':volume_confirmed, 'is_above_ma':is_above_ma})
-                
-                # Entry conditions check with dynamic threshold
-                self.logger.info({'new_direction':new_direction, 'dynamic_threshold':dynamic_threshold, 'volume_confirmed':volume_confirmed})  
-                if abs(z_score) >= dynamic_threshold and volume_confirmed:
-                    if z_score > 0 and not is_above_ma:  # Short only below MA
-                        new_direction = "SELL"
-                    elif z_score < 0 and is_above_ma:    # Long only above MA
-                        new_direction = "BUY"
-                # Mean reversion exit check
-                elif abs(z_score) <= self.exit_z_score:
-                    # Look for active positions to potentially exit
-                    for signal in open_signals:
-                        if signal.strategy_name != self.strategy_name:
-                            continue
-                        entry_orders = [
-                            o for o in signal.orders
-                            if (o.symbol == symbol and
-                                o.entryOrderBool and
-                                o.status not in ["closed", "cancelled"])
-                        ]
-                        if entry_orders:
-                            # Found an active position, set exit direction
-                            entry_order = entry_orders[0]
-                            new_direction = "SELL" if entry_order.orderDirection == "BUY" else "BUY"
-                            break
-                        
+                new_direction     = None
+                if abs(z_score) >= self.z_score_threshold:
+                    new_direction = "SELL" if z_score > 0 else "BUY"
                 for open_signal in open_signals:
                     if not open_signal.orders:
                         continue
@@ -416,44 +344,40 @@ class Strategy(BaseStrategy):
                         if entry_order.status not in ["closed", "cancelled"]:
                             # => We have an active position
                             # If new signal is opposite, close the old position
-                            
                             if new_direction and new_direction != entry_order.orderDirection:
-                                # Cancel all pending orders (stop loss, take profit etc.)
+                                # Cancel old stoploss/tp orders
                                 for odr in open_signal.orders:
-                                    if (odr.symbol == symbol and
-                                        not odr.entryOrderBool and
+                                    if (odr.symbol == symbol and 
+                                        odr.order_type in ["STOPLOSS", "LIMIT"] and
                                         odr.status not in ["closed", "cancelled"]):
                                         odr.status = "cancel"
-                                        self.logger.info(f"[{symbol}] Cancelled {odr.order_type} order")
+                                        self.logger.info(f"[{symbol}] Cancelled {odr.order_type} due to opposite signal")
 
-                                # Create market exit order with stop and limit cancellations
-                                if entry_order.orderQuantity > 0:  # Ensure valid position
-                                    exit_order = Order(
-                                        symbol=symbol,
-                                        orderQuantity=entry_order.orderQuantity,
-                                        orderDirection="SELL" if entry_order.orderDirection == "BUY" else "BUY",
-                                        order_type="MARKET",  # Always use market for exits
-                                        symbol_ltp={system_timestamp: current_price},
-                                        timeInForce=self.timeInForce,
-                                        entryOrderBool=False,
-                                        status="pending"
-                                    )
-                                    self.logger.info(f"""
-    [{symbol}]
+                                # Create exit order
+                                exit_order = Order(
+                                    symbol=symbol,
+                                    orderQuantity=entry_order.orderQuantity,
+                                    orderDirection="SELL" if entry_order.orderDirection == "BUY" else "BUY",
+                                    order_type=self.orderType,
+                                    symbol_ltp={system_timestamp: current_price},
+                                    timeInForce=self.timeInForce,
+                                    entryOrderBool=False,
+                                    status="pending"
+                                )
+                                self.logger.info(f"""
+    [{symbol}] 
     - {new_direction} EXIT TRIGGERED
     - Z-Score={z_score:.2f}
     - Current Price={current_price:.8f}
-    - Position Size={entry_order.orderQuantity}
-    - Position Value={entry_order.orderQuantity * current_price:.2f}
+    - Position Size={position_size}
+    - Stoploss={sl_price:.4f}
+    - Take Profit={tp_price}
+    - Position Value={position_size * current_price:.2f}
     """)
-                                    # Update funds and append orders
-                                    self.funds_available += entry_order.orderQuantity * current_price
-                                    open_signal.orders.append(exit_order)
-                                    signals.append(open_signal)
-                                    return_type = "signals"
-                                    
-                                    # Update cooldown
-                                    self.last_close_bar[symbol] = system_timestamp
+                                self.funds_available += entry_order.orderQuantity * current_price
+                                open_signal.orders.append(exit_order)
+                                signals.append(open_signal)
+                                return_type = "signals"
                         break  # no need to check other open_signals
                         
 
@@ -477,18 +401,13 @@ class Strategy(BaseStrategy):
                         status="pending"
                     )
 
-                    # ATR-based stops and take profit
-                    atr_stop = latest_atr * self.atr_multiplier
+                    # Stop-loss
                     if new_direction == "BUY":
-                        sl_price = current_price - atr_stop
+                        sl_price = current_price * (1 - self.stoploss_pct)
                         sl_side = "SELL"
-                        tp_price_full = current_price + (atr_stop * self.rr_ratio)
                     else:
-                        sl_price = current_price + atr_stop
+                        sl_price = current_price * (1 + self.stoploss_pct)
                         sl_side = "BUY"
-                        tp_price_full = current_price - (atr_stop * self.rr_ratio)
-
-                    # Create stop loss order
                     stoploss_order = Order(
                         symbol=symbol,
                         orderQuantity=position_size,
@@ -501,18 +420,22 @@ class Strategy(BaseStrategy):
                         status="pending"
                     )
 
-                    # Save last trade time for cooldown
-                    self.last_close_bar[symbol] = system_timestamp
-
-                    # Single take-profit order for full position
+                    # Take-profit (if activated)
                     tp_orders = []
                     if self.take_profit_activation:
+                        if new_direction == "BUY":
+                            tp_price = current_price * (1 + self.take_profit_pct)
+                            tp_side  = "SELL"
+                        else:
+                            tp_price = current_price * (1 - self.take_profit_pct)
+                            tp_side  = "BUY"
+
                         tp_order = Order(
                             symbol=symbol,
                             orderQuantity=position_size,
-                            orderDirection=sl_side,
+                            orderDirection=tp_side,
                             order_type="LIMIT",
-                            price=tp_price_full,  # Using rr_ratio for full position
+                            price=tp_price,
                             symbol_ltp={system_timestamp: current_price},
                             timeInForce=self.timeInForce,
                             entryOrderBool=False,
@@ -526,7 +449,7 @@ class Strategy(BaseStrategy):
                         strategy_name=self.strategy_name,
                         timestamp=system_timestamp,
                         orders=all_orders,
-                        signal_strength=abs(z_score) / self.base_z_score_threshold,
+                        signal_strength=abs(z_score) / self.z_score_threshold,
                         granularity=self.granularity,
                         signal_type="BUY_SELL",
                         market_neutral=True,
@@ -537,17 +460,16 @@ class Strategy(BaseStrategy):
                     return_type = "signals"
 
                     self.logger.info(f"""
-    System Timestamp: {system_timestamp} |
     [{symbol}] 
     - {new_direction} SIGNAL TRIGGERED
     - Z-Score={z_score:.2f}
     - Current Price={current_price:.8f}
     - Position Size={position_size}
-    - Stoploss={sl_price:.4f} (%: {abs(current_price - sl_price) / current_price:.2%})
-    - Take Profit={tp_price_full} (%: {abs(current_price - tp_price_full) / current_price:.2%})
+    - Stoploss={sl_price:.4f}
+    - Take Profit={tp_price}
     - Position Value={position_size * current_price:.2f}
     """)
-                    # sleeper(1, 'Sleeping for 1 second to update the list of symbols')
+                    sleeper(1, 'Sleeping for 1 second to update the list of symbols')
                     self.funds_available -= position_size * current_price
                     # sleeper(5, 'Sleeping for 5 seconds to update the list of symbols')
 

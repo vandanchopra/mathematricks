@@ -27,7 +27,7 @@ class OMS:
         self.brokerage_fee = self.config_dict.get('brokerage_fee', 0.0035)
         self.slippage = self.config_dict.get('slippage', 0.001)
 
-    def _format_order_status_message(self, signal, order, prev_status, new_status):
+    def _format_order_status_message(self, system_timestamp, signal, order, prev_status, new_status):
         """Format order status message with proper numeric formatting"""
         def format_dollar_value(value):
             return f"${value:.2f}" if value is not None else "N/A"
@@ -52,7 +52,8 @@ class OMS:
             'value': format_dollar_value(value)
         }
 
-        return (f"Order Status:{values['status']} | SignalID:{values['signal_id']} | "
+        return (f"System Timestamp: {system_timestamp} |"
+                f"Order Status:{values['status']} | SignalID:{values['signal_id']} | "
                 f"Strategy:{values['strategy']} | Type:{values['type']} | Price: {values['price']} | Symbol:{values['symbol']} | "
                 f"Dir:{values['direction']} | Qty:{values['quantity']} | Fill:{values['fill']} | "
                 f"PnL:{values['pnl']} | Fee:{values['fee']} | Slip:{values['slip']} | "
@@ -214,10 +215,13 @@ class OMS:
                     entry_slippage_abs += entry_order.slippage_abs
                     break
                 else:
+                    remaining_size = exit_position_size - entry_position_size
+                    entry_position_value += remaining_size * entry_order.filled_price
+                    # Adjust fees proportionally based on the partial size
+                    size_ratio = remaining_size / entry_order.orderQuantity
+                    entry_brokerage_fee_abs += entry_order.brokerage_fee_abs * size_ratio
+                    entry_slippage_abs += entry_order.slippage_abs * size_ratio
                     entry_position_size = exit_position_size
-                    entry_position_value += (exit_position_size - entry_position_size) * entry_order.filled_price
-                    entry_brokerage_fee_abs += entry_order.brokerage_fee_abs
-                    entry_slippage_abs += entry_order.slippage_abs
             
         # Calculate PnL
         pnl = (exit_position_value - entry_position_value) * exit_order_multiplier
@@ -254,12 +258,22 @@ class OMS:
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= abs(position_value)
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] -= abs(position_value)
         else:
-            # Decrease margin used and add PnL * -1
+            # Calculate proportion of position being closed
+            total_position = self.portfolio[signal.strategy_name][order.symbol]['position']
+            if total_position != 0:  # Avoid division by zero
+                proportion = abs(order.orderQuantity / total_position)
+            else:
+                proportion = 1  # Full exit if position is already 0
+                
+            # Adjust margin proportionally
             exit_order_direction = order.orderDirection
             exit_order_multiplier = -1 if exit_order_direction == 'SELL' else 1
-            entry_order_margin_used = position_value + (order.pnl * exit_order_multiplier)
+            
+            # Scale margin used and PnL by proportion of position being closed
+            entry_order_margin_used = position_value * proportion + (order.pnl * exit_order_multiplier)
             exit_order_value_returned = entry_order_margin_used + order.pnl
-            # self.logger.info({'position_value':position_value, 'entry_order_margin_used':entry_order_margin_used, 'exit_order_value_returned':exit_order_value_returned, 'pnl':order.pnl, 'exit_order_multiplier':exit_order_multiplier})
+            
+            # Update margin
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= entry_order_margin_used
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= entry_order_margin_used
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] += exit_order_value_returned
@@ -415,13 +429,23 @@ class OMS:
                                 order.brokerage_fee_abs = self.brokerage_fee * transaction_value
                                 order.slippage_abs = self.slippage * transaction_value
                                 # Exiting position - calculate PnL
+                                # Calculate PnL for this exit
                                 pnl, pnl_with_fee_and_slippage = self.calculate_position_pnl(order, signal)
-                                order.pnl = pnl
-                                order.pnl_with_fee_and_slippage = pnl_with_fee_and_slippage
+                                
+                                # Initialize or update PnL values
+                                if not hasattr(order, 'pnl') or order.pnl is None:
+                                    order.pnl = pnl
+                                else:
+                                    order.pnl += pnl
+                                    
+                                if not hasattr(order, 'pnl_with_fee_and_slippage') or order.pnl_with_fee_and_slippage is None:
+                                    order.pnl_with_fee_and_slippage = pnl_with_fee_and_slippage
+                                else:
+                                    order.pnl_with_fee_and_slippage += pnl_with_fee_and_slippage
                         
                             signal.orders[order_num] = order
                             # Update the order in both the current signal and open_signals list
-                            self.logger.info(self._format_order_status_message(signal, order, prev_status, new_status))
+                            self.logger.info(self._format_order_status_message(system_timestamp, signal, order, prev_status, new_status))
 
                             if new_status == 'closed':
                                 # 3. Update portfolio based on executed orders

@@ -427,12 +427,14 @@ class PerformanceReporter(Metrics):
             self.logger.info(f"{Fore.BLUE}Losing Signals{Style.RESET_ALL}: {self.backtest_performance_metrics['losing_signals']}")
             
             self.logger.info(f"{Fore.BLUE}Win/Loss Ratio{Style.RESET_ALL}: {self.backtest_performance_metrics['win_loss_ratio']:0.2f}")
-            self.logger.info('-*'*30)
-            self.logger.info('        ===== CALCULATIONS NOT VERIFIED =====')
             self.logger.info(f"{Fore.BLUE}Average Signal Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration']:0.2f} hours")
             self.logger.info(f"{Fore.BLUE}Average Signal Duration (Wining){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_profitable']:0.2f} hours")
             self.logger.info(f"{Fore.BLUE}Average Signal Duration (Losing){Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_duration_loss']:0.2f} hours")
             
+            self.logger.info(f"{Fore.BLUE}Profit Factor{Style.RESET_ALL}: {self.backtest_performance_metrics['profit_factor']:0.2f}")
+            
+            self.logger.info('-*'*30)
+            self.logger.info('        ===== CALCULATIONS NOT VERIFIED =====')
             self.logger.info(f"{Fore.BLUE}Average Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_signal_return']:0.2f}")
             self.logger.info(f"{Fore.BLUE}Average Win Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_win_signals_return']:0.2f}")
             self.logger.info(f"{Fore.BLUE}Average Loss Signal Return{Style.RESET_ALL}: {self.backtest_performance_metrics['average_loss_signals_return']:0.2f}")
@@ -450,7 +452,6 @@ class PerformanceReporter(Metrics):
             self.logger.info(f"{Fore.BLUE}Max Drawdown{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown']:0.2f}%")
             self.logger.info(f"{Fore.BLUE}Max Drawdown Duration{Style.RESET_ALL}: {self.backtest_performance_metrics['max_drawdown_duration']:0.2f} days")
             
-            self.logger.info(f"{Fore.BLUE}Profit Factor{Style.RESET_ALL}: {self.backtest_performance_metrics['profit_factor']:0.2f}")
             
         except Exception as e:
             self.logger.error(f"Error generating performance report: {e}")
