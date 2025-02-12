@@ -44,6 +44,7 @@ class Mathematricks:
         self.telegram_bot = TelegramBot()
         self.first_telegram_msg_sent = False
         self.update_telegram = self.config_dict['update_telegram']
+        self.stop_backtest_at_n_signals = 200
     
     def get_unrealized_pnl_dict(self):
         unrealized_pnl_dict = {}
@@ -268,11 +269,15 @@ class Mathematricks:
         start = time.time()
         if run_mode in [1,2,3]:
             while True:
+                
                 # for interval in self.current_market_data_df.index.get_level_values(0).unique():
                 #     self.logger.debug(f"Full Loop Time Taken: {time.time() - start}. Market_data_df Shape:{interval}: {self.current_market_data_df.loc[interval].shape}")
                 # start = time.time()
                 try:
                     next_rows = self.datafeeder.next(system_timestamp=self.system_timestamp, run_mode=run_mode, sleep_time=self.sleep_time, start_date=start_date, end_date=end_date, live_bool=self.live_bool)
+                    if run_mode == 3 and self.stop_backtest_at_n_signals and len(self.oms.closed_signals) >= self.stop_backtest_at_n_signals:
+                        self.logger.info(f"Backtest stopped at {len(self.oms.closed_signals)} signals. REMOVE THIS FUNCTIONALITY LATER")
+                        next_rows = None
                     if next_rows is not None:
                         msg = "------------------------ New Timestamp "
                         print(msg + '-'*(os.get_terminal_size().columns - len(msg)))
@@ -360,6 +365,15 @@ class Mathematricks:
                             self.oms.get_open_signals(),
                             self.oms.closed_signals,
                             self.current_market_data_df,
+                            with_fees_and_slippage=False
+                        )
+                        
+                        self.reporter.generate_report(
+                            self.config_dict,
+                            self.oms.get_open_signals(),
+                            self.oms.closed_signals,
+                            self.current_market_data_df,
+                            with_fees_and_slippage=True
                         )
                         
                         if self.config_dict['backtest_inputs']['save_backtest_results']:

@@ -23,7 +23,7 @@ class DataFeeder:
         self.market_data_extractor = MarketDataExtractor()
         self.datafetcher = DataFetcher(self.config_dict, self.market_data_extractor)
         self.logger = create_logger(log_level='DEBUG', logger_name='datafeeder')
-        self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"15m":900,"1h":3600, "1d":86400}
+        self.sleep_lookup = {"1m":60,"2m":120,"5m":300,"15m":900,"1h":3600, "4h": 14400, "12h":43200, "1d":86400}
         self.market_data_df = None
         self.datafeeder_system_timestamp = None
         self.indicators = Indicators()
@@ -284,7 +284,6 @@ class DataFeeder:
             self.market_data_df = self.datafetcher.fetch_price_data(start_date=start_date, end_date=end_date, throttle_secs=throttle_secs, lookback=self.lookback_dict, run_mode=self.config_dict['run_mode'], live_bool=live_bool)
             # timestamps = self.market_data_extractor.get_market_data_df_timestamps(self.market_data_df)
             # self.logger.info({'timestamp_0':timestamps[0].astimezone(pytz.timezone('US/Eastern')), 'timestamp_-1':timestamps[-1].astimezone(pytz.timezone('US/Eastern'))})
-            # self.logger.info({'self.market_data_df':self.market_data_df.head(5)})
             
             # self.logger.info({'self.market_data_df':self.market_data_df})
             if len(self.market_data_df) < 1:
@@ -298,7 +297,8 @@ class DataFeeder:
                     pass
                 else:# self.logger.info({'system_timestamp':system_timestamp, 'start_date':start_date})
                     sleeper(min(sleep_time, 60*60*2), f'Live Bool: {live_bool} | System Sleeping: Time to next timestamp')
-                
+            
+            
             # self.logger.info({'start_date':start_date, 'end_date':end_date})
             # msg = 'market_data_df Shape: '
             # for interval in self.market_data_df.index.get_level_values(0).unique():
@@ -313,6 +313,7 @@ class DataFeeder:
         # if self.datafeeder_system_timestamp is None:
         if len(self.market_data_df) >= 1:
             self.datafeeder_system_timestamp = min([pd.DataFrame(self.market_data_df.loc[interval,:].iloc[0]).T.index[0] for interval in self.market_data_df.index.get_level_values(0).unique()]) if len(self.market_data_df) > 0 else None
+            
         # self.logger.debug({'Next System Timestamp':self.datafeeder_system_timestamp, 'Current System Timestamp':system_timestamp})
         
         # else:

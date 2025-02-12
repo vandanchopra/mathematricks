@@ -4,6 +4,8 @@ import pandas as pd
 import warnings
 
 from sqlalchemy import over
+
+from frontend.app import data
 warnings.filterwarnings('ignore', category=FutureWarning, message="'T' is deprecated and will be removed in a future version")
 # Suppress inplace operation warnings from pykrakenapi
 warnings.filterwarnings('ignore', category=FutureWarning,
@@ -91,9 +93,10 @@ class Data:
             "1m": 1,
             "5m": 5,
             "15m": 15,
-            '1h': 60,
+            "1h": 60,
+            "4h": 240,
+            "12h": 720,
             "1d": 1440,
-            
         }
 
     def check_connection(self):
@@ -225,14 +228,14 @@ class Data:
                 trades_df = trades_df[~trades_df.index.duplicated(keep='last')]
                 
                 # Convert trades to OHLCV format
-                freq_map = {"1m": "1Min", "5m": "5Min", "1d": "1D"}
-                ohlc = trades_df.groupby(pd.Grouper(freq=freq_map.get(interval, "1Min"))).agg({
+                freq_map = {"1m": "1Min", "5m": "5Min", "15m":"15Min", "12h":"12H" , "1d": "1D"}
+                ohlc = trades_df.groupby(pd.Grouper(freq=freq_map.get(interval, None))).agg({
                     'price': ['first', 'max', 'min', 'last'],
                     'volume': 'sum'
                 }).dropna()
                 
                 ohlc.columns = ['open', 'high', 'low', 'close', 'volume']
-                ohlc['count'] = trades_df.groupby(pd.Grouper(freq=freq_map.get(interval, "1Min"))).size()
+                ohlc['count'] = trades_df.groupby(pd.Grouper(freq=freq_map.get(interval, None))).size()
                 
                 if not ohlc.empty:
                     data_chunks.append(ohlc)
@@ -310,7 +313,7 @@ class Data:
                      throttle_secs=1, run_mode=3, start_date=None, end_date=None, lookback=None,
                      update_data=True):
         data_frames = []
-        interval_dict = {'1d':pd.Timedelta(days=1), '1h':pd.Timedelta(hours=1), '1m':pd.Timedelta(minutes=1)}
+        interval_dict = {'1d':pd.Timedelta(days=1), '1h':pd.Timedelta(hours=1), '1m':pd.Timedelta(minutes=1), '15m':pd.Timedelta(minutes=15), '12h':pd.Timedelta(hours=12), '4h':pd.Timedelta(hours=4)}
         # Define chunking sizes for backward updates (in days)
         chunking_dict = {
             "1m": 1,      # 24 hours
@@ -341,6 +344,8 @@ class Data:
                     if os.path.exists(csv_path):
                         symbol_data = pd.read_csv(csv_path, parse_dates=['datetime'])
                         symbol_data['symbol'] += 'USD'
+                        symbol_data['interval'] = interval
+                        # self.logger.info(f"Loaded {len(symbol_data)} rows from {csv_path}")
                         if not symbol_data.empty:
                             symbol_data.set_index('datetime', inplace=True)
                             if not symbol_data.index.tz:
@@ -447,9 +452,10 @@ class Data:
                 
                 combined_df = combined_df.sort_index()
                 combined_df['data_source'] = 'kraken'
-                self.logger.info({'combined_df':combined_df.shape})
-                self.logger.info({'combined_df':combined_df.head()})
-                
+                # self.logger.info({'combined_df':combined_df.shape})
+                # self.logger.info({'combined_df':combined_df.loc['15m'].head()})
+                # self.logger.info({'combined_df':combined_df.loc['12h'].head()})
+                # raise AssertionError('STOP')
                 return combined_df
         
         return pd.DataFrame()

@@ -238,55 +238,120 @@ class OMS:
         strategy_name = signal.strategy_name
         trading_currency = self.config_dict['trading_currency']
         
+        # Log initial margin state
+        # self.logger.info(f"=== START: Margin Update for Order Fill ===")
+        # self.logger.info(f"Initial Combined Margin - Used: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']:,.2f}, "
+                        # f"Available: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available']:,.2f}, "
+                        # f"Total: ${self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power']:,.2f}")
+        # self.logger.info(f"Initial Strategy Margin ({strategy_name}) - Used: ${self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']:,.2f}, "
+                        # f"Available: ${self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']:,.2f}, "
+                        # f"Total: ${self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']:,.2f}")
+        
         # Calculate transaction cost
         transaction_cost = order.brokerage_fee_abs + order.slippage_abs
-        # self.logger.info(f"Transaction Cost: {transaction_cost}, Brokerage Fee: {order.brokerage_fee_abs}, Slippage: {order.slippage_abs}")
-        # self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']}, Total Buying Power: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
+        symbol = order.symbol
+        # self.logger.info(f"Transaction Details - Symbol: {symbol}, Cost: ${transaction_cost:.2f} (Fee: ${order.brokerage_fee_abs:.2f}, Slip: ${order.slippage_abs:.2f})")
+        
+        # Log before reducing buying power
+        # self.logger.info(f"Reducing buying power by transaction cost ${transaction_cost:.2f}")
         
         # Reduce total_buying_power by transaction cost
         self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= transaction_cost
         self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] -= transaction_cost
         
+        # self.logger.info(f"After transaction cost - Combined Available: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available']:,.2f}, "
+                        # f"Strategy Available: ${self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']:,.2f}")
+        
         # Calculate position value
         position_value = order.orderQuantity * order.filled_price
+        # self.logger.info(f"Position Value: ${position_value:,.2f} (Qty: {order.orderQuantity}, Price: ${order.filled_price:.2f})")
         
         # If entering position
         if order.entryOrderBool:
+            # self.logger.info(f"Processing ENTRY order - Direction: {order.orderDirection}")
+            # Log before margin update
+            # self.logger.info(f"Before entry margin update - Used: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']:,.2f}, "
+                        #    f"Available: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available']:,.2f}")
+            
             # Increase margin used
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] += abs(position_value)
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] += abs(position_value)
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] -= abs(position_value)
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] -= abs(position_value)
+            
+            # Log after margin update
+            # self.logger.info(f"After entry margin update - Used: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']:,.2f}, "
+                        #    f"Available: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available']:,.2f}")
         else:
-            # Calculate proportion of position being closed
-            total_position = self.portfolio[signal.strategy_name][order.symbol]['position']
-            if total_position != 0:  # Avoid division by zero
-                proportion = abs(order.orderQuantity / total_position)
-            else:
-                proportion = 1  # Full exit if position is already 0
+            # self.logger.info(f"Processing EXIT order - Direction: {order.orderDirection}")
+            # Calculate current position metrics
+            total_position = round(self.portfolio[signal.strategy_name][order.symbol]['position'], 10)
+            if total_position == 0:
+                return  # Skip margin updates if position is already zero
+            
+            # Handle entry orders
+            if order.entryOrderBool:
+                # For entry orders, increase used margin by position value
+                entry_value = order.orderQuantity * order.filled_price
+                self.margin_available[broker][account][signal.strategy_name][trading_currency]['buying_power_used'] += entry_value
+                self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] += entry_value
+                return
                 
-            # Adjust margin proportionally
-            exit_order_direction = order.orderDirection
-            exit_order_multiplier = -1 if exit_order_direction == 'SELL' else 1
+            # Handle exit orders
+            proportion = abs(order.orderQuantity / total_position)
             
-            # Scale margin used and PnL by proportion of position being closed
-            entry_order_margin_used = position_value * proportion + (order.pnl * exit_order_multiplier)
-            exit_order_value_returned = entry_order_margin_used + order.pnl
+            # Calculate margin to release based on position being closed
+            position_margin = position_value * proportion
+            pnl_adjustment = order.pnl if order.pnl else 0
             
-            # Update margin
-            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= entry_order_margin_used
-            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used'] -= entry_order_margin_used
-            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] += exit_order_value_returned
-            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] += exit_order_value_returned
+            # Update strategy margins
+            self.margin_available[broker][account][signal.strategy_name][trading_currency]['buying_power_used'] -= position_margin
+            self.margin_available[broker][account][signal.strategy_name][trading_currency]['buying_power_available'] += position_margin + pnl_adjustment
+            
+            # Recalculate combined margin from all strategies
+            combined_used = 0
+            for strat in self.config_dict["strategies"]:
+                strat_name = strat.split('.')[-1] if '.' in strat else strat
+                combined_used += self.margin_available[broker][account][strat_name][trading_currency]['buying_power_used']
+            
+            # Update combined margins
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] = combined_used
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] = (
+                self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power'] - combined_used
+            )
+            
+            # self.logger.info(f"Exit Calculations - Entry Margin Used: ${entry_order_margin_used:,.2f}, "
+                        #    f"Order PnL: ${order.pnl:,.2f}, Value Returned: ${exit_order_value_returned:,.2f}")
+            
+            # Log before exit margin update
+            # self.logger.info(f"Before exit margin update - Used: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']:,.2f}, "
+                        #    f"Available: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available']:,.2f}")
+            
+            # No explicit margin updates needed here - handled in the code block above
+            
+            # Log after exit margin update
+            # self.logger.info(f"After exit margin update - Used: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']:,.2f}, "
+                        #    f"Available: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available']:,.2f}")
 
+        # Update total buying power
+        # self.logger.info("=== Updating Total Buying Power ===")
         self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power'] = (
-            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] + 
+            self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] +
             self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']
         )
         self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power'] = (
-            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] + 
+            self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available'] +
             self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']
         )
+        
+        # Log final margin state
+        # self.logger.info(f"=== FINAL: Margin State ===")
+        # self.logger.info(f"Final Combined Margin - Used: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used']:,.2f}, "
+                        # f"Available: ${self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available']:,.2f}, "
+                        # f"Total: ${self.margin_available[broker][account]['combined'][trading_currency]['total_buying_power']:,.2f}")
+        # self.logger.info(f"Final Strategy Margin ({strategy_name}) - Used: ${self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']:,.2f}, "
+                        # f"Available: ${self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']:,.2f}, "
+                        # f"Total: ${self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']:,.2f}")
         # self.logger.info(f"Updated margin for {strategy_name} - Buying Power Used: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_used']}, Buying Power Available: {self.margin_available[broker][account][strategy_name][trading_currency]['buying_power_available']}, Total Buying Power: {self.margin_available[broker][account][strategy_name][trading_currency]['total_buying_power']}")
         # input("Press Enter to continue...")
         
@@ -352,9 +417,30 @@ class OMS:
             updated_signal.pnl_with_fee_and_slippage = signal_pnl_with_fee_and_slippage
             updated_signal.status = 'closed'
             
+            # Update margin for only this specific signal's positions
+            broker = 'sim' if self.config_dict['run_mode'] == 3 else 'ibkr'
+            account = list(self.config_dict['account_info'][broker].keys())[0]
+            trading_currency = self.config_dict['trading_currency']
+            
+            total_position_value = 0
+            # Calculate total position value for this signal
+            for order in updated_signal.orders:
+                if order.status == 'closed' and order.entryOrderBool:
+                    total_position_value += order.orderQuantity * order.filled_price
+                    
+            if total_position_value > 0:
+                # Reduce margin used by this signal's position value
+                self.margin_available[broker][account][updated_signal.strategy_name][trading_currency]['buying_power_used'] -= total_position_value
+                self.margin_available[broker][account]['combined'][trading_currency]['buying_power_used'] -= total_position_value
+                
+                # Return value to available margin
+                self.margin_available[broker][account][updated_signal.strategy_name][trading_currency]['buying_power_available'] += total_position_value
+                self.margin_available[broker][account]['combined'][trading_currency]['buying_power_available'] += total_position_value
+            
             # Move signal to closed signals
             self.closed_signals.append(updated_signal)
             self.open_signals = [open_signal for open_signal in self.open_signals if open_signal.signal_id != updated_signal.signal_id]
+            self.logger.info(f"Closed signal {updated_signal.signal_id} with PnL: {signal_pnl:.2f}")
     
     def execute_signals(self, new_signals: List[Signal], system_timestamp: datetime, market_data_df: pd.DataFrame, live_bool: bool):
         """Process and execute trading signals"""
@@ -454,7 +540,6 @@ class OMS:
                             
                                 # 4. Update margin based on new portfolio state
                                 self.update_margin_on_fill(order, signal)
-                                # input("Press Enter to continue...")
                             
                             # 5. Move closed signals to closed_signals list if all orders are closed
                             self.close_completed_signals(signal)

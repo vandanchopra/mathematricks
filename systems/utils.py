@@ -152,7 +152,7 @@ class MarketDataExtractor:
         return list(market_data_df.index.get_level_values(1).unique())
     
     def get_market_data_df_minimum_granularity(self, market_data_df):
-        granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400}
+        granularity_lookup_dict = {"1m":60,"2m":120,"5m":300,"1d":86400, "15m":900, "12h":43200, "1h":3600}
         available_granularities = self.get_market_data_granularities(market_data_df)
         min_granularity_val = min([granularity_lookup_dict[granularity] for granularity in available_granularities])
         min_granularity = list(granularity_lookup_dict.keys())[list(granularity_lookup_dict.values()).index(min_granularity_val)]

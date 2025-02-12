@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Union, Literal, Any, Tuple
 
 class Order(BaseModel):
     symbol: str
-    orderQuantity: int
+    orderQuantity: float
     orderDirection: Literal["BUY", "SELL"]
     order_type: Literal["MARKET", "LIMIT", "STOPLOSS"]
     price: Optional[float] = None  # For LIMIT and STOPLOSS orders, None for MARKET

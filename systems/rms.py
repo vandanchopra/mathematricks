@@ -101,8 +101,9 @@ class RMS:
         if total_margin_required > margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available']:
             signal.status = 'rejected'
             signal.rejection_reason = 'Insufficient margin available'
-            self.logger.info('Insufficient margin available: Total margin required: {}, Buying power available: {}'.format(total_margin_required, margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available']))
-            sleeper(2, 'Sleeping for 2 seconds for the warning...')
+            msg = 'Insufficient margin available: Total margin required: {}, Buying power available: {}'.format(total_margin_required, margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'])
+            self.logger.info(msg)
+            sleeper(2, f'Sleeping for 2 seconds for the warning...: {msg}')
         else:
             # Update available margin if signal is accepted
             margin_available[broker][base_account_number][strategy_name][trading_currency]['buying_power_available'] -= total_margin_required
